@@ -34,7 +34,10 @@ export const registrationSchema = z.object({
   referrer_contact: z.string().trim().max(120).optional().or(z.literal("")),
 });
 
-export type RegistrationInput = z.infer<typeof registrationSchema>;
+// Form-side type (fields with .default() are optional here).
+export type RegistrationInput = z.input<typeof registrationSchema>;
+// Server-side parsed type (defaults applied — all fields concrete).
+export type RegistrationParsed = z.output<typeof registrationSchema>;
 
 // Confirmation submission — participant re-confirms their details from the link.
 export const confirmationSchema = z.object({

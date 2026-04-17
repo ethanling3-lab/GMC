@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale } from "@/lib/locale-client";
-import { registrationSchema, SUPPORTED_REGIONS, type RegistrationInput } from "@/lib/validation";
+import { registrationSchema, SUPPORTED_REGIONS, type RegistrationInput, type RegistrationParsed } from "@/lib/validation";
 
 type EventOption = { slug: string; title_cn: string | null; title_en: string | null };
 
@@ -27,7 +27,7 @@ export function RegistrationForm({ events, defaultEventSlug }: Props) {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<RegistrationInput>({
+  } = useForm<RegistrationInput, unknown, RegistrationParsed>({
     resolver: zodResolver(registrationSchema),
     defaultValues: {
       event_slug: defaultEventSlug ?? "",
@@ -36,7 +36,7 @@ export function RegistrationForm({ events, defaultEventSlug }: Props) {
     },
   });
 
-  async function onSubmit(data: RegistrationInput) {
+  async function onSubmit(data: RegistrationParsed) {
     setSubmitState({ status: "submitting" });
     try {
       const res = await fetch("/api/register", {

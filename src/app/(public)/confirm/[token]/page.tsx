@@ -30,6 +30,8 @@ type ConfirmLoad =
       alreadyConfirmed: boolean;
     };
 
+type ReadyState = Extract<ConfirmLoad, { state: "ready" }>;
+
 async function loadByToken(token: string): Promise<ConfirmLoad> {
   const supabase = createSupabaseServiceClient();
   const { data: enrollment, error } = await supabase
@@ -44,13 +46,20 @@ async function loadByToken(token: string): Promise<ConfirmLoad> {
 
   if (error || !enrollment) return { state: "invalid" };
 
-  const participantsRel = enrollment.participants as ConfirmLoad extends { state: "ready" } ? ConfirmLoad["participant"] : never;
-  const eventsRel = enrollment.events as ConfirmLoad extends { state: "ready" } ? ConfirmLoad["event"] : never;
+  const row = enrollment as unknown as {
+    id: string;
+    participant_id: string;
+    event_id: string;
+    confirmation_token_expires_at: string | null;
+    confirmed_at: string | null;
+    participants: ReadyState["participant"];
+    events: ReadyState["event"];
+  };
 
   if (
     !verifyToken(
       "confirm_registration",
-      `${enrollment.participant_id}:${enrollment.event_id}`,
+      `${row.participant_id}:${row.event_id}`,
       token,
     )
   ) {
@@ -58,8 +67,8 @@ async function loadByToken(token: string): Promise<ConfirmLoad> {
   }
 
   if (
-    enrollment.confirmation_token_expires_at &&
-    new Date(enrollment.confirmation_token_expires_at) < new Date()
+    row.confirmation_token_expires_at &&
+    new Date(row.confirmation_token_expires_at) < new Date()
   ) {
     return { state: "expired" };
   }
@@ -67,9 +76,9 @@ async function loadByToken(token: string): Promise<ConfirmLoad> {
   return {
     state: "ready",
     token,
-    participant: participantsRel,
-    event: eventsRel,
-    alreadyConfirmed: Boolean(enrollment.confirmed_at),
+    participant: row.participants,
+    event: row.events,
+    alreadyConfirmed: Boolean(row.confirmed_at),
   };
 }
 
