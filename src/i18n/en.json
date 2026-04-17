@@ -1,0 +1,147 @@
+{
+  "common": {
+    "siteName": "GMC",
+    "next": "Next",
+    "back": "Back",
+    "submit": "Submit",
+    "cancel": "Cancel",
+    "save": "Save",
+    "loading": "Loading…",
+    "required": "Required",
+    "optional": "Optional",
+    "success": "Success",
+    "error": "Something went wrong, please try again",
+    "readMore": "Read more",
+    "viewAll": "View all",
+    "learnMore": "Learn more",
+    "allRightsReserved": "All rights reserved."
+  },
+  "locale": {
+    "switchTo": "中文"
+  },
+  "nav": {
+    "about": "About",
+    "programs": "Programs",
+    "partners": "Collaboration",
+    "wugeApp": "Wuge App",
+    "news": "News",
+    "events": "Events"
+  },
+  "landing": {
+    "eyebrow": "GMC · Glorious Melodies Consultancy",
+    "heroHeading": "Sow culture as the seed,\nlet wisdom shine as the light.",
+    "heroSubheading": "Bring the classics into daily life; awaken lives through education.",
+    "heroBody": "Glorious Melodies Culture Education Singapore (GMC), headquartered in Singapore, is a globally oriented institution dedicated to educational and cultural innovation. Based in Asia and connected to the world, GMC's mission is to advance educational innovation, foster humanistic exchange, and promote cross-cultural collaboration — bringing wisdom, inspiration, and hope to learners everywhere.",
+    "ctaRegister": "Register",
+    "ctaEvents": "Browse events",
+    "ctaPrograms": "See programs",
+    "missionEyebrow": "Core Philosophy of GMC Education",
+    "missionHeading": "Knowing · Acting · Awakening · Persevering",
+    "missionPoint1": "To ensure classical wisdom is not buried in the past, but becomes part of everyday choices for everyone.",
+    "missionPoint2": "To make education more than just the transfer of information — a journey of awakening, action, and transformation.",
+    "missionPoint3": "To turn diet, daily routines, emotions, and thoughts into arenas for cultivating the mind and nurturing the spirit, embedding the core values of knowing, acting, awakening, and persevering into real, lived experiences.",
+    "programsEyebrow": "Programs",
+    "programsHeading": "Four directions, one question",
+    "programsSub": "How does the classical find voice in the present?",
+    "statsEyebrow": "Beyond the numbers",
+    "statsHeading": "A global community of learners",
+    "statsStudents": "Learners",
+    "statsCourses": "Courses",
+    "statsRegions": "Regions",
+    "statsCities": "Cities",
+    "partnersEyebrow": "Global Collaboration",
+    "partnersHeading": "Building with the world's leading institutions",
+    "partnersBody": "We partner with UNESCO's International Centre for Higher Education Innovation (ICHEI), Brest Business School (France), Sungkyunkwan University and Yonsei University (Korea) — exploring how Eastern wisdom takes root inside modern organisations.",
+    "newsEyebrow": "Latest",
+    "newsHeading": "Notes from the programme",
+    "newsEmpty": "No news yet.",
+    "ctaBlockHeading": "The next time we meet is in the classroom.",
+    "ctaBlockBody": "GMC runs dozens of courses and retreats each year, from our Penang stillness programme to the business cohort. Register to take part.",
+    "ctaBlockCta": "Open the registration form"
+  },
+  "about": {
+    "eyebrow": "About",
+    "heading": "Glorious Melodies Consultancy",
+    "subHeading": "A global institute of Eastern wisdom in contemporary education.",
+    "body": "Founded in Singapore and led by Dr Wu, GMC convenes scholars and leaders from around the world to advance a simple conviction: classical thought must become liveable again."
+  },
+  "programs": {
+    "eyebrow": "Programs",
+    "heading": "Different entrances, one destination.",
+    "ph": {
+      "title": "Philosophy of Humanities",
+      "teaser": "A program designed to bridge the disciplines of philosophy, humanities, and management. It fosters reflective leaders who can think critically, act ethically, and lead with cultural insight."
+    },
+    "bp": {
+      "title": "Business Program",
+      "teaser": "With the core of 'creative integration of Eastern and Western management philosophies,' this program goes beyond conventional business skill training."
+    },
+    "cw": {
+      "title": "Culinary Wealth",
+      "teaser": "This program is open to all age groups. It integrates modern nutritional science, sugar control practices, emotional regulation, and mind-body training."
+    },
+    "bgm": {
+      "title": "\"Becoming a Future Master\" Youth Curriculum (BGM)",
+      "teaser": "A competency-based development program tailored for adolescents aged 12 to 18, integrating Eastern wisdom, philosophical thinking, and modern leadership training."
+    }
+  },
+  "register": {
+    "title": "Registration",
+    "subtitle": "Please fill in your details accurately. We'll confirm via email and WhatsApp.",
+    "selectEvent": "Select an event",
+    "selectEventPlaceholder": "Choose one",
+    "nameCn": "Chinese name",
+    "nameEn": "English name (as on passport)",
+    "nameEnHint": "Must match your passport for travel coordination",
+    "email": "Email",
+    "phone": "Phone",
+    "phoneHint": "Include country code, e.g. +65 …",
+    "region": "Region",
+    "language": "Preferred language",
+    "languageZh": "Chinese",
+    "languageEn": "English",
+    "languageBoth": "Both",
+    "gender": "Gender",
+    "genderMale": "Male",
+    "genderFemale": "Female",
+    "genderOther": "Other",
+    "genderUndisclosed": "Prefer not to say",
+    "birthDate": "Date of birth",
+    "occupation": "Occupation",
+    "industry": "Industry",
+    "referrerHeading": "Referral",
+    "referrerNote": "Please tell us who introduced you. We may reach out to them to get to know you better.",
+    "referrerName": "Referrer's name",
+    "referrerContact": "Referrer's contact",
+    "submit": "Submit registration",
+    "submittingAria": "Submitting",
+    "successTitle": "Registration received",
+    "successBody": "We've emailed and WhatsApp-ed you a confirmation link. Please click it to review your details.",
+    "errorTitle": "Couldn't submit",
+    "errorGeneric": "Something went wrong. Please try again or contact our team.",
+    "errorDuplicate": "This person has already registered for this event."
+  },
+  "confirm": {
+    "title": "Confirm your details",
+    "subtitle": "Here's what we have on file. Please correct anything that's off before confirming.",
+    "submit": "Confirm",
+    "expiredTitle": "Link expired",
+    "expiredBody": "Please contact our team to get a fresh confirmation link.",
+    "successTitle": "Thanks, confirmed",
+    "successBody": "Our team will be in touch shortly to continue your onboarding."
+  },
+  "regions": {
+    "SG": "Singapore",
+    "MY": "Malaysia",
+    "TW": "Taiwan",
+    "HK": "Hong Kong",
+    "CN": "Mainland China",
+    "ID": "Indonesia",
+    "TH": "Thailand",
+    "VN": "Vietnam",
+    "PH": "Philippines",
+    "US": "United States",
+    "AU": "Australia",
+    "OTHER": "Other"
+  }
+}

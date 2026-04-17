@@ -1,0 +1,147 @@
+{
+  "common": {
+    "siteName": "GMC",
+    "next": "下一步",
+    "back": "返回",
+    "submit": "提交",
+    "cancel": "取消",
+    "save": "保存",
+    "loading": "加载中…",
+    "required": "必填",
+    "optional": "选填",
+    "success": "成功",
+    "error": "发生错误，请重试",
+    "readMore": "阅读全文",
+    "viewAll": "查看全部",
+    "learnMore": "了解更多",
+    "allRightsReserved": "版权所有"
+  },
+  "locale": {
+    "switchTo": "EN"
+  },
+  "nav": {
+    "about": "关于我们",
+    "programs": "课程项目",
+    "partners": "国际合作",
+    "wugeApp": "吴歌 APP",
+    "news": "动态",
+    "events": "活动"
+  },
+  "landing": {
+    "eyebrow": "GMC · Glorious Melodies Consultancy",
+    "heroHeading": "以文化为种\n让智慧为光",
+    "heroSubheading": "将经典带入日常，以教育唤醒生命。",
+    "heroBody": "GMC（Glorious Melodies Culture Education Singapore）总部位于新加坡，是一所立足亚洲、面向全球的教育与文化创新机构。我们致力于推动教育创新，促进人文交流与跨文化合作，为世界各地的学员带去智慧、启发与希望。",
+    "ctaRegister": "立即报名",
+    "ctaEvents": "查看活动",
+    "ctaPrograms": "浏览课程",
+    "missionEyebrow": "GMC 教育核心理念",
+    "missionHeading": "知 · 行 · 觉 · 毅",
+    "missionPoint1": "让古老的智慧不再封存于过去，而成为每一个人日常选择的一部分。",
+    "missionPoint2": "让教育不止于知识的传递，而成为觉醒、行动与转化的旅程。",
+    "missionPoint3": "将饮食、作息、情绪与思维，皆化为修身养性的场域，把「知、行、觉、毅」的核心价值，嵌入真实的生活体验之中。",
+    "programsEyebrow": "课程项目",
+    "programsHeading": "四个方向，一种问法",
+    "programsSub": "同一个问题：经典如何在当代发声？",
+    "statsEyebrow": "数字之外",
+    "statsHeading": "连接全球的学员社群",
+    "statsStudents": "位学员",
+    "statsCourses": "门课程",
+    "statsRegions": "个地区",
+    "statsCities": "座城市",
+    "partnersEyebrow": "国际合作",
+    "partnersHeading": "与世界一流机构共建",
+    "partnersBody": "我们与联合国教科文组织高等教育创新中心（UNESCO ICHEI）、法国布雷斯特商学院、韩国成均馆大学与延世大学等机构，探索东方智慧在现代组织中的落地方式。",
+    "newsEyebrow": "近期动态",
+    "newsHeading": "来自课堂与合作",
+    "newsEmpty": "近期暂无动态。",
+    "ctaBlockHeading": "下一次相见，在课堂。",
+    "ctaBlockBody": "GMC 每年举办数十场课程与活动，从槟城的静修到槟城的企业家班。欢迎加入我们。",
+    "ctaBlockCta": "填写报名表"
+  },
+  "about": {
+    "eyebrow": "关于我们",
+    "heading": "Glorious Melodies Consultancy",
+    "subHeading": "一所面向全球的东方智慧教育机构。",
+    "body": "创立于新加坡，GMC 以吴博士为首，凝聚来自各国的学者与业界领袖，推动「经典现代化、智慧生活化」的教育理念。"
+  },
+  "programs": {
+    "eyebrow": "课程项目",
+    "heading": "以不同的门径，走向同一处。",
+    "ph": {
+      "title": "人文哲学",
+      "teaser": "在哲学、人文、管理之间，建立可以判断的思维。"
+    },
+    "bp": {
+      "title": "企业家班",
+      "teaser": "东西方管理哲学的创造性整合，培养以人文为基的企业家。"
+    },
+    "cw": {
+      "title": "食尚财富",
+      "teaser": "以营养、情绪与身心训练为入口，让健康成为最具价值的资产。"
+    },
+    "bgm": {
+      "title": "BGM 少年班",
+      "teaser": "12–18 岁青少年的素养课程，以经典为锚，塑造自律与自信。"
+    }
+  },
+  "register": {
+    "title": "报名",
+    "subtitle": "请如实填写以下信息。我们会通过邮件和 WhatsApp 与你确认。",
+    "selectEvent": "选择课程",
+    "selectEventPlaceholder": "请选择",
+    "nameCn": "中文姓名",
+    "nameEn": "英文姓名（护照名）",
+    "nameEnHint": "请与护照一致，便于后续行程安排",
+    "email": "电子邮箱",
+    "phone": "手机号码",
+    "phoneHint": "请包含国家区号，例如 +65 …",
+    "region": "所在地区",
+    "language": "偏好语言",
+    "languageZh": "中文",
+    "languageEn": "英文",
+    "languageBoth": "双语",
+    "gender": "性别",
+    "genderMale": "男",
+    "genderFemale": "女",
+    "genderOther": "其他",
+    "genderUndisclosed": "不透露",
+    "birthDate": "出生日期",
+    "occupation": "职业",
+    "industry": "行业",
+    "referrerHeading": "感召报名",
+    "referrerNote": "请填写带你来的介绍人。我们会通过他/她进一步了解你的情况。",
+    "referrerName": "介绍人姓名",
+    "referrerContact": "介绍人联系方式",
+    "submit": "提交报名",
+    "submittingAria": "正在提交",
+    "successTitle": "报名信息已收到",
+    "successBody": "我们已将确认链接发送到你的邮箱与 WhatsApp。请点击链接核对信息。",
+    "errorTitle": "无法提交",
+    "errorGeneric": "出现了一些问题，请稍后再试或联系客服。",
+    "errorDuplicate": "该学员已报名此课程。"
+  },
+  "confirm": {
+    "title": "核对你的信息",
+    "subtitle": "以下是我们收到的资料。如有错漏，请在此修改后提交。",
+    "submit": "确认无误",
+    "expiredTitle": "链接已失效",
+    "expiredBody": "请联系客服重新获取确认链接。",
+    "successTitle": "已确认",
+    "successBody": "感谢你的确认。我们的客服稍后会与你联系，完成进一步的资料补充。"
+  },
+  "regions": {
+    "SG": "新加坡",
+    "MY": "马来西亚",
+    "TW": "台湾",
+    "HK": "香港",
+    "CN": "中国大陆",
+    "ID": "印度尼西亚",
+    "TH": "泰国",
+    "VN": "越南",
+    "PH": "菲律宾",
+    "US": "美国",
+    "AU": "澳大利亚",
+    "OTHER": "其他"
+  }
+}
