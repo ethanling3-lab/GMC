@@ -99,6 +99,7 @@ export function EventFormBuilder({ eventId, initial, canEdit }: Props) {
               { value: "option_2", label_en: "Option 2", label_cn: "选项二" },
             ]
           : [],
+      allow_other: false,
     };
     setDraft((d) => ({ ...d, fields: [...d.fields, defaults] }));
     setExpandedId(id);
@@ -636,11 +637,23 @@ function FieldEditor({
       ) : null}
 
       {needsOptions ? (
-        <OptionsEditor
-          options={field.options}
-          onChange={(options) => onChange({ options })}
-          canEdit={canEdit}
-        />
+        <>
+          <OptionsEditor
+            options={field.options}
+            onChange={(options) => onChange({ options })}
+            canEdit={canEdit}
+          />
+          <label className="inline-flex items-center gap-2 text-[12.5px] text-[var(--ink)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!field.allow_other}
+              onChange={(e) => onChange({ allow_other: e.target.checked })}
+              disabled={!canEdit}
+              className="h-4 w-4 accent-[var(--cinnabar)]"
+            />
+            Allow &ldquo;Other&rdquo; with free-text · 允许「其他」自填
+          </label>
+        </>
       ) : null}
     </div>
   );

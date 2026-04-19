@@ -13,6 +13,7 @@ import {
 } from "@/lib/enrollments-shared";
 import {
   normalizeFormSchema,
+  OTHER_OPTION_VALUE,
   type CustomField,
   type FormSchema,
 } from "@/lib/event-form-schema";
@@ -520,19 +521,25 @@ function AnswersGrid({
   fields: CustomField[];
   answers: Record<string, unknown>;
 }) {
-  function formatValue(f: CustomField, v: unknown): string {
+  function formatValue(f: CustomField, v: unknown, otherText?: unknown): string {
     if (v === undefined || v === null || v === "") return "—";
     if (f.type === "checkbox_ack") return v === true ? "✓ Acknowledged" : "—";
+    const otherLabel =
+      typeof otherText === "string" && otherText.trim()
+        ? `Other: ${otherText.trim()}`
+        : "Other";
     if (f.type === "multi_select") {
       if (!Array.isArray(v) || v.length === 0) return "—";
       return v
         .map((val) => {
+          if (val === OTHER_OPTION_VALUE) return otherLabel;
           const opt = f.options.find((o) => o.value === val);
           return opt ? opt.label_en || opt.label_cn || opt.value : String(val);
         })
         .join(", ");
     }
     if (f.type === "single_select") {
+      if (v === OTHER_OPTION_VALUE) return otherLabel;
       const opt = f.options.find((o) => o.value === v);
       return opt ? opt.label_en || opt.label_cn || opt.value : String(v);
     }
@@ -547,7 +554,7 @@ function AnswersGrid({
       </div>
       <dl className="grid md:grid-cols-2 gap-x-8 gap-y-4">
         {fields.map((f) => {
-          const v = formatValue(f, answers[f.id]);
+          const v = formatValue(f, answers[f.id], answers[`${f.id}__other`]);
           const labelPrimary = f.label_en || f.label_cn || f.id;
           const labelSecondary =
             f.label_en && f.label_cn && f.label_en !== f.label_cn

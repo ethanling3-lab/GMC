@@ -11,23 +11,29 @@ export function FieldBlock({
   hint,
   required,
   error,
+  reserveHint,
   children,
 }: {
   label: string;
   hint?: string;
   required?: boolean;
   error?: string;
+  // When true, always render the hint row (even if `hint` is empty). Use on
+  // sibling fields in a 2-col grid so the input tops stay aligned when only
+  // one side of the pair has a hint.
+  reserveHint?: boolean;
   children: React.ReactNode;
 }) {
+  const showHintRow = Boolean(hint) || reserveHint;
   return (
     <label className="block">
       <span className="flex items-baseline gap-2 text-[13px] font-medium text-[var(--ink)] tracking-[0.02em]">
         {label}
         {required ? <span className="text-[var(--cinnabar)]">*</span> : null}
       </span>
-      {hint ? (
-        <span className="block mt-1 text-[12px] text-[var(--ink-mute)]">
-          {hint}
+      {showHintRow ? (
+        <span className="block mt-1 text-[12px] leading-[1.4] text-[var(--ink-mute)] min-h-[17px]">
+          {hint || "\u00A0"}
         </span>
       ) : null}
       <div className="mt-2">{children}</div>

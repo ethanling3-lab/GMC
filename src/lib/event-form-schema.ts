@@ -40,6 +40,8 @@ export const CustomFieldOptionSchema = z.object({
 });
 export type CustomFieldOption = z.infer<typeof CustomFieldOptionSchema>;
 
+export const OTHER_OPTION_VALUE = "__other__";
+
 export const CustomFieldSchema = z
   .object({
     id: fieldId,
@@ -50,6 +52,10 @@ export const CustomFieldSchema = z
     hint_cn: z.string().trim().max(600).default(""),
     required: z.boolean().default(false),
     options: z.array(CustomFieldOptionSchema).max(40).default([]),
+    // When true on a single/multi-select field, the renderer appends an
+    // "Other" choice + free-text input. The text lands at
+    // `answers.<field_id>__other` alongside the choice value.
+    allow_other: z.boolean().default(false),
   })
   .superRefine((f, ctx) => {
     if (f.type === "single_select" || f.type === "multi_select") {
@@ -151,6 +157,11 @@ export function buildAnswersSchema(schema: FormSchema | null | undefined) {
   for (const f of fields) {
     if (f.type === "section_header") continue;
 
+    // For selects with `allow_other`, widen the accepted value list to include
+    // the synthetic sentinel and also register a paired `__other` text key.
+    const allowOther =
+      (f.type === "single_select" || f.type === "multi_select") && f.allow_other;
+
     let base: z.ZodTypeAny;
     switch (f.type) {
       case "short_text":
@@ -166,11 +177,13 @@ export function buildAnswersSchema(schema: FormSchema | null | undefined) {
         break;
       case "single_select": {
         const values = f.options.map((o) => o.value);
+        if (allowOther) values.push(OTHER_OPTION_VALUE);
         base = z.enum(values as [string, ...string[]]);
         break;
       }
       case "multi_select": {
         const values = f.options.map((o) => o.value);
+        if (allowOther) values.push(OTHER_OPTION_VALUE);
         base = z.array(z.enum(values as [string, ...string[]])).max(40);
         break;
       }
@@ -200,9 +213,45 @@ export function buildAnswersSchema(schema: FormSchema | null | undefined) {
         shape[f.id] = base.optional();
       }
     }
+
+    // Paired free-text for the "Other" choice. Required only when the user
+    // actually picked "other"; the superRefine below enforces that.
+    if (allowOther) {
+      shape[`${f.id}__other`] = z
+        .string()
+        .trim()
+        .max(500)
+        .optional()
+        .or(z.literal(""));
+    }
   }
 
-  return z.object(shape).strip();
+  const obj = z.object(shape).strip();
+  // Cross-field: when "Other" is the chosen option, the companion text must be
+  // non-empty. Runs after per-field validation so plain required/optional
+  // errors still surface correctly.
+  return obj.superRefine((data, ctx) => {
+    for (const f of fields) {
+      if (f.type !== "single_select" && f.type !== "multi_select") continue;
+      if (!f.allow_other) continue;
+      const value = (data as Record<string, unknown>)[f.id];
+      const otherText = (data as Record<string, unknown>)[`${f.id}__other`];
+      const picked =
+        f.type === "single_select"
+          ? value === OTHER_OPTION_VALUE
+          : Array.isArray(value) && value.includes(OTHER_OPTION_VALUE);
+      if (picked) {
+        const text = typeof otherText === "string" ? otherText.trim() : "";
+        if (!text) {
+          ctx.addIssue({
+            code: "custom",
+            path: [`${f.id}__other`],
+            message: "Please describe your answer.",
+          });
+        }
+      }
+    }
+  });
 }
 
 export type AnswersShape = Record<string, string | string[] | boolean>;
