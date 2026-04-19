@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { ExtractedRowSchema } from "@/lib/participant-import-schema";
 
@@ -30,7 +30,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
-  const supabase = await createSupabaseServerClient();
+  // Service-role client bypasses RLS — participants INSERT is restricted to
+  // the public registration form; admin-origin inserts need service role.
+  const supabase = createSupabaseServiceClient();
 
   const results: InsertResult[] = [];
   const toInsert = body.rows.map((r) => ({

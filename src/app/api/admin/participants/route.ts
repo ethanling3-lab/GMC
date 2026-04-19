@@ -120,7 +120,9 @@ export async function POST(req: Request) {
     }
   }
 
-  const supabase = await createSupabaseServerClient();
+  // Use the service-role client for INSERT — the table's RLS only lets the public
+  // role insert via the registration form, so the regular admin session gets blocked.
+  const supabase = createSupabaseServiceClient();
 
   const { data: created, error: insertErr } = await supabase
     .from("participants")
