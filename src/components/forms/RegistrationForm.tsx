@@ -52,7 +52,6 @@ type SubmitState =
   | { status: "submitting" }
   | {
       status: "success";
-      regionId?: string | null;
       devConfirmUrl?: string;
     }
   | { status: "error"; code?: string };
@@ -196,7 +195,6 @@ export function RegistrationForm({
       }
       setSubmitState({
         status: "success",
-        regionId: json.region_id,
         devConfirmUrl: json.dev_confirm_url,
       });
     } catch {
@@ -214,14 +212,6 @@ export function RegistrationForm({
         <p className="mt-4 text-[15px] leading-[1.75] text-[var(--ink-soft)] max-w-[540px]">
           {t("register.successBody")}
         </p>
-        {submitState.regionId ? (
-          <p className="mt-6 text-[12px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
-            {locale === "zh" ? "你的参与者编号" : "Your participant ID"} ·{" "}
-            <span className="text-[var(--cinnabar)] font-semibold">
-              {submitState.regionId}
-            </span>
-          </p>
-        ) : null}
         {submitState.devConfirmUrl ? (
           <div className="mt-6 p-4 bg-[var(--paper-deep)] border border-dashed border-[var(--paper-shadow)] text-[12px]">
             <div className="text-[var(--ink-mute)] tracking-[0.18em] uppercase mb-1">
