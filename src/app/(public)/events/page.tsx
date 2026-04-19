@@ -116,7 +116,11 @@ export default async function EventsPage() {
                              hover:-translate-y-[2px] hover:shadow-[var(--shadow-paper-2)]
                              overflow-hidden"
                 >
-                  <div className="relative aspect-[16/9] bg-[var(--paper-deep)] overflow-hidden">
+                  <Link
+                    href={`/events/${encodeURIComponent(e.slug)}`}
+                    aria-label={e.title}
+                    className="relative aspect-[16/9] bg-[var(--paper-deep)] overflow-hidden block focus-visible:outline-none"
+                  >
                     {e.poster_url ? (
                       <Image
                         src={e.poster_url}
@@ -145,14 +149,43 @@ export default async function EventsPage() {
                           "linear-gradient(180deg, rgba(11,41,84,0) 55%, rgba(11,41,84,0.45) 100%)",
                       }}
                     />
-                  </div>
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-4 right-4 inline-flex items-center gap-2 h-8 px-3 rounded-full
+                                 bg-[rgba(251,252,255,0.92)] backdrop-blur-sm text-[var(--ink)]
+                                 text-[10.5px] tracking-[0.22em] uppercase font-medium
+                                 shadow-[0_2px_8px_rgba(11,41,84,0.12)]
+                                 opacity-0 translate-y-1
+                                 transition-[opacity,transform] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                                 group-hover:opacity-100 group-hover:translate-y-0"
+                    >
+                      {locale === "zh" ? "查看详情" : "View details"}
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M3 7h8M7.5 3l4 4-4 4" />
+                      </svg>
+                    </span>
+                  </Link>
 
                   <div className="flex flex-col flex-1 p-7 md:p-8">
                   <span className="font-display text-[13px] tracking-[0.24em] text-[var(--cinnabar)]">
                     — {String(i + 1).padStart(2, "0")}
                   </span>
                   <h3 className="mt-4 font-display text-[26px] leading-[1.2] text-[var(--ink)]">
-                    {e.title}
+                    <Link
+                      href={`/events/${encodeURIComponent(e.slug)}`}
+                      className="transition-colors duration-[var(--dur-fast)] hover:text-[var(--cinnabar)]"
+                    >
+                      {e.title}
+                    </Link>
                   </h3>
                   {e.heading ? (
                     <p className="mt-3 text-[15px] leading-[1.7] text-[var(--ink-soft)]">
