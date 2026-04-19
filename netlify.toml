@@ -1,10 +1,11 @@
 # Netlify configuration for the GMC CRM.
 #
-# The Next.js Runtime packages all SSR + API routes into one function named
-# `___netlify-handler`. Set its timeout to 26s (Pro ceiling) so Claude Haiku
-# extraction calls don't get killed at the default 10s.
+# The Next.js Runtime packages all SSR + API routes into one system function
+# called `___netlify-server-handler` (confirmed in the Netlify dashboard →
+# Logs & metrics → Functions). Set its timeout to 26s (Pro ceiling) so Claude
+# Haiku extraction calls don't get killed at the default 10s.
 
-[functions."___netlify-handler"]
+[functions."___netlify-server-handler"]
   timeout = 26
 
 [functions."*"]
