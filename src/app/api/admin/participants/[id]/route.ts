@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceClient,
+} from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { applyRoleScope } from "@/lib/participants-query";
 import {
@@ -67,4 +70,27 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   }
 
   return NextResponse.json({ ok: true, id: data?.id, updated_at: data?.updated_at });
+}
+
+export async function DELETE(_req: Request, { params }: RouteCtx) {
+  const admin = await requireAdmin();
+  const { id } = await params;
+
+  // Hard delete is super_admin only — anyone else should archive instead.
+  if (admin.role !== "super_admin") {
+    return NextResponse.json(
+      {
+        error:
+          "Only super admins can permanently delete a participant. Archive it instead.",
+      },
+      { status: 403 },
+    );
+  }
+
+  const service = createSupabaseServiceClient();
+  const { error } = await service.from("participants").delete().eq("id", id);
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
 }

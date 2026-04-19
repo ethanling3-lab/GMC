@@ -38,13 +38,21 @@ const SORTS = [
   { code: "overall_score", label: "Score · high → low" },
 ];
 
+type ArchivedMode = "active" | "archived" | "all";
+
 type Props = {
   initialQ: string;
   activeCount: number;
   totalCount: number | null;
+  initialArchived?: ArchivedMode;
 };
 
-export function FiltersBar({ initialQ, activeCount, totalCount }: Props) {
+export function FiltersBar({
+  initialQ,
+  activeCount,
+  totalCount,
+  initialArchived = "active",
+}: Props) {
   const router = useRouter();
   const sp = useSearchParams();
   const [q, setQ] = useState(initialQ);
@@ -55,6 +63,12 @@ export function FiltersBar({ initialQ, activeCount, totalCount }: Props) {
   const status = sp.get("status") ?? "";
   const motivation = sp.get("motivation") ?? "";
   const sort = sp.get("sort") ?? "recent";
+  const archivedMode: ArchivedMode =
+    (sp.get("archived") as ArchivedMode | null) === "archived"
+      ? "archived"
+      : (sp.get("archived") as ArchivedMode | null) === "all"
+        ? "all"
+        : initialArchived;
 
   // Debounced push of q → URL
   useEffect(() => {
@@ -98,7 +112,12 @@ export function FiltersBar({ initialQ, activeCount, totalCount }: Props) {
   }
 
   const anyFilter =
-    Boolean(q) || Boolean(region) || Boolean(status) || Boolean(motivation) || sort !== "recent";
+    Boolean(q) ||
+    Boolean(region) ||
+    Boolean(status) ||
+    Boolean(motivation) ||
+    sort !== "recent" ||
+    archivedMode !== "active";
 
   return (
     <div
@@ -174,6 +193,44 @@ export function FiltersBar({ initialQ, activeCount, totalCount }: Props) {
           alwaysShowValue
           defaultValue="recent"
         />
+
+        {/* Archived toggle — 3-way segmented */}
+        <div
+          className="inline-flex items-center rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] p-0.5 text-[11px] tracking-[0.04em]"
+          role="group"
+          aria-label="Archived filter"
+        >
+          {(
+            [
+              { code: "active", label: "Active" },
+              { code: "archived", label: "Archived" },
+              { code: "all", label: "All" },
+            ] as { code: ArchivedMode; label: string }[]
+          ).map((opt) => {
+            const selected = archivedMode === opt.code;
+            return (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() =>
+                  update({
+                    archived: opt.code === "active" ? null : opt.code,
+                    page: null,
+                  })
+                }
+                aria-pressed={selected}
+                className={`h-8 px-3 rounded-[var(--radius-pill)] transition-[background-color,color] duration-[var(--dur-fast)]
+                            ${
+                              selected
+                                ? "bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                                : "text-[var(--ink-mute)] hover:text-[var(--ink)]"
+                            }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
 
         {/* Actions */}
         <div className="ml-auto flex items-center gap-2">

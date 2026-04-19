@@ -26,6 +26,7 @@ type ParticipantRow = {
   status: ParticipantStatus;
   overall_score: number | null;
   motivation_tag: string | null;
+  archived_at: string | null;
   created_at: string;
 };
 
@@ -106,7 +107,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
   const supabase = await createSupabaseServerClient();
 
   const baseSelect =
-    "id, region_id, name_cn, name_en, region, email, status, overall_score, motivation_tag, created_at";
+    "id, region_id, name_cn, name_en, region, email, status, overall_score, motivation_tag, archived_at, created_at";
 
   // Filtered + scoped query
   let q = supabase.from("participants").select(baseSelect, { count: "exact" });
@@ -212,6 +213,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         initialQ={filters.q ?? ""}
         activeCount={total}
         totalCount={scopeTotal ?? null}
+        initialArchived={filters.archived ?? "active"}
       />
 
       {/* Table */}
@@ -264,13 +266,15 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
               ) : (
                 rows.map((r) => {
                   const tone = STATUS_TONE[r.status];
+                  const isArchived = Boolean(r.archived_at);
                   return (
                     <tr
                       key={r.id}
-                      className="border-t border-[var(--paper-shadow)]
+                      className={`border-t border-[var(--paper-shadow)]
                                  hover:bg-[var(--paper-deep)]/55
                                  transition-colors duration-[var(--dur-fast)]
-                                 has-[a:focus-visible]:bg-[var(--paper-deep)]/55"
+                                 has-[a:focus-visible]:bg-[var(--paper-deep)]/55
+                                 ${isArchived ? "opacity-70" : ""}`}
                     >
                       <td className="px-5 py-3.5 font-mono text-[12px] text-[var(--ink)] whitespace-nowrap">
                         <Link
@@ -301,17 +305,24 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
                         )}
                       </td>
                       <td className="px-5 py-3.5">
-                        <span
-                          className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
-                                      text-[10px] tracking-[0.14em] uppercase
-                                      ${tone.bg} ${tone.ring} ${tone.text}`}
-                        >
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span
-                            className={`w-1.5 h-1.5 rounded-full ${tone.dot}`}
-                            aria-hidden="true"
-                          />
-                          {STATUS_LABEL[r.status]}
-                        </span>
+                            className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
+                                        text-[10px] tracking-[0.14em] uppercase
+                                        ${tone.bg} ${tone.ring} ${tone.text}`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${tone.dot}`}
+                              aria-hidden="true"
+                            />
+                            {STATUS_LABEL[r.status]}
+                          </span>
+                          {isArchived ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-[var(--ink-faint)]/30 bg-[var(--paper-deep)] text-[9px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">
+                              Archived
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-5 py-3.5 text-right tabular-nums">
                         {typeof r.overall_score === "number" ? (

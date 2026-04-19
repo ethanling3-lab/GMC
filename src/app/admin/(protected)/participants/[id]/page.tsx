@@ -18,6 +18,7 @@ import {
   type AdminOption,
 } from "@/components/admin/participants/detail/AssignmentEditor";
 import { StatusEditor } from "@/components/admin/participants/detail/StatusEditor";
+import { ActionsCard } from "@/components/admin/participants/detail/ActionsCard";
 
 export const metadata: Metadata = { title: "Participant" };
 export const dynamic = "force-dynamic";
@@ -50,6 +51,7 @@ type Participant = {
   assigned_cs_id: string | null;
   cs_notes: string | null;
   status: ParticipantStatus;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -156,8 +158,40 @@ export default async function ParticipantDetailPage({ params }: Props) {
 
   const regionName = p.region ? REGION_NAME[p.region] ?? p.region : null;
 
+  const archived = Boolean(p.archived_at);
+
   return (
     <div className="relative">
+      {/* Archived banner */}
+      {archived ? (
+        <div className="mb-5 rounded-[var(--radius-md)] border border-[var(--ink-faint)]/30 bg-[var(--paper-deep)] px-4 py-3 flex items-center gap-3">
+          <span
+            className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[var(--ink)] text-[var(--paper-warm)]"
+            aria-hidden="true"
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="3" width="10" height="3" rx="0.5" />
+              <path d="M3 6v5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V6" />
+              <path d="M5.5 8.5h3" />
+            </svg>
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="text-[12.5px] font-medium text-[var(--ink)]">
+              Archived
+            </div>
+            <div className="text-[11.5px] text-[var(--ink-mute)]">
+              Hidden from the default list since{" "}
+              {new Date(p.archived_at!).toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })}
+              . Unarchive from the Actions card below.
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Back */}
       <div className="flex items-center gap-2 text-[11px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
         <Link
@@ -347,8 +381,23 @@ export default async function ParticipantDetailPage({ params }: Props) {
                   {formatDateTime(p.updated_at)}
                 </dd>
               </div>
+              {archived ? (
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-[var(--ink-mute)]">Archived</dt>
+                  <dd className="text-[var(--ink)] tabular-nums">
+                    {formatDateTime(p.archived_at)}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </div>
+
+          <ActionsCard
+            participantId={p.id}
+            regionIdDisplay={p.region_id}
+            archivedAt={p.archived_at}
+            canDelete={admin.role === "super_admin"}
+          />
         </aside>
       </div>
     </div>

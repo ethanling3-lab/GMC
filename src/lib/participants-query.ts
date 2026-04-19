@@ -21,6 +21,8 @@ export type ParticipantFilters = {
   status?: ParticipantStatus;
   motivation?: MotivationTag;
   sort?: "recent" | "oldest" | "region_id" | "name" | "overall_score";
+  /** "active" (default) hides archived, "archived" shows only archived, "all" shows both. */
+  archived?: "active" | "archived" | "all";
 };
 
 export const DEFAULT_PAGE_SIZE = 50;
@@ -85,7 +87,11 @@ export function parseFilters(sp: URLSearchParams | Record<string, string | strin
       ? (sortRaw as ParticipantFilters["sort"])
       : "recent";
 
-  return { q, region, status, motivation, sort };
+  const archivedRaw = get("archived");
+  const archived: ParticipantFilters["archived"] =
+    archivedRaw === "archived" || archivedRaw === "all" ? archivedRaw : "active";
+
+  return { q, region, status, motivation, sort, archived };
 }
 
 export function parsePage(sp: URLSearchParams | Record<string, string | string[] | undefined>): number {
@@ -107,7 +113,7 @@ type QueryBuilder = ReturnType<SupabaseClient["from"]>;
  * Pass the *select* builder, not a raw .from() — caller controls which columns.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any; order: any }>(
+export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any; order: any; is: any; not: any }>(
   query: T,
   filters: ParticipantFilters,
 ): T {
@@ -129,6 +135,12 @@ export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any
   if (filters.region) q = q.eq("region", filters.region);
   if (filters.status) q = q.eq("status", filters.status);
   if (filters.motivation) q = q.eq("motivation_tag", filters.motivation);
+
+  // Archived scope — default excludes archived.
+  const archivedMode = filters.archived ?? "active";
+  if (archivedMode === "active") q = q.is("archived_at", null);
+  else if (archivedMode === "archived") q = q.not("archived_at", "is", null);
+  // "all" adds no filter
 
   switch (filters.sort) {
     case "oldest":
