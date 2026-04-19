@@ -132,12 +132,16 @@ export function EventEditor({
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
 
-  // Keep draft.poster_url in sync with the server: the PosterUploader writes
-  // it directly via its own API + router.refresh(), bypassing draft. Without
+  // Keep poster_url + gallery in sync with the server: the PosterUploader
+  // writes both via its own API + router.refresh(), bypassing draft. Without
   // this effect the draft would look "dirty" right after an upload.
   useEffect(() => {
-    setDraft((d) => ({ ...d, poster_url: event.poster_url }));
-  }, [event.poster_url]);
+    setDraft((d) => ({
+      ...d,
+      poster_url: event.poster_url,
+      gallery: event.gallery,
+    }));
+  }, [event.poster_url, event.gallery]);
 
   useEffect(() => {
     if (!statusMenuOpen) return;
@@ -232,8 +236,7 @@ export function EventEditor({
         sub_heading_cn: draft.sub_heading_cn,
         body_en: draft.body_en,
         body_cn: draft.body_cn,
-        // poster_url is owned by PosterUploader — do not overwrite here.
-        gallery: draft.gallery,
+        // poster_url + gallery are owned by PosterUploader — not written here.
         type: draft.type,
         mode: draft.mode,
         venue: draft.venue,
@@ -461,33 +464,24 @@ export function EventEditor({
           </Field>
         </div>
 
-        <Field label="Poster" labelZh="海报" hint="Shown as the hero on the public event page and thumbnail in the listing. Uploads save immediately — no need to hit Save.">
+        <Field
+          label="Poster slideshow"
+          labelZh="海报"
+          hint="Drop images to build a slideshow. The first one is the hero — shown on the listing card, the top of the public event page, and in share previews. Uploads save immediately."
+        >
           <PosterUploader
             eventId={event.id}
-            initialUrl={event.poster_url}
-            canEdit={canEdit}
-          />
-        </Field>
-
-        <Field
-          label="Gallery URLs"
-          labelZh="图库"
-          hint="Optional — one URL per line. Supporting images shown below the fold on the public event page."
-        >
-          <textarea
-            rows={4}
-            value={draft.gallery.join("\n")}
-            onChange={(e) =>
-              update(
-                "gallery",
-                e.target.value
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              )
+            initialImages={
+              event.poster_url
+                ? [
+                    event.poster_url,
+                    ...(event.gallery ?? []).filter(
+                      (g) => g && g !== event.poster_url,
+                    ),
+                  ]
+                : (event.gallery ?? []).filter(Boolean)
             }
-            disabled={!canEdit}
-            className={textareaCls("font-mono text-[12px]")}
+            canEdit={canEdit}
           />
         </Field>
       </Section>
