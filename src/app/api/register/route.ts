@@ -181,11 +181,13 @@ export async function POST(req: NextRequest) {
   const confirmationToken = createToken("confirm_registration", `${participantId}:${event.id}`);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
+  // Pin `event` here so the narrowing survives into the closure below.
+  const eventRef = event;
   async function insertEnrollment(includeAnswers: boolean) {
     const payload: Record<string, unknown> = {
       participant_id: participantId,
-      event_id: event.id,
-      status: event.requires_approval ? "pending_approval" : "approved",
+      event_id: eventRef.id,
+      status: eventRef.requires_approval ? "pending_approval" : "approved",
       confirmation_token: confirmationToken,
       confirmation_token_expires_at: expiresAt,
     };

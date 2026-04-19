@@ -134,7 +134,8 @@ export function RegistrationForm({
     formState: { errors },
   } = useForm<RegistrationFormValues>({
     // Cast keeps react-hook-form happy — the resolver is built dynamically from the event schema.
-    resolver: resolver as unknown as Parameters<typeof useForm<RegistrationFormValues>>[0]["resolver"],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: resolver as any,
     defaultValues: {
       event_slug: defaultEventSlug ?? "",
       language: locale === "en" ? "en" : "zh",

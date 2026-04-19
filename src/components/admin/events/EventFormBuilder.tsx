@@ -801,6 +801,8 @@ function PreviewModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Preview-only: validation here is cosmetic. Just need the resolver shape
+  // to satisfy react-hook-form so the dynamic renderer can hydrate fields.
   const resolver = useMemo(
     () => zodResolver(buildAnswersSchema(schema).partial()),
     [schema],
@@ -811,7 +813,8 @@ function PreviewModal({
     control,
     formState: { errors },
   } = useForm<{ answers: Record<string, unknown> }>({
-    resolver,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: resolver as any,
     defaultValues: { answers: {} },
     mode: "onBlur",
   });
