@@ -1,8 +1,11 @@
 # Netlify configuration for the GMC CRM.
 #
-# Synchronous function timeout — Claude Haiku 4.5 extraction (AI Import) can take
-# 10–20s end-to-end. 10s default was killing those calls with 504s.
-# 26s is the ceiling on Netlify Pro. Wildcard applies to every function.
+# The Next.js Runtime packages all SSR + API routes into one function named
+# `___netlify-handler`. Set its timeout to 26s (Pro ceiling) so Claude Haiku
+# extraction calls don't get killed at the default 10s.
+
+[functions."___netlify-handler"]
+  timeout = 26
 
 [functions."*"]
   timeout = 26
