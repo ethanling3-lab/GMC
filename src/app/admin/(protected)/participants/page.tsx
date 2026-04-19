@@ -143,6 +143,31 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
 
         <div className="flex items-center gap-3 flex-wrap">
           <Link
+            href="/admin/participants/new"
+            className="inline-flex items-center gap-2 h-10 px-4 rounded-[var(--radius-pill)]
+                       border border-[var(--paper-shadow)] bg-[var(--paper-warm)]
+                       text-[12.5px] tracking-[0.04em] font-medium text-[var(--ink)]
+                       hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                       focus-visible:shadow-[var(--shadow-focus)]
+                       transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)]
+                       active:scale-[0.98]"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M6 2v8M2 6h8" />
+            </svg>
+            New
+          </Link>
+          <Link
             href="/admin/participants/import"
             className="inline-flex items-center gap-2 h-10 px-4 rounded-[var(--radius-pill)]
                        bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)] text-[var(--paper-warm)]
