@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   GENDERS,
@@ -13,12 +13,27 @@ import {
 
 type Stage = "idle" | "extracting" | "reviewing" | "importing" | "done";
 
+type JobStatus = "pending" | "running" | "done" | "error";
+
+type StatusResponse = {
+  jobId: string;
+  status: JobStatus;
+  rows: ExtractedRow[];
+  summary: string;
+  source: string;
+  usage?: { input_tokens: number; output_tokens: number };
+  error?: string;
+};
+
 type ExtractResponse = {
   rows: ExtractedRow[];
   summary: string;
   source: string;
   usage?: { input_tokens: number; output_tokens: number };
 };
+
+const POLL_INTERVAL_MS = 2000;
+const POLL_TIMEOUT_MS = 15 * 60 * 1000;
 
 type SaveResponse = {
   total: number;
@@ -65,10 +80,20 @@ export function ImportFlow() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [result, setResult] = useState<SaveResponse | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollCancelRef = useRef<{ cancelled: boolean } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollCancelRef.current) pollCancelRef.current.cancelled = true;
+    };
+  }, []);
 
   function reset() {
+    if (pollCancelRef.current) pollCancelRef.current.cancelled = true;
+    pollCancelRef.current = null;
     setStage("idle");
     setFile(null);
     setPasted("");
@@ -77,6 +102,7 @@ export function ImportFlow() {
     setRows([]);
     setSelected(new Set());
     setResult(null);
+    setJobStatus(null);
   }
 
   function handleFileChange(f: File | null) {
@@ -108,6 +134,11 @@ export function ImportFlow() {
   async function startExtract() {
     setError(null);
     setStage("extracting");
+    setJobStatus("pending");
+
+    if (pollCancelRef.current) pollCancelRef.current.cancelled = true;
+    const cancel = { cancelled: false };
+    pollCancelRef.current = cancel;
 
     try {
       let body: FormData;
@@ -143,26 +174,77 @@ export function ImportFlow() {
         throw new Error("Select a file or paste some data first.");
       }
 
-      const res = await fetch("/api/admin/participants/import/extract", {
+      const kickoff = await fetch("/api/admin/participants/import/extract", {
         method: "POST",
         body,
       });
 
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload.error ?? `Extract failed (${res.status})`);
+      if (!kickoff.ok && kickoff.status !== 202) {
+        const payload = await kickoff.json().catch(() => ({}));
+        throw new Error(payload.error ?? `Extract failed (${kickoff.status})`);
       }
 
-      const data = (await res.json()) as ExtractResponse;
-      setExtracted(data);
-      setRows(data.rows);
-      setSelected(new Set(data.rows.map((_, i) => i)));
+      const { jobId } = (await kickoff.json()) as { jobId: string };
+      if (!jobId) throw new Error("Kickoff returned no jobId");
+
+      const final = await pollJob(jobId, cancel);
+      if (cancel.cancelled) return;
+
+      if (final.status === "error") {
+        throw new Error(final.error ?? "Extraction failed");
+      }
+
+      const extractData: ExtractResponse = {
+        rows: final.rows,
+        summary: final.summary,
+        source: final.source,
+        usage: final.usage,
+      };
+      setExtracted(extractData);
+      setRows(final.rows);
+      setSelected(new Set(final.rows.map((_, i) => i)));
+      setJobStatus("done");
       setStage("reviewing");
     } catch (err) {
+      if (cancel.cancelled) return;
       const msg = err instanceof Error ? err.message : "Extract failed";
       setError(msg);
       setStage("idle");
+      setJobStatus(null);
     }
+  }
+
+  async function pollJob(
+    jobId: string,
+    cancel: { cancelled: boolean },
+  ): Promise<StatusResponse> {
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+    while (!cancel.cancelled) {
+      const res = await fetch(
+        `/api/admin/participants/import/status/${jobId}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.error ?? `Status check failed (${res.status})`);
+      }
+      const data = (await res.json()) as StatusResponse;
+      setJobStatus(data.status);
+
+      if (data.status === "done" || data.status === "error") return data;
+      if (Date.now() > deadline) {
+        throw new Error("Extraction timed out — job still running after 15 min");
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    return {
+      jobId,
+      status: "pending",
+      rows: [],
+      summary: "",
+      source: "",
+    };
   }
 
   function updateRow(index: number, patch: Partial<ExtractedRow>) {
@@ -247,6 +329,7 @@ export function ImportFlow() {
         pasted={pasted}
         dragOver={dragOver}
         extracting={stage === "extracting"}
+        jobStatus={jobStatus}
         error={error}
         fileInputRef={fileInputRef}
         onFileChange={handleFileChange}
@@ -292,6 +375,7 @@ function UploadStep({
   pasted,
   dragOver,
   extracting,
+  jobStatus,
   error,
   fileInputRef,
   onFileChange,
@@ -304,6 +388,7 @@ function UploadStep({
   pasted: string;
   dragOver: boolean;
   extracting: boolean;
+  jobStatus: JobStatus | null;
   error: string | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   onFileChange: (f: File | null) => void;
@@ -313,6 +398,13 @@ function UploadStep({
   onExtract: () => void;
 }) {
   const canExtract = Boolean(file || pasted.trim());
+
+  const busyLabel =
+    jobStatus === "pending"
+      ? "Queued — waiting for Claude…"
+      : jobStatus === "running"
+        ? "Claude is reading…"
+        : "Uploading…";
 
   return (
     <div className="flex flex-col gap-6">
@@ -473,7 +565,7 @@ function UploadStep({
           {extracting ? (
             <>
               <Spinner />
-              Claude is reading…
+              {busyLabel}
             </>
           ) : (
             <>
