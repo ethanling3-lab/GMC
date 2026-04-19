@@ -10,6 +10,7 @@ import {
   SCOPED_ALLOWED_FIELDS,
   type ParticipantUpdate,
 } from "@/lib/participant-update-schema";
+import { REGIONS } from "@/lib/participant-import-schema";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -78,16 +79,17 @@ export async function POST(req: Request) {
     );
   }
   if (admin.role === "regional_lead") {
-    if (!admin.region) {
+    if (!admin.region || !(REGIONS as readonly string[]).includes(admin.region)) {
       return NextResponse.json(
-        { error: "Regional lead has no region configured." },
+        { error: "Regional lead has no valid region configured." },
         { status: 403 },
       );
     }
-    if (!fields.region) fields.region = admin.region;
-    if (fields.region !== admin.region) {
+    const adminRegion = admin.region as (typeof REGIONS)[number];
+    if (!fields.region) fields.region = adminRegion;
+    if (fields.region !== adminRegion) {
       return NextResponse.json(
-        { error: `Region must be ${admin.region} for your role.` },
+        { error: `Region must be ${adminRegion} for your role.` },
         { status: 403 },
       );
     }
