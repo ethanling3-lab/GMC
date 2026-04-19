@@ -2,7 +2,7 @@
 #
 # Synchronous function timeout — Claude Haiku 4.5 extraction (AI Import) can take
 # 10–20s end-to-end. 10s default was killing those calls with 504s.
-# 26s is the ceiling on Netlify Pro.
+# 26s is the ceiling on Netlify Pro. Wildcard applies to every function.
 
-[functions]
+[functions."*"]
   timeout = 26
