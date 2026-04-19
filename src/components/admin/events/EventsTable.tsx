@@ -416,7 +416,7 @@ export function EventsTable({ rows, hasFilters, canEdit, canCreate }: Props) {
                           {TYPE_LABEL[r.type].en}
                         </span>
                         <span className="text-[10px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
-                          {r.mode === "online" ? "Online" : "In-person"}
+                          {r.mode === "online" ? "Online" : "Offline"}
                         </span>
                       </div>
                     </td>

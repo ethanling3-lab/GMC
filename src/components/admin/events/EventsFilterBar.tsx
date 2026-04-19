@@ -21,7 +21,7 @@ const TYPES = [
 
 const MODES = [
   { code: "", label: "Any mode" },
-  { code: "offline", label: "In-person" },
+  { code: "offline", label: "Offline" },
   { code: "online", label: "Online" },
 ];
 

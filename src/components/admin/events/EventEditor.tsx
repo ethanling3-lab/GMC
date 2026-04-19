@@ -321,7 +321,7 @@ export function EventEditor({
               </span>
               <span className="text-[var(--ink-faint)]">·</span>
               <span className="text-[11px] tracking-[0.14em] uppercase text-[var(--ink-mute)]">
-                {draft.mode === "online" ? "Online" : "In-person"}
+                {draft.mode === "online" ? "Online" : "Offline"}
               </span>
             </div>
           </div>
@@ -500,7 +500,7 @@ export function EventEditor({
           </Field>
           <Field label="Mode" labelZh="形式">
             <select value={draft.mode} onChange={(e) => update("mode", e.target.value as EventMode)} disabled={!canEdit} className={inputCls()}>
-              <option value="offline">In-person · 实体</option>
+              <option value="offline">Offline · 实体</option>
               <option value="online">Online · 线上</option>
             </select>
           </Field>

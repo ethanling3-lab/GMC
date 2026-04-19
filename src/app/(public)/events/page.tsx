@@ -179,7 +179,7 @@ export default async function EventsPage() {
                             : "Online"
                           : locale === "zh"
                             ? "实体"
-                            : "In-person"}
+                            : "Offline"}
                       </span>
                     ) : null}
                   </div>

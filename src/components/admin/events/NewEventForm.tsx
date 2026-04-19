@@ -174,7 +174,7 @@ export function NewEventForm() {
                          text-[13px] text-[var(--ink)]
                          focus:border-[var(--cinnabar)]/50 focus:outline-none focus:shadow-[var(--shadow-focus)]"
             >
-              <option value="offline">In-person · 实体</option>
+              <option value="offline">Offline · 实体</option>
               <option value="online">Online · 线上</option>
             </select>
           </Field>
