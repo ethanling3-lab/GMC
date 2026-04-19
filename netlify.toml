@@ -1,21 +1,8 @@
 # Netlify configuration for the GMC CRM.
 #
-# Function timeouts — synchronous functions on Netlify Pro cap at 26 seconds.
-# Claude Haiku 4.5 extraction on a non-trivial file can take 10–20s end-to-end
-# (cold start + upload + tool-use roundtrip), so 10s default causes 504s.
+# Synchronous function timeout — Claude Haiku 4.5 extraction (AI Import) can take
+# 10–20s end-to-end. 10s default was killing those calls with 504s.
+# 26s is the ceiling on Netlify Pro.
 
 [functions]
-  # Default ceiling for every function in the project.
-  timeout = 26
-
-[functions."api/admin/participants/import/extract"]
-  timeout = 26
-
-[functions."api/admin/participants/import/save"]
-  timeout = 26
-
-[functions."api/admin/participants"]
-  timeout = 26
-
-[functions."api/admin/participants/[id]/photo"]
   timeout = 26
