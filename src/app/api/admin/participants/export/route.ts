@@ -25,21 +25,24 @@ type ExportRow = {
   created_at: string;
 };
 
-const HEADERS = [
-  "region_id",
-  "name_en",
-  "name_cn",
-  "region",
-  "email",
-  "phone",
-  "status",
-  "motivation_tag",
-  "financial_score",
-  "influence_score",
-  "overall_score",
-  "is_old_student",
-  "created_at",
-] as const;
+// CSV column headers. The first maps to the DB's region_id column but we
+// expose it as `student_id` in the export since the UI calls it "Student ID".
+const HEADER_TO_COLUMN: Readonly<Record<string, keyof ExportRow>> = {
+  student_id: "region_id",
+  name_en: "name_en",
+  name_cn: "name_cn",
+  region: "region",
+  email: "email",
+  phone: "phone",
+  status: "status",
+  motivation_tag: "motivation_tag",
+  financial_score: "financial_score",
+  influence_score: "influence_score",
+  overall_score: "overall_score",
+  is_old_student: "is_old_student",
+  created_at: "created_at",
+};
+const HEADERS = Object.keys(HEADER_TO_COLUMN) as readonly string[];
 
 function escapeCell(value: unknown): string {
   if (value === null || value === undefined) return "";
@@ -52,7 +55,9 @@ function toCsv(rows: ExportRow[]): string {
   const lines: string[] = [];
   lines.push(HEADERS.join(","));
   for (const r of rows) {
-    lines.push(HEADERS.map((h) => escapeCell((r as Record<string, unknown>)[h])).join(","));
+    lines.push(
+      HEADERS.map((h) => escapeCell(r[HEADER_TO_COLUMN[h]])).join(","),
+    );
   }
   return lines.join("\r\n") + "\r\n";
 }

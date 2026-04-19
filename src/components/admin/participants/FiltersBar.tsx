@@ -33,7 +33,7 @@ const MOTIVATIONS = [
 const SORTS = [
   { code: "recent", label: "Most recent" },
   { code: "oldest", label: "Oldest first" },
-  { code: "region_id", label: "Region ID ↑" },
+  { code: "region_id", label: "Student ID ↑" },
   { code: "name", label: "Name A–Z" },
   { code: "overall_score", label: "Score · high → low" },
 ];
@@ -149,7 +149,7 @@ export function FiltersBar({
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, region ID, email, phone…"
+            placeholder="Search name, student ID, email, phone…"
             aria-label="Search participants"
             className="flex-1 bg-transparent outline-none text-[13px] text-[var(--ink)] placeholder:text-[var(--ink-faint)]"
           />

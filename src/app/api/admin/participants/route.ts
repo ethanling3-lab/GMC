@@ -131,6 +131,19 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (insertErr || !created) {
+    if (
+      insertErr?.code === "23505" ||
+      insertErr?.message?.includes("participants_region_id_key") ||
+      (insertErr?.message && /duplicate key value.*region_id/i.test(insertErr.message))
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "That Student ID is already in use. Pick a different one or leave it blank to auto-assign.",
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { error: insertErr?.message ?? "Insert failed" },
       { status: 500 },

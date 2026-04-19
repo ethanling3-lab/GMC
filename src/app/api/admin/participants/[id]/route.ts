@@ -58,7 +58,11 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data, error } = await supabase
+  // PATCH runs through the service client — the scope check above is the
+  // auth gate, and service role sidesteps any RLS constraints on updates.
+  const service = createSupabaseServiceClient();
+
+  const { data, error } = await service
     .from("participants")
     .update(patch)
     .eq("id", id)
@@ -66,6 +70,20 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     .maybeSingle();
 
   if (error) {
+    // Duplicate Student ID — surface a clean message instead of the raw Postgres text.
+    if (
+      error.code === "23505" ||
+      error.message.includes("participants_region_id_key") ||
+      /duplicate key value.*region_id/i.test(error.message)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "That Student ID is already in use. Pick a different one or leave it blank to keep the current ID.",
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

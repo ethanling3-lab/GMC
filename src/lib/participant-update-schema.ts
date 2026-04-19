@@ -41,6 +41,10 @@ const score = z
 
 export const ParticipantUpdateSchema = z
   .object({
+    region_id: z
+      .union([z.string().trim().min(1).max(50), z.literal(""), z.null()])
+      .optional()
+      .transform((v) => (v === "" || v == null ? null : v)),
     name_en: optionalString,
     name_cn: optionalString,
     email: optionalEmail,
@@ -78,6 +82,7 @@ export type ParticipantUpdate = z.infer<typeof ParticipantUpdateSchema>;
 // Fields that a regional_lead or customer_service admin is allowed to edit.
 // Super admins can edit everything.
 export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
+  "region_id",
   "name_en",
   "name_cn",
   "email",

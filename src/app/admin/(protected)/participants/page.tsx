@@ -137,8 +137,8 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
             Participants
           </h1>
           <p className="mt-4 text-[14px] leading-[1.7] text-[var(--ink-soft)] max-w-[62ch]">
-            Shared across every event. Region IDs are assigned on registration and
-            used for all external references.
+            Shared across every event. Student IDs are assigned on registration —
+            editable by admins and used for all external references.
           </p>
         </div>
 
@@ -225,7 +225,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
           <table className="w-full text-left text-[13px] text-[var(--ink-soft)]">
             <thead className="bg-[var(--paper-deep)]/70 text-[9px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
               <tr>
-                <th scope="col" className="px-5 py-3.5 font-medium">Region ID</th>
+                <th scope="col" className="px-5 py-3.5 font-medium">Student ID</th>
                 <th scope="col" className="px-5 py-3.5 font-medium">Name</th>
                 <th scope="col" className="px-5 py-3.5 font-medium">Region</th>
                 <th scope="col" className="px-5 py-3.5 font-medium">Contact</th>

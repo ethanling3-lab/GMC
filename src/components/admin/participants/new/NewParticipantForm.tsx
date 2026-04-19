@@ -21,6 +21,7 @@ import {
 import type { MotivationTag } from "@/lib/participants-query";
 
 type FormState = {
+  region_id: string;
   name_en: string;
   name_cn: string;
   email: string;
@@ -45,6 +46,7 @@ type FormState = {
 };
 
 const EMPTY: FormState = {
+  region_id: "",
   name_en: "",
   name_cn: "",
   email: "",
@@ -165,6 +167,7 @@ export function NewParticipantForm({
       const payload: Record<string, unknown> = {};
       const emptyToNull = (s: string) => (s.trim() === "" ? null : s.trim());
 
+      payload.region_id = emptyToNull(form.region_id);
       payload.name_en = emptyToNull(form.name_en);
       payload.name_cn = emptyToNull(form.name_cn);
       payload.email = emptyToNull(form.email);
@@ -229,6 +232,14 @@ export function NewParticipantForm({
       {/* Identity */}
       <Section eyebrow="Identity" eyebrowZh="身份" title="Contact & basic info">
         <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
+          <LabelRow label="Student ID · 学员编号">
+            <TextInput
+              mono
+              value={form.region_id}
+              onChange={(v) => setField("region_id", v)}
+              placeholder="Leave blank to auto-assign (e.g. MY001)"
+            />
+          </LabelRow>
           <LabelRow label="Name · EN">
             <TextInput
               value={form.name_en}

@@ -275,7 +275,7 @@ export default async function AdminDashboardPage() {
           </ul>
 
           <div className="mt-6 pt-5 border-t border-[var(--paper-shadow)] text-[12px] leading-[1.7] text-[var(--ink-mute)]">
-            Region IDs (MY · SG · TW · HK · CN) are assigned on registration and stay with
+            Student IDs are assigned on registration, editable by admins, and stay with
             the participant across every event.
           </div>
         </div>

@@ -12,6 +12,7 @@ export const MOTIVATIONS = [
 ] as const;
 
 export const ExtractedRowSchema = z.object({
+  region_id: z.string().nullable(),
   name_en: z.string().nullable(),
   name_cn: z.string().nullable(),
   email: z.string().nullable(),
@@ -43,6 +44,7 @@ Your ONE job: read the tabular/contact data the admin hands you and return a cle
 Rules:
 - Produce ONE row per distinct person. Never duplicate, never invent.
 - If a field is missing in the source, return null — do not guess.
+- **Student ID (\`region_id\`)**: if the source has an existing participant/student ID, put it here EXACTLY as written — including any leading zeros, dashes, or letters. Common column headers: "Student ID", "学员编号", "编号", "ID", "Participant ID", "Member ID", "Region ID". If an ID-looking column is present but blank for this row, return null. If no ID column exists at all, return null — the system will auto-assign one on insert.
 - Names: separate English (\`name_en\`) and Chinese (\`name_cn\`) when both are present. Don't force-romanize Chinese names.
 - Region codes are strict ISO-style: MY | SG | TW | HK | CN. Infer from city / country / phone prefix if obvious (e.g. +60 → MY, +65 → SG, +886 → TW, +852 → HK, +86 → CN). Otherwise null.
 - Phone: preserve international format including the country code when present.

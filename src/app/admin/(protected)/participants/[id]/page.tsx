@@ -275,8 +275,8 @@ export default async function ParticipantDetailPage({ params }: Props) {
         <div className="flex flex-col gap-6">
           <IdentityEditor
             participantId={p.id}
-            regionIdDisplay={p.region_id}
             initial={{
+              region_id: p.region_id,
               name_en: p.name_en,
               name_cn: p.name_cn,
               email: p.email,

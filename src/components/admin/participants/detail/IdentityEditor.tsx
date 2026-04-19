@@ -16,6 +16,7 @@ import {
 } from "@/lib/participant-import-schema";
 
 export type IdentityData = {
+  region_id: string | null;
   name_en: string | null;
   name_cn: string | null;
   email: string | null;
@@ -72,11 +73,9 @@ function formatDate(iso: string | null): string | null {
 export function IdentityEditor({
   participantId,
   initial,
-  regionIdDisplay,
 }: {
   participantId: string;
   initial: IdentityData;
-  regionIdDisplay: string | null;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<IdentityData>(initial);
@@ -110,6 +109,14 @@ export function IdentityEditor({
     >
       {editing ? (
         <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
+          <LabelRow label="Student ID · 学员编号">
+            <TextInput
+              mono
+              value={draft.region_id ?? ""}
+              onChange={(v) => setDraft({ ...draft, region_id: v })}
+              placeholder="MY001 · auto-assigned if empty"
+            />
+          </LabelRow>
           <LabelRow label="Name · EN">
             <TextInput
               value={draft.name_en ?? ""}
@@ -211,8 +218,8 @@ export function IdentityEditor({
               <Empty />
             )}
           </Field>
-          <Field label="Region ID" mono>
-            {regionIdDisplay ?? <Empty />}
+          <Field label="Student ID" labelZh="学员编号" mono>
+            {initial.region_id ?? <Empty />}
           </Field>
           <Field label="Region">
             {regionName ? (

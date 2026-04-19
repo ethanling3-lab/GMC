@@ -24,9 +24,12 @@ type SaveResponse = {
   total: number;
   succeeded: number;
   failed: number;
+  created: number;
+  updated: number;
   results: Array<{
     index: number;
     ok: boolean;
+    mode?: "created" | "updated";
     region_id?: string | null;
     error?: string;
   }>;
@@ -36,6 +39,7 @@ const ACCEPT = ".xlsx,.xls,.csv,.txt,.pdf";
 const MAX_CLIENT_FILE_MB = 20;
 
 const EMPTY_ROW: ExtractedRow = {
+  region_id: null,
   name_en: null,
   name_cn: null,
   email: null,
@@ -516,7 +520,7 @@ function UploadStep({
             {
               n: "04",
               t: "Import",
-              b: "Region IDs (MY001, SG001 …) are assigned automatically on insert.",
+              b: "Student IDs from the source are matched; new rows get one auto-assigned.",
             },
           ].map((s) => (
             <li key={s.n} className="grid grid-cols-[36px_1fr] gap-3">
@@ -643,6 +647,7 @@ function ReviewStep({
             <thead className="bg-[var(--paper-deep)]/60 text-[9px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
               <tr>
                 <th scope="col" className="w-10 px-3 py-3"></th>
+                <th scope="col" className="px-3 py-3 font-medium">Student ID</th>
                 <th scope="col" className="px-3 py-3 font-medium">Name EN</th>
                 <th scope="col" className="px-3 py-3 font-medium">Name 中文</th>
                 <th scope="col" className="px-3 py-3 font-medium">Email</th>
@@ -661,7 +666,7 @@ function ReviewStep({
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-6 py-14 text-center text-[13px] text-[var(--ink-mute)]">
+                  <td colSpan={15} className="px-6 py-14 text-center text-[13px] text-[var(--ink-mute)]">
                     No rows. Add one manually or go back and re-extract.
                   </td>
                 </tr>
@@ -682,6 +687,14 @@ function ReviewStep({
                           onChange={() => onToggleSelect(i)}
                           aria-label={`Select row ${i + 1}`}
                           className="accent-[var(--cinnabar)]"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <CellInput
+                          value={r.region_id}
+                          onChange={(v) => onUpdate(i, { region_id: v })}
+                          width={110}
+                          mono
                         />
                       </td>
                       <td className="px-2 py-1.5">
@@ -910,15 +923,33 @@ function DoneStep({
                 / {result.total.toLocaleString()} imported
               </span>
             </h2>
-            {result.failed > 0 ? (
-              <p className="mt-3 text-[13px] text-[var(--cinnabar-deep)]">
-                {result.failed} row{result.failed === 1 ? "" : "s"} failed — see below.
-              </p>
-            ) : (
-              <p className="mt-3 text-[13px] text-[var(--ink-soft)]">
-                Region IDs have been assigned automatically.
-              </p>
-            )}
+            <p className="mt-3 text-[13px] text-[var(--ink-soft)]">
+              <span>
+                <span className="text-[var(--cinnabar-deep)] font-medium">
+                  {result.created.toLocaleString()}
+                </span>{" "}
+                created
+              </span>
+              {result.updated > 0 ? (
+                <>
+                  {" · "}
+                  <span>
+                    <span className="text-[var(--ink)] font-medium">
+                      {result.updated.toLocaleString()}
+                    </span>{" "}
+                    matched existing Student ID and updated
+                  </span>
+                </>
+              ) : null}
+              {result.failed > 0 ? (
+                <>
+                  {" · "}
+                  <span className="text-[var(--cinnabar-deep)]">
+                    {result.failed} failed — see below
+                  </span>
+                </>
+              ) : null}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Link
@@ -941,14 +972,24 @@ function DoneStep({
       {successRows.length > 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] p-5">
           <div className="text-[10px] tracking-[0.24em] uppercase text-[var(--ink-mute)]">
-            New region IDs · 新编号
+            Student IDs · 学员编号
           </div>
           <ul className="mt-3 flex flex-wrap gap-1.5">
             {successRows.map((r) => (
               <li key={r.index}>
-                <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px] text-[var(--ink)] bg-[var(--paper)] px-2 py-1 rounded-[var(--radius-sm)] border border-[var(--paper-shadow)]">
+                <span
+                  className={`inline-flex items-center gap-1.5 font-mono text-[11.5px] px-2 py-1 rounded-[var(--radius-sm)] border
+                              ${
+                                r.mode === "updated"
+                                  ? "text-[var(--ink-soft)] bg-[var(--paper-deep)] border-[var(--paper-shadow)]"
+                                  : "text-[var(--ink)] bg-[var(--paper)] border-[var(--paper-shadow)]"
+                              }`}
+                  title={r.mode === "updated" ? "Matched existing · updated" : "New"}
+                >
                   <span
-                    className="w-1.5 h-1.5 rounded-full bg-[var(--cinnabar)]"
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      r.mode === "updated" ? "bg-[var(--jade)]" : "bg-[var(--cinnabar)]"
+                    }`}
                     aria-hidden="true"
                   />
                   {r.region_id ?? "—"}
@@ -956,6 +997,16 @@ function DoneStep({
               </li>
             ))}
           </ul>
+          <div className="mt-3 text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
+            <span className="inline-flex items-center gap-1.5 mr-4">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--cinnabar)]" aria-hidden="true" />
+              New
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--jade)]" aria-hidden="true" />
+              Updated existing
+            </span>
+          </div>
         </div>
       ) : null}
 

@@ -46,9 +46,9 @@ export default async function ParticipantsImportPage() {
           </h1>
           <p className="mt-4 max-w-[66ch] text-[14px] leading-[1.7] text-[var(--ink-soft)]">
             Drop an Excel, CSV or PDF — Claude reads it, extracts every
-            participant, and normalises names, regions and dates. You review
-            each row, then confirm. Region IDs are assigned automatically on
-            insert.
+            participant, and normalises names, regions and dates. Existing
+            Student IDs in the source are matched and merged; rows without an
+            ID get a fresh one auto-assigned on insert.
           </p>
         </div>
 
