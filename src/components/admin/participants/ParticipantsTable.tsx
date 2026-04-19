@@ -612,12 +612,11 @@ export function ParticipantsTable({
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50
+          className="toast-in fixed bottom-6 left-1/2 -translate-x-1/2 z-50
                      inline-flex items-center gap-4 pl-5 pr-2 py-2
                      rounded-[var(--radius-pill)]
                      bg-[var(--ink)] text-[var(--paper-warm)]
-                     shadow-[0_12px_32px_rgba(11,41,84,0.28)]
-                     animate-[toast-in_0.2s_ease-out]"
+                     shadow-[0_12px_32px_rgba(11,41,84,0.28)]"
         >
           <span className="text-[13px] tracking-[0.02em]">{toast.message}</span>
           {toast.undo ? (
@@ -650,18 +649,6 @@ export function ParticipantsTable({
         </div>
       ) : null}
 
-      <style jsx>{`
-        @keyframes toast-in {
-          from {
-            transform: translate(-50%, 12px);
-            opacity: 0;
-          }
-          to {
-            transform: translate(-50%, 0);
-            opacity: 1;
-          }
-        }
-      `}</style>
     </div>
   );
 }
