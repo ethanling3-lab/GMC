@@ -3,100 +3,20 @@ import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { EventsFilterBar } from "@/components/admin/events/EventsFilterBar";
+import {
+  EventsTable,
+  type EventRow,
+} from "@/components/admin/events/EventsTable";
 import { Pagination } from "@/components/admin/participants/Pagination";
 import {
   applyEventFilters,
   DEFAULT_PAGE_SIZE,
   parseFilters,
   parsePage,
-  STATUS_LABEL,
-  TYPE_LABEL,
-  type EventStatus,
-  type EventType,
-  type EventMode,
 } from "@/lib/events-query";
 
 export const metadata: Metadata = { title: "Events" };
 export const dynamic = "force-dynamic";
-
-type EventRow = {
-  id: string;
-  slug: string;
-  title_en: string | null;
-  title_cn: string | null;
-  type: EventType;
-  mode: EventMode;
-  status: EventStatus;
-  venue: string | null;
-  city: string | null;
-  country: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  capacity: number | null;
-  price: number | null;
-  currency: string;
-  updated_at: string;
-};
-
-const STATUS_TONE: Record<
-  EventStatus,
-  { dot: string; bg: string; ring: string; text: string }
-> = {
-  draft: {
-    dot: "bg-[var(--ink-faint)]",
-    bg: "bg-[var(--paper)]",
-    ring: "border-[var(--paper-shadow)]",
-    text: "text-[var(--ink-mute)]",
-  },
-  open: {
-    dot: "bg-[var(--jade)]",
-    bg: "bg-[var(--jade-wash)]",
-    ring: "border-[var(--jade)]/25",
-    text: "text-[var(--jade-deep)]",
-  },
-  closed: {
-    dot: "bg-[var(--cinnabar)]",
-    bg: "bg-[var(--cinnabar-wash)]",
-    ring: "border-[var(--cinnabar)]/25",
-    text: "text-[var(--cinnabar-deep)]",
-  },
-  archived: {
-    dot: "bg-[var(--ink)]",
-    bg: "bg-[var(--paper-deep)]",
-    ring: "border-[var(--ink-faint)]/40",
-    text: "text-[var(--ink)]",
-  },
-};
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function formatDateRange(start: string | null, end: string | null): string {
-  if (!start && !end) return "—";
-  if (start && end && start !== end) {
-    return `${formatDate(start)} → ${formatDate(end)}`;
-  }
-  return formatDate(start ?? end);
-}
-
-function title(r: EventRow): string {
-  const en = r.title_en?.trim();
-  const cn = r.title_cn?.trim();
-  if (en && cn) return `${en} · ${cn}`;
-  return en || cn || r.slug;
-}
-
-function formatPrice(price: number | null, currency: string): string {
-  if (price === null || price === undefined) return "—";
-  return `${currency} ${price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-}
 
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -199,130 +119,14 @@ export default async function EventsPage({ searchParams }: PageProps) {
         initialArchived={filters.archived ?? "active"}
       />
 
-      <div
-        className="mt-6 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]
-                   shadow-[var(--shadow-paper-1)] overflow-hidden"
-      >
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-[13px] text-[var(--ink-soft)]">
-            <thead className="bg-[var(--paper-deep)]/70 text-[9px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
-              <tr>
-                <th scope="col" className="px-5 py-3.5 font-medium">Title</th>
-                <th scope="col" className="px-5 py-3.5 font-medium">Type</th>
-                <th scope="col" className="px-5 py-3.5 font-medium">Where</th>
-                <th scope="col" className="px-5 py-3.5 font-medium">Dates</th>
-                <th scope="col" className="px-5 py-3.5 font-medium">Status</th>
-                <th scope="col" className="px-5 py-3.5 font-medium text-right">Capacity</th>
-                <th scope="col" className="px-5 py-3.5 font-medium text-right">Price</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-16 text-center">
-                    <div className="inline-flex flex-col items-center gap-3">
-                      <span
-                        className="inline-flex items-center justify-center w-10 h-10 rounded-full
-                                   border border-[var(--paper-shadow)] bg-[var(--paper)]
-                                   text-[var(--cinnabar)]"
-                        aria-hidden="true"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="2.5" y="3.5" width="11" height="10" rx="1.4" />
-                          <path d="M2.5 6.5h11" />
-                          <path d="M5.5 2v3M10.5 2v3" />
-                        </svg>
-                      </span>
-                      <div className="text-[13px] text-[var(--ink)]">
-                        {filters.q || filters.status || filters.type || filters.mode
-                          ? "No events match these filters"
-                          : "No events yet"}
-                      </div>
-                      <div className="text-[12px] text-[var(--ink-mute)] max-w-[44ch]">
-                        {filters.q || filters.status || filters.type || filters.mode
-                          ? "Try widening the filters or clearing search."
-                          : canCreate
-                            ? "Create the first event — add bilingual titles, dates, pricing, and a target audience filter."
-                            : "Ask a super admin to create the first event."}
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r) => {
-                  const tone = STATUS_TONE[r.status];
-                  const where = [r.venue, r.city, r.country]
-                    .filter(Boolean)
-                    .join(" · ");
-                  return (
-                    <tr
-                      key={r.id}
-                      className="border-t border-[var(--paper-shadow)] hover:bg-[var(--paper-deep)]/55 transition-colors duration-[var(--dur-fast)] has-[a:focus-visible]:bg-[var(--paper-deep)]/55"
-                    >
-                      <td className="px-5 py-3.5">
-                        <Link
-                          href={`/admin/events/${r.id}`}
-                          className="block hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
-                        >
-                          <div className="text-[var(--ink)] font-medium">
-                            {title(r)}
-                          </div>
-                          <div className="mt-0.5 font-mono text-[11px] text-[var(--ink-faint)]">
-                            /{r.slug}
-                          </div>
-                        </Link>
-                      </td>
-                      <td className="px-5 py-3.5 text-[var(--ink-mute)]">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-[12px] text-[var(--ink)]">
-                            {TYPE_LABEL[r.type].en}
-                          </span>
-                          <span className="text-[10px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
-                            {r.mode === "online" ? "Online" : "In-person"}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5 text-[var(--ink-mute)] max-w-[220px] truncate">
-                        {where || (
-                          <span className="text-[var(--ink-faint)]">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3.5 text-[var(--ink-mute)] whitespace-nowrap">
-                        {formatDateRange(r.start_date, r.end_date)}
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span
-                          className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
-                                      text-[10px] tracking-[0.14em] uppercase
-                                      ${tone.bg} ${tone.ring} ${tone.text}`}
-                        >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${tone.dot}`}
-                            aria-hidden="true"
-                          />
-                          {STATUS_LABEL[r.status].en}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 text-right tabular-nums">
-                        {typeof r.capacity === "number" ? (
-                          <span className="text-[var(--ink)]">
-                            {r.capacity.toLocaleString()}
-                          </span>
-                        ) : (
-                          <span className="text-[var(--ink-faint)]">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3.5 text-right tabular-nums text-[var(--ink)]">
-                        {formatPrice(r.price, r.currency)}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <EventsTable
+        rows={rows}
+        hasFilters={Boolean(
+          filters.q || filters.status || filters.type || filters.mode,
+        )}
+        canEdit={admin.role === "super_admin"}
+        canCreate={canCreate}
+      />
 
       <Pagination page={page} pageSize={pageSize} total={total} />
     </div>
