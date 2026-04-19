@@ -111,11 +111,44 @@ export default async function EventsPage() {
                 <Link
                   key={e.slug}
                   href={`/events/${e.slug}`}
-                  className="group flex flex-col bg-[var(--paper-warm)] border border-[var(--paper-shadow)] p-7 md:p-8
+                  className="group flex flex-col bg-[var(--paper-warm)] border border-[var(--paper-shadow)]
                              shadow-[var(--shadow-paper-1)]
                              transition-[transform,box-shadow] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                             hover:-translate-y-[2px] hover:shadow-[var(--shadow-paper-2)]"
+                             hover:-translate-y-[2px] hover:shadow-[var(--shadow-paper-2)]
+                             overflow-hidden"
                 >
+                  <div className="relative aspect-[16/9] bg-[var(--paper-deep)] overflow-hidden">
+                    {e.poster_url ? (
+                      <Image
+                        src={e.poster_url}
+                        alt={e.title}
+                        fill
+                        sizes="(min-width: 1280px) 624px, (min-width: 768px) 50vw, 100vw"
+                        className="object-cover transition-transform duration-[var(--dur-slow)] ease-[var(--ease-out)] group-hover:scale-[1.02]"
+                        unoptimized
+                      />
+                    ) : (
+                      <div
+                        aria-hidden="true"
+                        className="absolute inset-0"
+                        style={{
+                          background:
+                            "radial-gradient(540px 340px at 50% 30%, rgba(37,99,235,0.08), transparent 65%)," +
+                            "linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%)",
+                        }}
+                      />
+                    )}
+                    <div
+                      aria-hidden="true"
+                      className="absolute inset-0 mix-blend-multiply"
+                      style={{
+                        background:
+                          "linear-gradient(180deg, rgba(11,41,84,0) 55%, rgba(11,41,84,0.45) 100%)",
+                      }}
+                    />
+                  </div>
+
+                  <div className="flex flex-col flex-1 p-7 md:p-8">
                   <span className="font-display text-[13px] tracking-[0.24em] text-[var(--cinnabar)]">
                     — {String(i + 1).padStart(2, "0")}
                   </span>
@@ -191,6 +224,7 @@ export default async function EventsPage() {
                         : "Requires approval · enrolments are reviewed before confirmation."}
                     </p>
                   ) : null}
+                  </div>
                 </Link>
               );
             })}
