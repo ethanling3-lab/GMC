@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useLocale } from "@/lib/locale-client";
 import {
@@ -16,6 +16,7 @@ import {
 import { DynamicFormFields } from "./DynamicFormFields";
 import {
   FieldBlock,
+  PhoneField,
   SelectField,
   TextField,
 } from "./_primitives";
@@ -69,7 +70,7 @@ type RegistrationFormValues = {
   email: string;
   phone: string;
   region: string;
-  language: "zh" | "en" | "both";
+  language: "zh" | "en" | "both" | "other";
   gender: "male" | "female" | "other" | "undisclosed";
   birth_date?: string;
   occupation?: string;
@@ -77,6 +78,7 @@ type RegistrationFormValues = {
   referrer_name?: string;
   referrer_contact?: string;
   region_other?: string;
+  language_other?: string;
   prefill_token?: string;
   answers: Record<string, unknown>;
 };
@@ -163,8 +165,9 @@ export function RegistrationForm({
     setSelectedSlug(watchedSlug || "");
   }, [watchedSlug]);
 
-  // Reveal the "please specify" input inline when Region is set to Other.
+  // Reveal the "please specify" input inline when Region / Language is "Other".
   const watchedRegion = watch("region");
+  const watchedLanguage = watch("language");
 
   // When the selected event changes, reset `answers` to the new schema's defaults
   // but preserve all other identity fields the user may have typed.
@@ -342,13 +345,18 @@ export function RegistrationForm({
           required
           error={errors.phone?.message}
         >
-          <TextField
-            type="tel"
-            inputMode="tel"
-            {...register("phone")}
-            autoComplete="tel"
-            placeholder="+65 8888 8888"
-            error={!!errors.phone}
+          <Controller
+            control={control}
+            name="phone"
+            render={({ field }) => (
+              <PhoneField
+                name={field.name}
+                value={field.value ?? ""}
+                onChange={field.onChange}
+                locale={locale}
+                error={!!errors.phone}
+              />
+            )}
           />
         </FieldBlock>
       </div>
@@ -394,13 +402,35 @@ export function RegistrationForm({
         <FieldBlock
           label={t("register.language")}
           required
-          error={errors.language?.message}
+          error={errors.language?.message || errors.language_other?.message}
         >
           <SelectField {...register("language")} error={!!errors.language}>
             <option value="zh">{t("register.languageZh")}</option>
             <option value="en">{t("register.languageEn")}</option>
             <option value="both">{t("register.languageBoth")}</option>
+            <option value="other">{t("register.languageOther")}</option>
           </SelectField>
+          {watchedLanguage === "other" ? (
+            <div className="mt-3 pl-4 border-l-2 border-[var(--cinnabar)]/50">
+              <label className="block text-[11px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">
+                {t("register.languageOtherSpecify")}
+              </label>
+              <input
+                type="text"
+                {...register("language_other")}
+                placeholder={t("register.languageOtherPlaceholder")}
+                className={
+                  "mt-1 block w-full h-10 px-3 bg-[var(--paper-warm)] border-0 border-b-[1.5px] " +
+                  "text-[15px] text-[var(--ink)] placeholder:text-[var(--ink-faint)] " +
+                  "transition-[border-color,background-color] duration-[var(--dur-fast)] ease-[var(--ease-out)] " +
+                  "hover:border-[var(--ink-mute)] focus:outline-none focus:border-[var(--cinnabar)] focus:bg-white " +
+                  (errors.language_other
+                    ? "border-[var(--cinnabar)]"
+                    : "border-[var(--paper-shadow)]")
+                }
+              />
+            </div>
+          ) : null}
         </FieldBlock>
       </div>
 
@@ -490,6 +520,7 @@ export function RegistrationForm({
             </FieldBlock>
             <FieldBlock
               label={t("register.referrerContact")}
+              required
               error={errors.referrer_contact?.message}
             >
               <TextField

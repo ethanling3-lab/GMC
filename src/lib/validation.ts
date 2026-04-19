@@ -78,7 +78,8 @@ export function buildRegistrationSchemaFor(
       .regex(/^[+0-9()\s-]+$/, "Invalid phone format"),
     region: z.enum(SUPPORTED_REGIONS, { message: "Please pick your region" }),
     region_other: z.string().trim().max(80).optional().or(z.literal("")),
-    language: z.enum(["zh", "en", "both"]).default("zh"),
+    language: z.enum(["zh", "en", "both", "other"]).default("zh"),
+    language_other: z.string().trim().max(80).optional().or(z.literal("")),
     gender: i.require_gender
       ? z.enum(["male", "female", "other"], {
           message: "Please pick your gender",
@@ -101,14 +102,18 @@ export function buildRegistrationSchemaFor(
     referrer_name: i.require_referrer
       ? requiredStr("Referrer is required")
       : optionalStr,
-    referrer_contact: z.string().trim().max(120).optional().or(z.literal("")),
+    referrer_contact: i.require_referrer
+      ? requiredStr("Referrer contact is required")
+      : optionalStr,
 
     prefill_token: z.string().max(200).optional(),
 
     answers: buildAnswersSchema(formSchema),
   });
 
-  // When region === "OTHER", the companion text field is required.
+  // Cross-field invariants:
+  //  - region === "OTHER" needs region_other text
+  //  - language === "other" needs language_other text
   return base.superRefine((data, ctx) => {
     if (data.region === "OTHER") {
       const txt = (data.region_other ?? "").trim();
@@ -117,6 +122,16 @@ export function buildRegistrationSchemaFor(
           code: "custom",
           path: ["region_other"],
           message: "Please specify your country / region.",
+        });
+      }
+    }
+    if (data.language === "other") {
+      const txt = (data.language_other ?? "").trim();
+      if (!txt) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["language_other"],
+          message: "Please specify your preferred language.",
         });
       }
     }

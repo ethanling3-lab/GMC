@@ -171,6 +171,123 @@ export function CheckboxField({
   );
 }
 
+// Country calling codes for the phone input dropdown. Ordered with the most
+// common Dr Wu regions first, then a small set of frequent outliers. The
+// label mirrors what participants expect to see ("+65 Singapore" / "+65
+// 新加坡"). Safe to extend later without a migration — the stored phone
+// value is just the composed "+<code> <digits>" string.
+export const PHONE_COUNTRY_CODES: {
+  code: string;
+  label_en: string;
+  label_cn: string;
+}[] = [
+  { code: "+65", label_en: "Singapore", label_cn: "新加坡" },
+  { code: "+60", label_en: "Malaysia", label_cn: "马来西亚" },
+  { code: "+886", label_en: "Taiwan", label_cn: "台湾" },
+  { code: "+852", label_en: "Hong Kong", label_cn: "香港" },
+  { code: "+86", label_en: "China", label_cn: "中国" },
+  { code: "+853", label_en: "Macau", label_cn: "澳门" },
+  { code: "+62", label_en: "Indonesia", label_cn: "印尼" },
+  { code: "+66", label_en: "Thailand", label_cn: "泰国" },
+  { code: "+84", label_en: "Vietnam", label_cn: "越南" },
+  { code: "+63", label_en: "Philippines", label_cn: "菲律宾" },
+  { code: "+1", label_en: "US / Canada", label_cn: "美国 / 加拿大" },
+  { code: "+61", label_en: "Australia", label_cn: "澳大利亚" },
+  { code: "+64", label_en: "New Zealand", label_cn: "新西兰" },
+  { code: "+44", label_en: "United Kingdom", label_cn: "英国" },
+  { code: "+81", label_en: "Japan", label_cn: "日本" },
+  { code: "+82", label_en: "South Korea", label_cn: "韩国" },
+  { code: "+49", label_en: "Germany", label_cn: "德国" },
+  { code: "+33", label_en: "France", label_cn: "法国" },
+];
+
+// Split a stored phone value into { code, digits }. Accepts "+65 91234567",
+// "+6591234567", or just digits. Defaults to +65 if no code recognised.
+export function splitPhone(value: string): { code: string; digits: string } {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return { code: "+65", digits: "" };
+  const match = trimmed.match(/^(\+\d{1,4})\s*(.*)$/);
+  if (match && PHONE_COUNTRY_CODES.some((c) => c.code === match[1])) {
+    return { code: match[1], digits: match[2].replace(/\s+/g, " ").trim() };
+  }
+  // No prefix — treat the whole thing as digits, keep code empty.
+  return { code: "+65", digits: trimmed };
+}
+
+export function PhoneField({
+  value,
+  onChange,
+  error,
+  locale,
+  placeholder,
+  name,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  error?: boolean;
+  locale: "zh" | "en";
+  placeholder?: string;
+  name?: string;
+}) {
+  const { code, digits } = splitPhone(value);
+
+  function pushCode(next: string) {
+    onChange(`${next} ${digits}`.trim());
+  }
+  function pushDigits(next: string) {
+    // Allow digits, spaces, dashes, parens — strip everything else.
+    const cleaned = next.replace(/[^\d()\s-]/g, "");
+    onChange(`${code} ${cleaned}`.trim());
+  }
+
+  return (
+    <div className="grid grid-cols-[120px_1fr] gap-2">
+      <div className="relative">
+        <select
+          value={code}
+          onChange={(e) => pushCode(e.target.value)}
+          aria-label={locale === "zh" ? "国际区号" : "Country calling code"}
+          className={`${fieldCls} pr-8 appearance-none text-[14px] tabular-nums ${
+            error ? "border-[var(--cinnabar)]" : "border-[var(--paper-shadow)]"
+          }`}
+        >
+          {PHONE_COUNTRY_CODES.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.code} · {locale === "zh" ? c.label_cn : c.label_en}
+            </option>
+          ))}
+        </select>
+        <svg
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--ink-mute)]"
+          viewBox="0 0 12 12"
+          fill="none"
+        >
+          <path
+            d="M2 4.5l4 4 4-4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </div>
+      <input
+        type="tel"
+        inputMode="tel"
+        autoComplete="tel-national"
+        name={name}
+        value={digits}
+        onChange={(e) => pushDigits(e.target.value)}
+        placeholder={placeholder ?? "8888 8888"}
+        className={`${fieldCls} ${
+          error ? "border-[var(--cinnabar)]" : "border-[var(--paper-shadow)]"
+        }`}
+      />
+    </div>
+  );
+}
+
 // Paragraph-above-checkbox block for agreements. The terms copy is whatever
 // the admin wrote in the builder (EN + CN both shown, stacked); the checkbox
 // itself carries a fixed bilingual "我已阅读并同意 / I hereby acknowledge…"

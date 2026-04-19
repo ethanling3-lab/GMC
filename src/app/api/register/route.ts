@@ -105,13 +105,24 @@ export async function POST(req: NextRequest) {
       ? input.region_other.trim()
       : input.region;
 
+  // Same treatment for language: "other" + free-text collapses to the typed
+  // value (e.g. "French"). Confirmation email copy falls back to English.
+  const resolvedLanguage =
+    input.language === "other" &&
+    input.language_other &&
+    input.language_other.trim()
+      ? input.language_other.trim()
+      : input.language;
+  const emailLocale: "zh" | "en" =
+    input.language === "en" ? "en" : input.language === "zh" ? "zh" : "en";
+
   const participantPayload = {
     name_cn: input.name_cn || null,
     name_en: input.name_en,
     email: input.email,
     phone: input.phone,
     region: resolvedRegion,
-    language: input.language,
+    language: resolvedLanguage,
     gender: input.gender,
     birth_date: input.birth_date || null,
     occupation: input.occupation || null,
@@ -245,9 +256,12 @@ export async function POST(req: NextRequest) {
 
   const emailRes = await sendEmail({
     to: input.email,
-    subject: input.language === "en" ? "Please confirm your GMC registration" : "请核对你的 GMC 报名信息",
+    subject:
+      emailLocale === "en"
+        ? "Please confirm your GMC registration"
+        : "请核对你的 GMC 报名信息",
     html: buildConfirmationEmail({
-      locale: input.language === "en" ? "en" : "zh",
+      locale: emailLocale,
       name: input.name_en,
       confirmUrl,
     }),
@@ -256,7 +270,7 @@ export async function POST(req: NextRequest) {
   const waRes = await sendWhatsAppTemplate({
     to: input.phone,
     template: "gmc_confirm_registration",
-    languageCode: input.language === "en" ? "en_US" : "zh_CN",
+    languageCode: emailLocale === "en" ? "en_US" : "zh_CN",
     components: [
       {
         type: "body",
