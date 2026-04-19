@@ -7,8 +7,8 @@ import { useState } from "react";
 const TYPES: { code: string; label: string }[] = [
   { code: "retreat", label: "Retreat · 静修" },
   { code: "course", label: "Course · 课程" },
-  { code: "workshop", label: "Workshop · 工作坊" },
-  { code: "seminar", label: "Seminar · 讲座" },
+  { code: "single_class", label: "Single class · 单课" },
+  { code: "delivery_class", label: "Delivery class · 交付课" },
   { code: "other", label: "Other · 其他" },
 ];
 

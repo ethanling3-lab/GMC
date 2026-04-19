@@ -21,7 +21,12 @@ export type MotivationTag =
   | "spiritual"
   | "other";
 
-export type EventType = "retreat" | "course" | "workshop" | "seminar" | "other";
+export type EventType =
+  | "retreat"
+  | "course"
+  | "single_class"
+  | "delivery_class"
+  | "other";
 export type EventMode = "online" | "offline";
 export type EventStatus = "draft" | "open" | "closed" | "archived";
 

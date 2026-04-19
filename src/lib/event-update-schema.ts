@@ -22,7 +22,7 @@ export const EventCreateSchema = z.object({
   title_en: z.string().trim().max(200).nullable().optional(),
   title_cn: z.string().trim().max(200).nullable().optional(),
   type: z
-    .enum(["retreat", "course", "workshop", "seminar", "other"])
+    .enum(["retreat", "course", "single_class", "delivery_class", "other"])
     .default("course"),
   mode: z.enum(["online", "offline"]).default("offline"),
 });
@@ -45,7 +45,7 @@ export const EventUpdateSchema = z
     gallery: z.array(z.string().url()).max(40).optional(),
 
     type: z
-      .enum(["retreat", "course", "workshop", "seminar", "other"])
+      .enum(["retreat", "course", "single_class", "delivery_class", "other"])
       .optional(),
     mode: z.enum(["online", "offline"]).optional(),
     venue: z.string().trim().max(200).nullable().optional(),

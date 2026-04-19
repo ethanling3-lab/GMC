@@ -45,7 +45,13 @@ export type EventFull = {
   updated_at: string;
 };
 
-const TYPES: EventType[] = ["retreat", "course", "workshop", "seminar", "other"];
+const TYPES: EventType[] = [
+  "retreat",
+  "course",
+  "single_class",
+  "delivery_class",
+  "other",
+];
 const ALL_STATUSES: EventStatus[] = ["draft", "open", "closed", "archived"];
 
 const STATUS_TONE: Record<

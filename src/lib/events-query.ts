@@ -21,8 +21,8 @@ const STATUS_VALUES: EventStatus[] = ["draft", "open", "closed", "archived"];
 const TYPE_VALUES: EventType[] = [
   "retreat",
   "course",
-  "workshop",
-  "seminar",
+  "single_class",
+  "delivery_class",
   "other",
 ];
 const MODE_VALUES: EventMode[] = ["online", "offline"];
