@@ -78,7 +78,7 @@ export function buildRegistrationSchemaFor(
       .regex(/^[+0-9()\s-]+$/, "Invalid phone format"),
     region: z.enum(SUPPORTED_REGIONS, { message: "Please pick your region" }),
     region_other: z.string().trim().max(80).optional().or(z.literal("")),
-    language: z.enum(["zh", "en", "both", "other"]).default("zh"),
+    language: z.enum(["zh", "en", "other"]).default("zh"),
     language_other: z.string().trim().max(80).optional().or(z.literal("")),
     gender: i.require_gender
       ? z.enum(["male", "female", "other"], {

@@ -70,7 +70,7 @@ type RegistrationFormValues = {
   email: string;
   phone: string;
   region: string;
-  language: "zh" | "en" | "both" | "other";
+  language: "zh" | "en" | "other";
   gender: "male" | "female" | "other" | "undisclosed";
   birth_date?: string;
   occupation?: string;
@@ -405,7 +405,6 @@ export function RegistrationForm({
           <SelectField {...register("language")} error={!!errors.language}>
             <option value="zh">{t("register.languageZh")}</option>
             <option value="en">{t("register.languageEn")}</option>
-            <option value="both">{t("register.languageBoth")}</option>
             <option value="other">{t("register.languageOther")}</option>
           </SelectField>
           {watchedLanguage === "other" ? (
