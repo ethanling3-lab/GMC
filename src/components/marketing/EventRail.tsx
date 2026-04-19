@@ -92,10 +92,10 @@ export function EventRail({ items, eyebrow, heading, sub, viewAllHref, emptyLabe
               key={ev.slug}
               href={`/events/${ev.slug}`}
               className="group flex-none w-[82%] sm:w-[55%] md:w-[38%] lg:w-[30%] snap-start
-                         bg-[var(--paper-warm)] border border-[var(--paper-shadow)] p-7 md:p-8
-                         shadow-[var(--shadow-paper-1)]
-                         transition-[transform,box-shadow,border-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                         hover:-translate-y-[2px] hover:shadow-[var(--shadow-paper-2)] hover:border-[var(--cinnabar)]/35"
+                         bg-[var(--paper-deep)] p-7 md:p-8
+                         rounded-[var(--radius-lg)]
+                         transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                         hover:-translate-y-[2px] hover:shadow-[var(--shadow-paper-2)] hover:bg-[var(--paper-warm)]"
             >
               <span className="font-display text-[13px] tracking-[0.24em] text-[var(--cinnabar)]">
                 — {String(i + 1).padStart(2, "0")}
@@ -156,7 +156,7 @@ function ChevronButton({
       onClick={onClick}
       disabled={!enabled}
       aria-label={isNext ? (locale === "zh" ? "下一个" : "Next") : locale === "zh" ? "上一个" : "Previous"}
-      className="w-10 h-10 flex items-center justify-center border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink)]
+      className="w-10 h-10 flex items-center justify-center rounded-full border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink)]
                  transition-[background-color,border-color,color,opacity,transform] duration-[var(--dur-base)] ease-[var(--ease-spring)]
                  hover:bg-[var(--ink)] hover:text-[var(--paper-warm)] hover:border-[var(--ink)]
                  active:translate-y-[1px] disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-[var(--paper-warm)] disabled:hover:text-[var(--ink)]"

@@ -14,10 +14,10 @@ export function NewsCard({ href, title, excerpt, dateLabel, tag, readMoreLabel, 
   return (
     <Link
       href={href}
-      className={`group flex flex-col h-full bg-[var(--paper-warm)] border border-[var(--paper-shadow)] p-7
-                  shadow-[var(--shadow-paper-1)]
-                  transition-[transform,box-shadow,border-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                  hover:-translate-y-[2px] hover:shadow-[var(--shadow-paper-2)] hover:border-[var(--cinnabar)]/35
+      className={`group flex flex-col h-full bg-[var(--paper-deep)] p-7
+                  rounded-[var(--radius-lg)]
+                  transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                  hover:-translate-y-[2px] hover:shadow-[var(--shadow-paper-2)] hover:bg-[var(--paper-warm)]
                   focus-visible:-translate-y-[2px] ${className}`}
     >
       {(dateLabel || tag) ? (

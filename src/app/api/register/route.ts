@@ -220,15 +220,15 @@ function buildConfirmationEmail({
     : `If the link doesn't work, copy and paste it into your browser.<br>For any questions, please contact the GMC team.`;
   return `<!doctype html>
 <html><head><meta charset="utf-8"></head>
-<body style="margin:0;padding:40px 16px;background:#F7F2E7;font-family:Georgia,serif;color:#14110F;">
-  <div style="max-width:560px;margin:0 auto;background:#FBF7EE;padding:48px 40px;box-shadow:0 2px 8px rgba(139,42,28,0.05);">
-    <div style="display:inline-block;padding:10px 14px;background:#8B2A1C;color:#FBF7EE;font-weight:700;letter-spacing:0.04em;transform:rotate(-4deg);">GMC</div>
-    <h1 style="font-size:28px;line-height:1.2;margin:32px 0 16px;color:#14110F;letter-spacing:-0.02em;">${greeting}</h1>
-    <p style="font-size:15px;line-height:1.75;margin:0 0 28px;color:#3A332E;">${body}</p>
-    <a href="${confirmUrl}" style="display:inline-block;padding:14px 28px;background:#14110F;color:#FBF7EE;text-decoration:none;letter-spacing:0.08em;text-transform:uppercase;font-size:12px;font-weight:600;">${isZh ? "核对信息" : "Confirm details"}</a>
-    <p style="margin:28px 0 0;font-size:12px;color:#7A6F66;line-height:1.7;">${footer}</p>
-    <hr style="border:none;border-top:1px solid #D9CFB7;margin:32px 0;">
-    <p style="margin:0;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#7A6F66;">Glorious Melodies Consultancy · Singapore</p>
+<body style="margin:0;padding:40px 16px;background:#F6F9FF;font-family:Georgia,serif;color:#0B2954;">
+  <div style="max-width:560px;margin:0 auto;background:#FBFCFF;padding:48px 40px;border-radius:16px;box-shadow:0 2px 10px rgba(37,99,235,0.08);">
+    <div style="display:inline-block;padding:10px 14px;border-radius:999px;background:#2563EB;color:#FBFCFF;font-weight:600;letter-spacing:0.04em;">GMC</div>
+    <h1 style="font-size:28px;line-height:1.2;margin:32px 0 16px;color:#0B2954;letter-spacing:-0.02em;">${greeting}</h1>
+    <p style="font-size:15px;line-height:1.75;margin:0 0 28px;color:#1E3A6B;">${body}</p>
+    <a href="${confirmUrl}" style="display:inline-block;padding:14px 26px;border-radius:999px;background:#2563EB;color:#FBFCFF;text-decoration:none;letter-spacing:0.02em;font-size:13px;font-weight:500;box-shadow:0 4px 14px rgba(37,99,235,0.28);">${isZh ? "核对信息" : "Confirm details"}</a>
+    <p style="margin:28px 0 0;font-size:12px;color:#5A6B8A;line-height:1.7;">${footer}</p>
+    <hr style="border:none;border-top:1px solid #CEDAF0;margin:32px 0;">
+    <p style="margin:0;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#5A6B8A;">Glorious Melodies Consultancy · Singapore</p>
   </div>
 </body></html>`;
 }

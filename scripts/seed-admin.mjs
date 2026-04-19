@@ -3,26 +3,29 @@
 //
 // Reads env from process.env or .env.local / .env (first found).
 //
-// Required env:
+// Required env (read from process.env or .env.local / .env):
 //   NEXT_PUBLIC_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
-//   SEED_EMAIL
-//   SEED_PASSWORD            (min 8 chars recommended)
 //
-// Optional:
-//   SEED_ROLE                (default: super_admin)
+// You will be prompted for email + password if not set via env vars.
+// Password input is hidden (masked as ****).
+//
+// Optional env:
+//   SEED_EMAIL, SEED_PASSWORD     (skip the prompts — but password
+//                                  will land in shell history)
+//   SEED_ROLE                     (default: super_admin)
 //   SEED_NAME_EN, SEED_NAME_CN, SEED_REGION
 //
-// Example:
-//   SEED_EMAIL=you@example.com SEED_PASSWORD='long-random' \
-//     node scripts/seed-admin.mjs
+// Recommended usage (interactive, password never in history):
+//   npm run seed-admin
 //
 // Security:
 //   - Service-role key is only read from env; never logged.
-//   - Password is never echoed back in output.
+//   - Password is never echoed and never logged.
 
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, existsSync } from "node:fs";
+import { createInterface } from "node:readline";
 
 function loadDotEnv() {
   for (const f of [".env.local", ".env"]) {
@@ -40,12 +43,71 @@ function loadDotEnv() {
   }
 }
 
+// Plain prompt — echoes input.
+function ask(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+// Silent prompt — masks input as *. Used for passwords.
+function askSilent(question) {
+  return new Promise((resolve, reject) => {
+    if (!process.stdin.isTTY) {
+      reject(new Error("stdin is not a TTY — set SEED_PASSWORD env var instead"));
+      return;
+    }
+    process.stdout.write(question);
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+
+    let buf = "";
+    const onData = (ch) => {
+      // Handle each character event (could be a string of one char in raw mode).
+      for (const c of ch) {
+        if (c === "\r" || c === "\n") {
+          stdin.setRawMode(false);
+          stdin.pause();
+          stdin.removeListener("data", onData);
+          process.stdout.write("\n");
+          resolve(buf);
+          return;
+        }
+        if (c === "\u0003") {
+          // Ctrl+C
+          stdin.setRawMode(false);
+          stdin.pause();
+          process.stdout.write("\n");
+          process.exit(130);
+        }
+        if (c === "\u007f" || c === "\b") {
+          // Backspace
+          if (buf.length > 0) {
+            buf = buf.slice(0, -1);
+            process.stdout.write("\b \b");
+          }
+          continue;
+        }
+        buf += c;
+        process.stdout.write("*");
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
+
 loadDotEnv();
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const email = process.env.SEED_EMAIL;
-const password = process.env.SEED_PASSWORD;
+let email = process.env.SEED_EMAIL;
+let password = process.env.SEED_PASSWORD;
 const role = process.env.SEED_ROLE ?? "super_admin";
 const nameEn = process.env.SEED_NAME_EN ?? null;
 const nameCn = process.env.SEED_NAME_CN ?? null;
@@ -58,9 +120,20 @@ function die(msg) {
 
 if (!url) die("NEXT_PUBLIC_SUPABASE_URL missing");
 if (!serviceKey) die("SUPABASE_SERVICE_ROLE_KEY missing");
-if (!email) die("SEED_EMAIL missing");
-if (!password) die("SEED_PASSWORD missing");
-if (password.length < 8) die("SEED_PASSWORD must be at least 8 characters");
+
+if (!email) {
+  email = await ask("Email: ");
+  if (!email) die("Email is required");
+}
+
+if (!password) {
+  password = await askSilent("Password (input hidden): ");
+  if (!password) die("Password is required");
+  const confirm = await askSilent("Confirm password:        ");
+  if (password !== confirm) die("Passwords did not match");
+}
+
+if (password.length < 8) die("Password must be at least 8 characters");
 
 const ALLOWED_ROLES = [
   "super_admin",

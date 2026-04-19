@@ -25,9 +25,10 @@ export function CTABlock({ eyebrow, heading, body, cta, secondary }: Props) {
         <div className="mt-10 flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
           <Link
             href={cta.href}
-            className="group inline-flex items-center justify-center gap-3 h-12 px-8 bg-[var(--ink)] text-[var(--paper-warm)] text-[13px] font-semibold tracking-[0.12em] uppercase
-                       transition-[transform,box-shadow] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                       hover:-translate-y-[1px] hover:shadow-[var(--shadow-paper-2)]
+            className="group inline-flex items-center justify-center gap-3 h-12 px-7 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[13px] font-medium tracking-[0.02em]
+                       shadow-[0_4px_14px_rgba(37,99,235,0.28)]
+                       transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                       hover:-translate-y-[1px] hover:bg-[var(--cinnabar-deep)] hover:shadow-[0_10px_24px_rgba(37,99,235,0.38)]
                        active:translate-y-0"
           >
             {cta.label}
@@ -39,10 +40,10 @@ export function CTABlock({ eyebrow, heading, body, cta, secondary }: Props) {
           {secondary ? (
             <Link
               href={secondary.href}
-              className="inline-flex items-center justify-center gap-3 h-12 px-8 bg-transparent text-[var(--ink)] text-[13px] font-semibold tracking-[0.12em] uppercase
-                         border border-[var(--ink)]
-                         transition-[background-color,color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                         hover:bg-[var(--ink)] hover:text-[var(--paper-warm)]"
+              className="inline-flex items-center justify-center gap-3 h-12 px-7 rounded-full bg-transparent text-[var(--ink)] text-[13px] font-medium tracking-[0.02em]
+                         border border-[var(--paper-shadow)]
+                         transition-[background-color,border-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                         hover:bg-[var(--paper-warm)] hover:border-[var(--ink)]"
             >
               {secondary.label}
             </Link>

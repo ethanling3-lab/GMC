@@ -131,7 +131,7 @@ function ChevronButton({
       type="button"
       aria-label={isNext ? (locale === "zh" ? "下一条" : "Next") : locale === "zh" ? "上一条" : "Previous"}
       onClick={onClick}
-      className="w-10 h-10 flex items-center justify-center border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink)]
+      className="w-10 h-10 flex items-center justify-center rounded-full border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink)]
                  transition-[background-color,border-color,color,transform] duration-[var(--dur-base)] ease-[var(--ease-spring)]
                  hover:bg-[var(--ink)] hover:text-[var(--paper-warm)] hover:border-[var(--ink)]
                  active:translate-y-[1px]"
@@ -153,7 +153,7 @@ function AvatarMark({ name }: { name: string }) {
     .join("")
     .toUpperCase();
   return (
-    <div className="w-12 h-12 flex items-center justify-center bg-[var(--ink)] text-[var(--paper-warm)] font-display text-[15px] tracking-[0.04em] rotate-[-3deg] shadow-[var(--shadow-paper-1)]">
+    <div className="w-12 h-12 flex items-center justify-center rounded-full bg-[var(--ink)] text-[var(--paper-warm)] font-display text-[15px] tracking-[0.04em] shadow-[var(--shadow-paper-1)]">
       {initials || "·"}
     </div>
   );

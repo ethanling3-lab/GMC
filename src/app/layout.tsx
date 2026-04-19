@@ -1,23 +1,29 @@
 import type { Metadata } from "next";
-import { Noto_Serif_SC, IBM_Plex_Sans } from "next/font/google";
+import { Newsreader, Inter, Noto_Sans_SC } from "next/font/google";
 import { LocaleProvider } from "@/lib/locale-client";
 import { getServerLocale } from "@/lib/locale-server";
-import { SiteHeader } from "@/components/layout/SiteHeader";
-import { SiteFooter } from "@/components/layout/SiteFooter";
 import "./globals.css";
 
-const notoSerifSC = Noto_Serif_SC({
-  weight: ["500", "700"],
+const newsreader = Newsreader({
+  weight: ["300", "400", "500", "600"],
+  style: ["normal", "italic"],
   subsets: ["latin"],
   display: "swap",
   variable: "--font-display",
 });
 
-const plexSans = IBM_Plex_Sans({
-  weight: ["400", "500", "600"],
+const inter = Inter({
+  weight: ["300", "400", "500", "600"],
   subsets: ["latin"],
   display: "swap",
   variable: "--font-body",
+});
+
+const notoSansSC = Noto_Sans_SC({
+  weight: ["300", "400", "500", "600", "700"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-cjk",
 });
 
 export const metadata: Metadata = {
@@ -60,22 +66,10 @@ export default async function RootLayout({
   return (
     <html
       lang={locale === "zh" ? "zh-Hans" : "en"}
-      className={`${notoSerifSC.variable} ${plexSans.variable}`}
+      className={`${newsreader.variable} ${inter.variable} ${notoSansSC.variable}`}
     >
       <body className="flex flex-col min-h-screen">
-        <LocaleProvider locale={locale}>
-          <a
-            href="#main"
-            className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-[var(--ink)] focus:text-[var(--paper-warm)]"
-          >
-            Skip to content
-          </a>
-          <SiteHeader />
-          <main id="main" className="flex-1">
-            {children}
-          </main>
-          <SiteFooter />
-        </LocaleProvider>
+        <LocaleProvider locale={locale}>{children}</LocaleProvider>
       </body>
     </html>
   );

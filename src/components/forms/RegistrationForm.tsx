@@ -57,7 +57,7 @@ export function RegistrationForm({ events, defaultEventSlug }: Props) {
 
   if (submitState.status === "success") {
     return (
-      <div className="bg-[var(--paper-warm)] border border-[var(--paper-shadow)] p-10 md:p-14 shadow-[var(--shadow-paper-1)]">
+      <div className="bg-[var(--paper-warm)] border border-[var(--paper-shadow)] p-10 md:p-14 rounded-[var(--radius-lg)] shadow-[var(--shadow-paper-1)]">
         <span className="eyebrow">{t("common.success")}</span>
         <h2 className="mt-5 font-display text-[var(--ink)]">{t("register.successTitle")}</h2>
         <p className="mt-4 text-[15px] leading-[1.75] text-[var(--ink-soft)] max-w-[540px]">
@@ -192,9 +192,10 @@ export function RegistrationForm({ events, defaultEventSlug }: Props) {
           type="submit"
           disabled={submitState.status === "submitting"}
           aria-label={submitState.status === "submitting" ? t("register.submittingAria") : undefined}
-          className="group inline-flex items-center gap-3 h-12 px-8 bg-[var(--ink)] text-[var(--paper-warm)] text-[13px] font-semibold tracking-[0.12em] uppercase
-                     transition-[transform,box-shadow,opacity] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                     hover:-translate-y-[1px] hover:shadow-[var(--shadow-paper-2)]
+          className="group inline-flex items-center gap-3 h-12 px-7 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[13px] font-medium tracking-[0.02em]
+                     shadow-[0_4px_14px_rgba(37,99,235,0.28)]
+                     transition-[transform,box-shadow,background-color,opacity] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                     hover:-translate-y-[1px] hover:bg-[var(--cinnabar-deep)] hover:shadow-[0_10px_24px_rgba(37,99,235,0.38)]
                      active:translate-y-0 disabled:opacity-60 disabled:cursor-wait"
         >
           {submitState.status === "submitting" ? t("common.loading") : t("register.submit")}
