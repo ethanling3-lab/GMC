@@ -227,10 +227,11 @@ export default async function EventsPage() {
                   <div className="mt-auto pt-6">
                     <Link
                       href={`/register?event=${encodeURIComponent(e.slug)}`}
-                      className="group/cta inline-flex items-center gap-2 h-11 px-5 rounded-[var(--radius-pill)]
+                      className="group/cta inline-flex items-center gap-2 h-11 px-5 rounded-full
                                  bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)] text-[var(--paper-warm)]
-                                 text-[12.5px] tracking-[0.06em] font-medium
-                                 shadow-[0_4px_14px_rgba(193,34,34,0.22)]
+                                 text-[13px] tracking-[0.02em] font-medium
+                                 shadow-[0_4px_14px_rgba(37,99,235,0.28)]
+                                 hover:shadow-[0_6px_18px_rgba(37,99,235,0.38)]
                                  focus-visible:shadow-[var(--shadow-focus)]
                                  transition-[background-color,transform,box-shadow] duration-[var(--dur-fast)]
                                  active:scale-[0.98]"
