@@ -19,10 +19,18 @@ export type ParticipantRow = {
   created_at: string;
 };
 
+export type CsAdmin = {
+  id: string;
+  name_en: string | null;
+  name_cn: string | null;
+  role: string;
+};
+
 type Props = {
   rows: ParticipantRow[];
   adminRole: string;
   hasFilters: boolean;
+  customerService: CsAdmin[];
 };
 
 const STATUS_LABEL: Record<ParticipantStatus, string> = {
@@ -31,6 +39,14 @@ const STATUS_LABEL: Record<ParticipantStatus, string> = {
   cs_enriched: "CS Enriched",
   active: "Active",
   inactive: "Inactive",
+};
+
+const STATUS_ZH: Record<ParticipantStatus, string> = {
+  new: "新",
+  info_verified: "信息已核",
+  cs_enriched: "资料完善",
+  active: "活跃",
+  inactive: "停用",
 };
 
 const STATUS_TONE: Record<
@@ -69,6 +85,14 @@ const STATUS_TONE: Record<
   },
 };
 
+const ALL_STATUSES: ParticipantStatus[] = [
+  "new",
+  "info_verified",
+  "cs_enriched",
+  "active",
+  "inactive",
+];
+
 function formatDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString("en-GB", {
@@ -85,14 +109,39 @@ function combinedName(r: ParticipantRow): string {
   return en || cn || "—";
 }
 
-type BulkAction = "archive" | "unarchive" | "delete";
+function csName(a: CsAdmin): string {
+  const en = a.name_en?.trim();
+  const cn = a.name_cn?.trim();
+  if (en && cn) return `${en} · ${cn}`;
+  return en || cn || "(unnamed)";
+}
 
-export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
+type BulkAction =
+  | "archive"
+  | "unarchive"
+  | "delete"
+  | "set_status"
+  | "assign_cs";
+
+type Toast = {
+  message: string;
+  undo?: () => Promise<void>;
+} | null;
+
+export function ParticipantsTable({
+  rows,
+  adminRole,
+  hasFilters,
+  customerService,
+}: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState<BulkAction | "export" | null>(null);
+  const [busy, setBusy] = useState<BulkAction | "export" | "undo" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast>(null);
+  const [openMenu, setOpenMenu] = useState<"status" | "cs" | null>(null);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Clear selection when the row set changes (filter/page/refresh).
   const rowKey = useMemo(() => rows.map((r) => r.id).join("|"), [rows]);
@@ -111,6 +160,30 @@ export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
     }
   }, [indeterminate]);
 
+  // Close open menu on outside click / Escape.
+  useEffect(() => {
+    if (!openMenu) return;
+    function onDown(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) setOpenMenu(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpenMenu(null);
+    }
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [openMenu]);
+
+  // Auto-dismiss toast after 5s.
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   function toggleRow(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -125,30 +198,116 @@ export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
     else setSelected(new Set(rows.map((r) => r.id)));
   }
 
-  async function runBulk(action: BulkAction) {
-    if (selected.size === 0) return;
-    if (action === "delete") {
-      const ok = window.confirm(
-        `Permanently delete ${selected.size} participant${selected.size === 1 ? "" : "s"}? This cannot be undone.`,
+  async function postBulk(body: Record<string, unknown>): Promise<void> {
+    const res = await fetch("/api/admin/participants/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(
+        payload.error ?? `Bulk ${String(body.action)} failed (${res.status})`,
       );
-      if (!ok) return;
     }
+  }
+
+  async function runArchive(action: "archive" | "unarchive") {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
     setBusy(action);
     setError(null);
     try {
-      const res = await fetch("/api/admin/participants/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, ids: Array.from(selected) }),
+      await postBulk({ action, ids });
+      const count = ids.length;
+      const verb = action === "archive" ? "archived" : "unarchived";
+      setSelected(new Set());
+      router.refresh();
+      setToast({
+        message: `${count.toLocaleString()} participant${count === 1 ? "" : "s"} ${verb}`,
+        undo: async () => {
+          setBusy("undo");
+          try {
+            await postBulk({
+              action: action === "archive" ? "unarchive" : "archive",
+              ids,
+            });
+            router.refresh();
+            setToast(null);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Undo failed");
+          } finally {
+            setBusy(null);
+          }
+        },
       });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload.error ?? `Bulk ${action} failed (${res.status})`);
-      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Bulk ${action} failed`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runDelete() {
+    if (selected.size === 0) return;
+    const ok = window.confirm(
+      `Permanently delete ${selected.size} participant${selected.size === 1 ? "" : "s"}? This cannot be undone.`,
+    );
+    if (!ok) return;
+    setBusy("delete");
+    setError(null);
+    try {
+      await postBulk({ action: "delete", ids: Array.from(selected) });
       setSelected(new Set());
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Bulk ${action} failed`);
+      setError(err instanceof Error ? err.message : "Bulk delete failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runSetStatus(next: ParticipantStatus) {
+    if (selected.size === 0) return;
+    setOpenMenu(null);
+    setBusy("set_status");
+    setError(null);
+    try {
+      const ids = Array.from(selected);
+      await postBulk({ action: "set_status", ids, status: next });
+      const count = ids.length;
+      setSelected(new Set());
+      router.refresh();
+      setToast({
+        message: `${count.toLocaleString()} set to ${STATUS_LABEL[next]}`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Set status failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runAssignCs(adminId: string | null) {
+    if (selected.size === 0) return;
+    setOpenMenu(null);
+    setBusy("assign_cs");
+    setError(null);
+    try {
+      const ids = Array.from(selected);
+      await postBulk({ action: "assign_cs", ids, assigned_cs_id: adminId });
+      const who =
+        adminId === null
+          ? "unassigned"
+          : `assigned to ${csName(customerService.find((a) => a.id === adminId) ?? { id: "", name_en: "—", name_cn: null, role: "" })}`;
+      const count = ids.length;
+      setSelected(new Set());
+      router.refresh();
+      setToast({
+        message: `${count.toLocaleString()} ${who}`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Assign CS failed");
     } finally {
       setBusy(null);
     }
@@ -159,7 +318,6 @@ export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
     setBusy("export");
     const ids = Array.from(selected).join(",");
     window.location.href = `/api/admin/participants/export?ids=${encodeURIComponent(ids)}`;
-    // Browser navigates to CSV download; reset busy after a tick.
     setTimeout(() => setBusy(null), 1500);
   }
 
@@ -173,8 +331,11 @@ export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
     >
       {/* Bulk action bar */}
       {count > 0 ? (
-        <div className="flex flex-wrap items-center gap-3 px-5 py-3 border-b border-[var(--paper-shadow)] bg-[var(--cinnabar-wash)]/60">
-          <div className="inline-flex items-center gap-2 text-[12px] text-[var(--cinnabar-deep)]">
+        <div
+          ref={menuRef}
+          className="relative flex flex-wrap items-center gap-2 px-5 py-3 border-b border-[var(--paper-shadow)] bg-[var(--cinnabar-wash)]/60"
+        >
+          <div className="inline-flex items-center gap-2 text-[12px] text-[var(--cinnabar-deep)] mr-1">
             <button
               type="button"
               onClick={() => setSelected(new Set())}
@@ -194,16 +355,87 @@ export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
 
           <BulkButton
             label="Archive"
-            onClick={() => runBulk("archive")}
+            onClick={() => runArchive("archive")}
             busy={busy === "archive"}
             disabled={busy !== null}
           />
           <BulkButton
             label="Unarchive"
-            onClick={() => runBulk("unarchive")}
+            onClick={() => runArchive("unarchive")}
             busy={busy === "unarchive"}
             disabled={busy !== null}
           />
+
+          {/* Set status dropdown */}
+          <div className="relative">
+            <BulkButton
+              label="Set status"
+              caret
+              onClick={() => setOpenMenu(openMenu === "status" ? null : "status")}
+              busy={busy === "set_status"}
+              disabled={busy !== null}
+              active={openMenu === "status"}
+            />
+            {openMenu === "status" ? (
+              <Menu>
+                {ALL_STATUSES.map((s) => {
+                  const tone = STATUS_TONE[s];
+                  return (
+                    <MenuItem key={s} onClick={() => runSetStatus(s)}>
+                      <span
+                        className={`inline-flex items-center gap-2 px-2 py-0.5 rounded-full border text-[10px] tracking-[0.14em] uppercase ${tone.bg} ${tone.ring} ${tone.text}`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${tone.dot}`}
+                          aria-hidden="true"
+                        />
+                        {STATUS_LABEL[s]}
+                      </span>
+                      <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
+                        {STATUS_ZH[s]}
+                      </span>
+                    </MenuItem>
+                  );
+                })}
+              </Menu>
+            ) : null}
+          </div>
+
+          {/* Assign CS dropdown */}
+          <div className="relative">
+            <BulkButton
+              label="Assign CS"
+              caret
+              onClick={() => setOpenMenu(openMenu === "cs" ? null : "cs")}
+              busy={busy === "assign_cs"}
+              disabled={busy !== null || customerService.length === 0}
+              active={openMenu === "cs"}
+            />
+            {openMenu === "cs" ? (
+              <Menu>
+                <MenuItem onClick={() => runAssignCs(null)}>
+                  <span className="text-[12px] text-[var(--ink-mute)] italic">
+                    Unassigned
+                  </span>
+                </MenuItem>
+                <div
+                  className="my-1 h-px bg-[var(--paper-shadow)]"
+                  aria-hidden="true"
+                />
+                {customerService.map((a) => (
+                  <MenuItem key={a.id} onClick={() => runAssignCs(a.id)}>
+                    <span className="text-[12.5px] text-[var(--ink)] truncate">
+                      {csName(a)}
+                    </span>
+                    <span className="text-[9px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
+                      {a.role === "super_admin" ? "Super" : "CS"}
+                    </span>
+                  </MenuItem>
+                ))}
+              </Menu>
+            ) : null}
+          </div>
+
           <BulkButton
             label="Export CSV"
             onClick={exportSelected}
@@ -214,7 +446,7 @@ export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
           {canDelete ? (
             <BulkButton
               label="Delete"
-              onClick={() => runBulk("delete")}
+              onClick={runDelete}
               busy={busy === "delete"}
               disabled={busy !== null}
               tone="danger"
@@ -374,7 +606,101 @@ export function ParticipantsTable({ rows, adminRole, hasFilters }: Props) {
           </tbody>
         </table>
       </div>
+
+      {/* Toast */}
+      {toast ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50
+                     inline-flex items-center gap-4 pl-5 pr-2 py-2
+                     rounded-[var(--radius-pill)]
+                     bg-[var(--ink)] text-[var(--paper-warm)]
+                     shadow-[0_12px_32px_rgba(11,41,84,0.28)]
+                     animate-[toast-in_0.2s_ease-out]"
+        >
+          <span className="text-[13px] tracking-[0.02em]">{toast.message}</span>
+          {toast.undo ? (
+            <button
+              type="button"
+              onClick={toast.undo}
+              disabled={busy === "undo"}
+              className="inline-flex items-center h-8 px-3.5 rounded-[var(--radius-pill)]
+                         bg-[var(--paper-warm)]/10 hover:bg-[var(--paper-warm)]/20
+                         text-[12px] tracking-[0.06em] font-medium
+                         text-[var(--paper-warm)]
+                         transition-colors duration-[var(--dur-fast)]
+                         disabled:opacity-60 disabled:cursor-not-allowed
+                         focus-visible:shadow-[var(--shadow-focus)]"
+            >
+              {busy === "undo" ? "Undoing…" : "Undo"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              aria-label="Dismiss"
+              className="inline-flex items-center justify-center w-8 h-8 rounded-full text-[var(--paper-warm)]/70 hover:text-[var(--paper-warm)] hover:bg-[var(--paper-warm)]/10 transition-colors"
+            >
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+                <path d="M3 3l6 6M9 3l-6 6" />
+              </svg>
+            </button>
+          )}
+        </div>
+      ) : null}
+
+      <style jsx>{`
+        @keyframes toast-in {
+          from {
+            transform: translate(-50%, 12px);
+            opacity: 0;
+          }
+          to {
+            transform: translate(-50%, 0);
+            opacity: 1;
+          }
+        }
+      `}</style>
     </div>
+  );
+}
+
+function Menu({ children }: { children: React.ReactNode }) {
+  return (
+    <ul
+      role="listbox"
+      className="absolute top-full left-0 mt-2 z-30 min-w-[220px]
+                 rounded-[var(--radius-md)] border border-[var(--paper-shadow)]
+                 bg-[var(--paper-warm)] shadow-[var(--shadow-paper-2)]
+                 py-1.5 max-h-[320px] overflow-y-auto"
+    >
+      {children}
+    </ul>
+  );
+}
+
+function MenuItem({
+  children,
+  onClick,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        role="option"
+        className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left
+                   transition-colors duration-[var(--dur-fast)]
+                   text-[var(--ink-soft)]
+                   hover:bg-[var(--paper-deep)] hover:text-[var(--ink)]"
+      >
+        {children}
+      </button>
+    </li>
   );
 }
 
@@ -384,24 +710,31 @@ function BulkButton({
   busy,
   disabled,
   tone = "default",
+  caret = false,
+  active = false,
 }: {
   label: string;
   onClick: () => void;
   busy: boolean;
   disabled: boolean;
   tone?: "default" | "danger";
+  caret?: boolean;
+  active?: boolean;
 }) {
   const base =
     "inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-pill)] text-[12px] tracking-[0.04em] font-medium border transition-[background-color,border-color,color] duration-[var(--dur-fast)] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:shadow-[var(--shadow-focus)]";
   const toneCls =
     tone === "danger"
       ? "border-[var(--cinnabar)]/40 bg-[var(--paper)] text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar)] hover:text-[var(--paper-warm)] hover:border-[var(--cinnabar)]"
-      : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]";
+      : active
+        ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+        : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]";
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-expanded={caret ? active : undefined}
       className={`${base} ${toneCls}`}
     >
       {busy ? (
@@ -411,6 +744,22 @@ function BulkButton({
         </svg>
       ) : null}
       {label}
+      {caret ? (
+        <svg
+          width="9"
+          height="9"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="opacity-70"
+        >
+          <path d="M2.5 4L5 6.5 7.5 4" />
+        </svg>
+      ) : null}
     </button>
   );
 }

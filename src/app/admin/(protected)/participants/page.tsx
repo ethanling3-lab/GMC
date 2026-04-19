@@ -53,6 +53,20 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
   totalQ = applyRoleScope(totalQ, admin.role, admin.id, admin.region);
   const { count: scopeTotal } = await totalQ;
 
+  // CS admin list for the "Assign CS" bulk action. Super admins show up too
+  // since they can also hold CS responsibilities on small teams.
+  const { data: csData } = await supabase
+    .from("admins")
+    .select("id, name_en, name_cn, role")
+    .in("role", ["customer_service", "super_admin"])
+    .order("name_en", { ascending: true, nullsFirst: false });
+  const customerService = (csData ?? []) as {
+    id: string;
+    name_en: string | null;
+    name_cn: string | null;
+    role: string;
+  }[];
+
   return (
     <div>
       {/* Page header */}
@@ -151,6 +165,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         hasFilters={Boolean(
           filters.q || filters.region || filters.status || filters.motivation,
         )}
+        customerService={customerService}
       />
 
       <Pagination page={page} pageSize={pageSize} total={total} />
