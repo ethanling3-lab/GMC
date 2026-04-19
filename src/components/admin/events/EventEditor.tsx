@@ -31,6 +31,7 @@ export type EventFull = {
   country: string | null;
   start_date: string | null;
   end_date: string | null;
+  arrival_day: string | null;
   departure_day: string | null;
   enrollment_opens_at: string | null;
   enrollment_closes_at: string | null;
@@ -226,6 +227,7 @@ export function EventEditor({ event, canEdit, canDelete }: Props) {
         country: draft.country,
         start_date: draft.start_date,
         end_date: draft.end_date,
+        arrival_day: draft.arrival_day,
         departure_day: draft.departure_day,
         enrollment_opens_at: draft.enrollment_opens_at,
         enrollment_closes_at: draft.enrollment_closes_at,
@@ -483,10 +485,12 @@ export function EventEditor({ event, canEdit, canDelete }: Props) {
             <input type="date" value={draft.end_date ?? ""} onChange={(e) => update("end_date", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />
           </Field>
 
+          <Field label="Arrival day" labelZh="抵场日" hint="Used by the airport transfer list to group arrivals within the 30-min consolidation window.">
+            <input type="date" value={draft.arrival_day ?? ""} onChange={(e) => update("arrival_day", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />
+          </Field>
           <Field label="Departure day" labelZh="离场日" hint="Used by the airport transfer list for departure-coach grouping.">
             <input type="date" value={draft.departure_day ?? ""} onChange={(e) => update("departure_day", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />
           </Field>
-          <div />
 
           <Field label="Enrollment opens" labelZh="开放报名">
             <input

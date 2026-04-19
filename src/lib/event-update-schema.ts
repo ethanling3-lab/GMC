@@ -54,6 +54,7 @@ export const EventUpdateSchema = z
 
     start_date: z.string().date().nullable().optional(),
     end_date: z.string().date().nullable().optional(),
+    arrival_day: z.string().date().nullable().optional(),
     departure_day: z.string().date().nullable().optional(),
 
     enrollment_opens_at: z.string().datetime().nullable().optional(),
