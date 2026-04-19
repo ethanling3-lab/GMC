@@ -11,6 +11,7 @@ import type {
 import { STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
 import { PAYMENT_METHODS } from "@/lib/event-update-schema";
 import { PosterUploader } from "./PosterUploader";
+import { EventFormBuilder } from "./EventFormBuilder";
 
 export type EventFull = {
   id: string;
@@ -43,6 +44,7 @@ export type EventFull = {
   target_audience_filter: Record<string, unknown>;
   status: EventStatus;
   requires_approval: boolean;
+  form_schema: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
@@ -644,6 +646,19 @@ export function EventEditor({
             {draft.requires_approval ? "Yes · manual approval" : "No · auto-approve"}
           </label>
         </Field>
+      </Section>
+
+      {/* Registration form */}
+      <Section
+        title="Registration form"
+        titleZh="报名表单"
+        description="Custom questions participants see on /register. Saved independently from the main event fields."
+      >
+        <EventFormBuilder
+          eventId={event.id}
+          initial={event.form_schema}
+          canEdit={canEdit}
+        />
       </Section>
 
       {/* Target audience */}

@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createSupabaseServiceClient } from "@/lib/supabase";
-import { registrationSchema } from "@/lib/validation";
-import { createToken } from "@/lib/tokens";
-import { sendEmail, isEmailConfigured } from "@/lib/email";
-import { sendWhatsAppTemplate, isWhatsAppConfigured } from "@/lib/whatsapp";
+import { buildRegistrationSchemaFor } from "@/lib/validation";
+import { createToken, verifyPrefillToken } from "@/lib/tokens";
+import { sendEmail } from "@/lib/email";
+import { sendWhatsAppTemplate } from "@/lib/whatsapp";
+import { normalizeFormSchema } from "@/lib/event-form-schema";
 
 export const runtime = "nodejs";
 
@@ -16,7 +17,75 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const parsed = registrationSchema.safeParse(body);
+  // We need the event's form_schema before we can build the correct Zod schema,
+  // so do a minimal parse first to grab the event_slug + optional prefill_token.
+  const presliced = z
+    .object({
+      event_slug: z.string().min(1),
+      prefill_token: z.string().max(200).optional(),
+    })
+    .passthrough()
+    .safeParse(body);
+  if (!presliced.success) {
+    return NextResponse.json({ error: "validation_error" }, { status: 400 });
+  }
+
+  const supabase = createSupabaseServiceClient();
+
+  // 1) Find the event by slug, ensure it's accepting registrations.
+  //    Fall back to a form_schema-free query if migration 008 hasn't been
+  //    applied yet (legacy environments).
+  let eventRow:
+    | {
+        id: string;
+        status: string;
+        requires_approval: boolean;
+        enrollment_closes_at: string | null;
+        capacity: number | null;
+        form_schema?: unknown;
+      }
+    | null = null;
+  {
+    const primary = await supabase
+      .from("events")
+      .select(
+        "id, status, requires_approval, enrollment_closes_at, capacity, form_schema",
+      )
+      .eq("slug", presliced.data.event_slug)
+      .maybeSingle();
+    if (primary.error) {
+      const code = (primary.error as { code?: string }).code;
+      if (code !== "42703") {
+        return NextResponse.json({ error: "event_not_found" }, { status: 404 });
+      }
+      const fallback = await supabase
+        .from("events")
+        .select("id, status, requires_approval, enrollment_closes_at, capacity")
+        .eq("slug", presliced.data.event_slug)
+        .maybeSingle();
+      if (fallback.error || !fallback.data) {
+        return NextResponse.json({ error: "event_not_found" }, { status: 404 });
+      }
+      eventRow = fallback.data;
+    } else {
+      eventRow = primary.data;
+    }
+  }
+  const event = eventRow;
+
+  if (!event) {
+    return NextResponse.json({ error: "event_not_found" }, { status: 404 });
+  }
+  if (event.status !== "open") {
+    return NextResponse.json({ error: "event_not_open" }, { status: 409 });
+  }
+
+  const eventFormSchema = normalizeFormSchema(event.form_schema);
+  const dynamicSchema = buildRegistrationSchemaFor(
+    eventFormSchema.identity,
+    eventFormSchema,
+  );
+  const parsed = dynamicSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "validation_error", issues: z.treeifyError(parsed.error) },
@@ -25,24 +94,9 @@ export async function POST(req: NextRequest) {
   }
   const input = parsed.data;
 
-  const supabase = createSupabaseServiceClient();
-
-  // 1) Find the event by slug, ensure it's accepting registrations.
-  const { data: event, error: eventErr } = await supabase
-    .from("events")
-    .select("id, status, requires_approval, enrollment_closes_at, capacity")
-    .eq("slug", input.event_slug)
-    .maybeSingle();
-
-  if (eventErr || !event) {
-    return NextResponse.json({ error: "event_not_found" }, { status: 404 });
-  }
-  if (event.status !== "open") {
-    return NextResponse.json({ error: "event_not_open" }, { status: 409 });
-  }
-
-  // 2) Upsert participant by (email, phone).
-  //    The region_id trigger auto-assigns MY001 / SG001 / etc. on first insert.
+  // 2) Resolve participant — prefill token takes precedence so returning
+  //    attendees are matched to their canonical record even if their phone
+  //    format differs from what we have on file.
   const participantPayload = {
     name_cn: input.name_cn || null,
     name_en: input.name_en,
@@ -57,36 +111,62 @@ export async function POST(req: NextRequest) {
     status: "new" as const,
   };
 
-  // Try to find an existing participant match
-  const { data: existing } = await supabase
-    .from("participants")
-    .select("id, region_id")
-    .eq("email", input.email)
-    .eq("phone", input.phone)
-    .maybeSingle();
-
   let participantId: string;
   let regionId: string | null = null;
 
-  if (existing) {
-    participantId = existing.id;
-    regionId = existing.region_id;
-    // Update with latest details (but don't overwrite status if already further along)
-    await supabase.from("participants").update(participantPayload).eq("id", existing.id);
-  } else {
-    const { data: inserted, error: insertErr } = await supabase
-      .from("participants")
-      .insert(participantPayload)
-      .select("id, region_id")
-      .single();
-    if (insertErr || !inserted) {
-      return NextResponse.json({ error: "insert_failed" }, { status: 500 });
-    }
-    participantId = inserted.id;
-    regionId = inserted.region_id;
+  const prefillResolved = input.prefill_token
+    ? verifyPrefillToken(input.prefill_token)
+    : null;
+
+  if (input.prefill_token && !prefillResolved) {
+    return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
   }
 
-  // 3) Check duplicate enrollment, then insert.
+  if (prefillResolved) {
+    const { data: byId } = await supabase
+      .from("participants")
+      .select("id, region_id")
+      .eq("id", prefillResolved.participantId)
+      .maybeSingle();
+    if (!byId) {
+      return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
+    }
+    participantId = byId.id;
+    regionId = byId.region_id;
+    await supabase
+      .from("participants")
+      .update(participantPayload)
+      .eq("id", byId.id);
+  } else {
+    const { data: existing } = await supabase
+      .from("participants")
+      .select("id, region_id")
+      .eq("email", input.email)
+      .eq("phone", input.phone)
+      .maybeSingle();
+
+    if (existing) {
+      participantId = existing.id;
+      regionId = existing.region_id;
+      await supabase
+        .from("participants")
+        .update(participantPayload)
+        .eq("id", existing.id);
+    } else {
+      const { data: inserted, error: insertErr } = await supabase
+        .from("participants")
+        .insert(participantPayload)
+        .select("id, region_id")
+        .single();
+      if (insertErr || !inserted) {
+        return NextResponse.json({ error: "insert_failed" }, { status: 500 });
+      }
+      participantId = inserted.id;
+      regionId = inserted.region_id;
+    }
+  }
+
+  // 3) Check duplicate enrollment, then insert with the custom form answers.
   const { data: existingEnrollment } = await supabase
     .from("enrollments")
     .select("id")
@@ -101,34 +181,53 @@ export async function POST(req: NextRequest) {
   const confirmationToken = createToken("confirm_registration", `${participantId}:${event.id}`);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
-  const { data: enrollment, error: enrollErr } = await supabase
-    .from("enrollments")
-    .insert({
+  async function insertEnrollment(includeAnswers: boolean) {
+    const payload: Record<string, unknown> = {
       participant_id: participantId,
       event_id: event.id,
       status: event.requires_approval ? "pending_approval" : "approved",
       confirmation_token: confirmationToken,
       confirmation_token_expires_at: expiresAt,
-    })
-    .select("id, status")
-    .single();
+    };
+    if (includeAnswers) payload.form_answers = input.answers ?? {};
+    return supabase
+      .from("enrollments")
+      .insert(payload)
+      .select("id, status")
+      .single();
+  }
+
+  let enrollRes = await insertEnrollment(true);
+  if (enrollRes.error) {
+    const code = (enrollRes.error as { code?: string }).code;
+    if (code === "42703") {
+      // Migration 008 not applied — retry without form_answers so the
+      // existing flow still works.
+      enrollRes = await insertEnrollment(false);
+    }
+  }
+  const { data: enrollment, error: enrollErr } = enrollRes;
 
   if (enrollErr || !enrollment) {
     return NextResponse.json({ error: "enroll_failed" }, { status: 500 });
   }
 
   // 4) Record the referrer note in the CS notes field so CS can follow up.
-  const referralNote = [
-    `Referrer: ${input.referrer_name}`,
-    input.referrer_contact ? `Contact: ${input.referrer_contact}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  if (input.referrer_name && input.referrer_name.trim()) {
+    const referralNote = [
+      `Referrer: ${input.referrer_name.trim()}`,
+      input.referrer_contact?.trim()
+        ? `Contact: ${input.referrer_contact.trim()}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
-  await supabase
-    .from("enrollments")
-    .update({ cs_followup_notes: referralNote })
-    .eq("id", enrollment.id);
+    await supabase
+      .from("enrollments")
+      .update({ cs_followup_notes: referralNote })
+      .eq("id", enrollment.id);
+  }
 
   // 5) Fire off confirmation notifications (email + WhatsApp). Mocked if creds absent.
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";

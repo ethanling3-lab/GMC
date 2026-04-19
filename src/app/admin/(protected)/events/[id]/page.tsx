@@ -17,15 +17,33 @@ export default async function EventDetailPage({ params }: PageProps) {
   const { id } = await params;
 
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("events")
-    .select(
-      "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, created_at, updated_at",
-    )
-    .eq("id", id)
-    .maybeSingle();
+  const columnsWithSchema =
+    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, form_schema, created_at, updated_at";
+  const columnsLegacy =
+    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, created_at, updated_at";
 
-  if (error) throw new Error(error.message);
+  let data: Record<string, unknown> | null = null;
+  {
+    const primary = await supabase
+      .from("events")
+      .select(columnsWithSchema)
+      .eq("id", id)
+      .maybeSingle();
+    if (primary.error) {
+      const code = (primary.error as { code?: string }).code;
+      if (code !== "42703") throw new Error(primary.error.message);
+      // Migration 008 not applied — fall back and default form_schema to {}.
+      const fallback = await supabase
+        .from("events")
+        .select(columnsLegacy)
+        .eq("id", id)
+        .maybeSingle();
+      if (fallback.error) throw new Error(fallback.error.message);
+      data = fallback.data ? { ...fallback.data, form_schema: {} } : null;
+    } else {
+      data = primary.data;
+    }
+  }
   if (!data) notFound();
 
   const event = data as EventFull;

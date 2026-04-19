@@ -32,27 +32,78 @@ export default async function EventEnrollmentsPage({
 
   const supabase = await createSupabaseServerClient();
 
-  const { data: event, error: eventErr } = await supabase
-    .from("events")
-    .select("id, slug, title_en, title_cn, type, status, start_date, end_date")
-    .eq("id", eventId)
-    .maybeSingle();
-  if (eventErr) throw new Error(eventErr.message);
+  let event:
+    | {
+        id: string;
+        slug: string;
+        title_en: string | null;
+        title_cn: string | null;
+        type: string;
+        status: string;
+        start_date: string | null;
+        end_date: string | null;
+        form_schema?: unknown;
+      }
+    | null = null;
+  {
+    const primary = await supabase
+      .from("events")
+      .select(
+        "id, slug, title_en, title_cn, type, status, start_date, end_date, form_schema",
+      )
+      .eq("id", eventId)
+      .maybeSingle();
+    if (primary.error) {
+      const code = (primary.error as { code?: string }).code;
+      if (code !== "42703") throw new Error(primary.error.message);
+      const fallback = await supabase
+        .from("events")
+        .select("id, slug, title_en, title_cn, type, status, start_date, end_date")
+        .eq("id", eventId)
+        .maybeSingle();
+      if (fallback.error) throw new Error(fallback.error.message);
+      event = fallback.data ? { ...fallback.data, form_schema: {} } : null;
+    } else {
+      event = primary.data;
+    }
+  }
   if (!event) notFound();
 
   // Enrollments joined with participants for display. Service-level read
-  // (RLS bypass not needed — admin session + role check).
-  let q = supabase
-    .from("enrollments")
-    .select(
-      "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, participant:participants(id, region_id, name_en, name_cn, region, email, phone)",
-    )
-    .eq("event_id", eventId)
-    .order("created_at", { ascending: false });
-  if (statusFilter) q = q.eq("status", statusFilter);
-
-  const { data: enrollments, error: enrollErr } = await q;
-  if (enrollErr) throw new Error(enrollErr.message);
+  // (RLS bypass not needed — admin session + role check). If the form_answers
+  // column is missing (pre-migration 008), fall back.
+  const enrollmentCols =
+    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(id, region_id, name_en, name_cn, region, email, phone)";
+  const enrollmentColsLegacy =
+    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, participant:participants(id, region_id, name_en, name_cn, region, email, phone)";
+  let enrollments: unknown[] | null = null;
+  {
+    let q = supabase
+      .from("enrollments")
+      .select(enrollmentCols)
+      .eq("event_id", eventId)
+      .order("created_at", { ascending: false });
+    if (statusFilter) q = q.eq("status", statusFilter);
+    const primary = await q;
+    if (primary.error) {
+      const code = (primary.error as { code?: string }).code;
+      if (code !== "42703") throw new Error(primary.error.message);
+      let q2 = supabase
+        .from("enrollments")
+        .select(enrollmentColsLegacy)
+        .eq("event_id", eventId)
+        .order("created_at", { ascending: false });
+      if (statusFilter) q2 = q2.eq("status", statusFilter);
+      const fallback = await q2;
+      if (fallback.error) throw new Error(fallback.error.message);
+      enrollments = (fallback.data ?? []).map((r) => ({
+        ...r,
+        form_answers: {},
+      }));
+    } else {
+      enrollments = primary.data ?? [];
+    }
+  }
 
   const rows = (enrollments ?? []) as unknown as EnrollmentRow[];
 
@@ -181,6 +232,7 @@ export default async function EventEnrollmentsPage({
         rows={rows}
         canEdit={admin.role === "super_admin"}
         hasFilter={statusFilter !== null}
+        formSchema={event.form_schema ?? {}}
       />
     </div>
   );

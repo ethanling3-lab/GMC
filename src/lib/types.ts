@@ -115,6 +115,7 @@ export interface EventRecord {
   target_audience_filter: Record<string, unknown>;
   status: EventStatus;
   requires_approval: boolean;
+  form_schema: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -136,6 +137,7 @@ export interface Enrollment {
   confirmation_token: string | null;
   confirmation_token_expires_at: string | null;
   confirmed_at: string | null;
+  form_answers: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }

@@ -25,7 +25,11 @@ function hmac(payload: string): Buffer {
     .digest();
 }
 
-export type TokenPurpose = "confirm_registration" | "travel_submit" | "check_in";
+export type TokenPurpose =
+  | "confirm_registration"
+  | "travel_submit"
+  | "check_in"
+  | "register_prefill";
 
 export function createToken(purpose: TokenPurpose, id: string): string {
   const nonce = b64url(randomBytes(16));
@@ -46,4 +50,34 @@ export function verifyToken(
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+// Stateless prefill token — binds participant_id + expiry in the HMAC so we
+// never have to write a row to the DB. Verifying callers MUST also check the
+// expiry is in the future; `verifyPrefillToken` does that for you.
+//
+// Wire format: `<participantId>~<expiryMs>~<nonce>.<sig>`.
+export function createPrefillToken(participantId: string, ttlMs: number): string {
+  const expiry = Date.now() + ttlMs;
+  const nonce = b64url(randomBytes(12));
+  const payload = `${participantId}~${expiry}~${nonce}`;
+  const sig = b64url(hmac(`register_prefill|${payload}`));
+  return `${payload}.${sig}`;
+}
+
+export function verifyPrefillToken(
+  token: string,
+): { participantId: string } | null {
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+  const [participantId, expiryStr] = payload.split("~");
+  if (!participantId || !expiryStr) return null;
+  const expiry = Number(expiryStr);
+  if (!Number.isFinite(expiry) || expiry < Date.now()) return null;
+  const expected = b64url(hmac(`register_prefill|${payload}`));
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return null;
+  if (!timingSafeEqual(a, b)) return null;
+  return { participantId };
 }

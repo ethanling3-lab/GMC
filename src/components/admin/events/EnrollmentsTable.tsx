@@ -11,6 +11,11 @@ import {
   type PaymentMethod,
   type PaymentStatus,
 } from "@/lib/enrollments-shared";
+import {
+  normalizeFormSchema,
+  type CustomField,
+  type FormSchema,
+} from "@/lib/event-form-schema";
 
 type ParticipantRef = {
   id: string;
@@ -32,6 +37,7 @@ export type EnrollmentRow = {
   confirmed_at: string | null;
   approved_at: string | null;
   created_at: string;
+  form_answers: Record<string, unknown> | null;
   participant: ParticipantRef | null;
 };
 
@@ -40,6 +46,7 @@ type Props = {
   rows: EnrollmentRow[];
   canEdit: boolean;
   hasFilter: boolean;
+  formSchema: unknown;
 };
 
 type BulkAction = "approve" | "reject" | "cancel" | "mark_paid";
@@ -107,13 +114,39 @@ function participantName(p: ParticipantRef | null): string {
   return en || cn || "(unnamed)";
 }
 
-export function EnrollmentsTable({ eventId, rows, canEdit, hasFilter }: Props) {
+export function EnrollmentsTable({
+  eventId,
+  rows,
+  canEdit,
+  hasFilter,
+  formSchema,
+}: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<BulkAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
+
+  const parsedSchema: FormSchema = useMemo(
+    () => normalizeFormSchema(formSchema),
+    [formSchema],
+  );
+  const answerableFields = useMemo(
+    () => parsedSchema.fields.filter((f) => f.type !== "section_header"),
+    [parsedSchema],
+  );
+  const hasCustomFields = answerableFields.length > 0;
+
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const rowKey = useMemo(() => rows.map((r) => r.id).join("|"), [rows]);
   useEffect(() => {
@@ -275,12 +308,20 @@ export function EnrollmentsTable({ eventId, rows, canEdit, hasFilter }: Props) {
               <th scope="col" className="px-5 py-3.5 font-medium">Payment</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Amount</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Enrolled</th>
+              {hasCustomFields ? (
+                <th scope="col" className="w-10 pr-3 py-3.5" aria-label="Expand answers" />
+              ) : null}
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={canEdit ? 7 : 6} className="px-6 py-16 text-center">
+                <td
+                  colSpan={
+                    (canEdit ? 7 : 6) + (hasCustomFields ? 1 : 0)
+                  }
+                  className="px-6 py-16 text-center"
+                >
                   <div className="inline-flex flex-col items-center gap-3">
                     <span
                       className="inline-flex items-center justify-center w-10 h-10 rounded-full
@@ -305,18 +346,21 @@ export function EnrollmentsTable({ eventId, rows, canEdit, hasFilter }: Props) {
                 </td>
               </tr>
             ) : (
-              rows.map((r) => {
+              rows.flatMap((r) => {
                 const tone = STATUS_TONE[r.status];
                 const payTone = PAYMENT_TONE[r.payment_status];
                 const isSelected = selected.has(r.id);
-                return (
+                const isExpanded = expanded.has(r.id);
+                const totalCols = (canEdit ? 7 : 6) + (hasCustomFields ? 1 : 0);
+                return [
                   <tr
                     key={r.id}
                     className={`border-t border-[var(--paper-shadow)]
                                hover:bg-[var(--paper-deep)]/55
                                transition-colors duration-[var(--dur-fast)]
                                has-[a:focus-visible]:bg-[var(--paper-deep)]/55
-                               ${isSelected ? "bg-[var(--cinnabar-wash)]/40" : ""}`}
+                               ${isSelected ? "bg-[var(--cinnabar-wash)]/40" : ""}
+                               ${isExpanded ? "bg-[var(--paper-deep)]/40" : ""}`}
                   >
                     {canEdit ? (
                       <td className="w-10 pl-5 pr-2 py-3.5">
@@ -390,8 +434,52 @@ export function EnrollmentsTable({ eventId, rows, canEdit, hasFilter }: Props) {
                     <td className="px-5 py-3.5 text-right text-[var(--ink-mute)] whitespace-nowrap">
                       {formatDate(r.created_at)}
                     </td>
-                  </tr>
-                );
+                    {hasCustomFields ? (
+                      <td className="pr-3 py-3.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(r.id)}
+                          aria-label={
+                            isExpanded ? "Hide form answers" : "Show form answers"
+                          }
+                          aria-expanded={isExpanded}
+                          className={`w-7 h-7 rounded-full border inline-flex items-center justify-center
+                                      transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)]
+                                      ${
+                                        isExpanded
+                                          ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                                          : "border-[var(--paper-shadow)] text-[var(--ink-mute)] hover:border-[var(--cinnabar)]/30 hover:text-[var(--cinnabar-deep)]"
+                                      }`}
+                        >
+                          <svg
+                            width="10"
+                            height="10"
+                            viewBox="0 0 10 10"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                            className={`transition-transform duration-[var(--dur-fast)] ${isExpanded ? "rotate-180" : ""}`}
+                          >
+                            <path d="M2 4l3 3 3-3" />
+                          </svg>
+                        </button>
+                      </td>
+                    ) : null}
+                  </tr>,
+                  isExpanded && hasCustomFields ? (
+                    <tr key={`${r.id}-answers`} className="bg-[var(--paper-deep)]/40">
+                      <td colSpan={totalCols} className="px-6 py-5 border-t border-[var(--paper-shadow)]">
+                        <AnswersGrid
+                          fields={answerableFields}
+                          answers={r.form_answers ?? {}}
+                        />
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
               })
             )}
           </tbody>
@@ -421,6 +509,68 @@ export function EnrollmentsTable({ eventId, rows, canEdit, hasFilter }: Props) {
           </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function AnswersGrid({
+  fields,
+  answers,
+}: {
+  fields: CustomField[];
+  answers: Record<string, unknown>;
+}) {
+  function formatValue(f: CustomField, v: unknown): string {
+    if (v === undefined || v === null || v === "") return "—";
+    if (f.type === "checkbox_ack") return v === true ? "✓ Acknowledged" : "—";
+    if (f.type === "multi_select") {
+      if (!Array.isArray(v) || v.length === 0) return "—";
+      return v
+        .map((val) => {
+          const opt = f.options.find((o) => o.value === val);
+          return opt ? opt.label_en || opt.label_cn || opt.value : String(val);
+        })
+        .join(", ");
+    }
+    if (f.type === "single_select") {
+      const opt = f.options.find((o) => o.value === v);
+      return opt ? opt.label_en || opt.label_cn || opt.value : String(v);
+    }
+    return String(v);
+  }
+
+  return (
+    <div>
+      <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.22em] uppercase text-[var(--cinnabar)] mb-3">
+        <span className="w-5 h-px bg-current" />
+        Form answers · 报名问答
+      </div>
+      <dl className="grid md:grid-cols-2 gap-x-8 gap-y-4">
+        {fields.map((f) => {
+          const v = formatValue(f, answers[f.id]);
+          const labelPrimary = f.label_en || f.label_cn || f.id;
+          const labelSecondary =
+            f.label_en && f.label_cn && f.label_en !== f.label_cn
+              ? f.label_cn
+              : null;
+          return (
+            <div key={f.id}>
+              <dt className="text-[10.5px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">
+                {labelPrimary}
+                {labelSecondary ? (
+                  <span className="text-[var(--ink-faint)] normal-case tracking-[0.08em]">
+                    {" · "}
+                    {labelSecondary}
+                  </span>
+                ) : null}
+              </dt>
+              <dd className="mt-1 text-[13px] leading-[1.6] text-[var(--ink)] break-words whitespace-pre-wrap">
+                {v}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
     </div>
   );
 }

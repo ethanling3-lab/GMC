@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FormSchema } from "./event-form-schema";
 
 export const PAYMENT_METHODS = [
   "hitpay",
@@ -68,6 +69,8 @@ export const EventUpdateSchema = z
     target_audience_filter: z.record(z.string(), z.unknown()).optional(),
     status: z.enum(["draft", "open", "closed", "archived"]).optional(),
     requires_approval: z.boolean().optional(),
+
+    form_schema: FormSchema.optional(),
   })
   .strict();
 export type EventUpdate = z.infer<typeof EventUpdateSchema>;
