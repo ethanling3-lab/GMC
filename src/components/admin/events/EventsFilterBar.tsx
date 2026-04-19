@@ -1,0 +1,319 @@
+"use client";
+
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState, useTransition } from "react";
+
+const STATUSES = [
+  { code: "", label: "Any status" },
+  { code: "draft", label: "Draft" },
+  { code: "open", label: "Open" },
+  { code: "closed", label: "Closed" },
+];
+
+const TYPES = [
+  { code: "", label: "Any type" },
+  { code: "retreat", label: "Retreat · 静修" },
+  { code: "course", label: "Course · 课程" },
+  { code: "workshop", label: "Workshop · 工作坊" },
+  { code: "seminar", label: "Seminar · 讲座" },
+  { code: "other", label: "Other · 其他" },
+];
+
+const MODES = [
+  { code: "", label: "Any mode" },
+  { code: "offline", label: "In-person" },
+  { code: "online", label: "Online" },
+];
+
+const SORTS = [
+  { code: "recent", label: "Most recent" },
+  { code: "oldest", label: "Oldest first" },
+  { code: "start_soonest", label: "Start · soonest" },
+  { code: "start_latest", label: "Start · latest" },
+  { code: "title", label: "Title A–Z" },
+];
+
+type ArchivedMode = "active" | "archived" | "all";
+
+type Props = {
+  initialQ: string;
+  activeCount: number;
+  totalCount: number | null;
+  initialArchived?: ArchivedMode;
+};
+
+export function EventsFilterBar({
+  initialQ,
+  activeCount,
+  totalCount,
+  initialArchived = "active",
+}: Props) {
+  const router = useRouter();
+  const sp = useSearchParams();
+  const [q, setQ] = useState(initialQ);
+  const [isPending, startTransition] = useTransition();
+  const firstRun = useRef(true);
+
+  const status = sp.get("status") ?? "";
+  const type = sp.get("type") ?? "";
+  const mode = sp.get("mode") ?? "";
+  const sort = sp.get("sort") ?? "recent";
+  const archivedMode: ArchivedMode =
+    (sp.get("archived") as ArchivedMode | null) === "archived"
+      ? "archived"
+      : (sp.get("archived") as ArchivedMode | null) === "all"
+        ? "all"
+        : initialArchived;
+
+  useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      update({ q: q || null, page: null });
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  function update(patch: Record<string, string | null>) {
+    const next = new URLSearchParams(sp.toString());
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === "") next.delete(k);
+      else next.set(k, v);
+    }
+    const qs = next.toString();
+    startTransition(() => {
+      router.push(qs ? `/admin/events?${qs}` : "/admin/events");
+    });
+  }
+
+  function reset() {
+    setQ("");
+    startTransition(() => {
+      router.push("/admin/events");
+    });
+  }
+
+  const anyFilter =
+    Boolean(q) ||
+    Boolean(status) ||
+    Boolean(type) ||
+    Boolean(mode) ||
+    sort !== "recent" ||
+    archivedMode !== "active";
+
+  return (
+    <div
+      className="mt-8 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]
+                 shadow-[var(--shadow-paper-1)] overflow-hidden"
+      data-pending={isPending ? "true" : "false"}
+    >
+      <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+        <div className="flex-1 min-w-[240px] flex items-center gap-2.5 h-10 px-3.5 rounded-[var(--radius-pill)]
+                        border border-[var(--paper-shadow)] bg-[var(--paper)]
+                        focus-within:border-[var(--cinnabar)]/50 focus-within:shadow-[var(--shadow-focus)]
+                        transition-[border-color,box-shadow] duration-[var(--dur-fast)]">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            aria-hidden="true"
+            className="text-[var(--ink-faint)] flex-none"
+          >
+            <circle cx="6" cy="6" r="4" />
+            <path d="M9 9l3 3" />
+          </svg>
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search title, slug, venue, city…"
+            aria-label="Search events"
+            className="flex-1 bg-transparent outline-none text-[13px] text-[var(--ink)] placeholder:text-[var(--ink-faint)]"
+          />
+          {q ? (
+            <button
+              type="button"
+              onClick={() => setQ("")}
+              aria-label="Clear search"
+              className="text-[var(--ink-faint)] hover:text-[var(--ink)] transition-colors duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M3 3l6 6M9 3l-6 6" />
+              </svg>
+            </button>
+          ) : null}
+        </div>
+
+        <Select
+          label="Status"
+          value={status}
+          options={STATUSES}
+          onChange={(v) => update({ status: v || null, page: null })}
+        />
+        <Select
+          label="Type"
+          value={type}
+          options={TYPES}
+          onChange={(v) => update({ type: v || null, page: null })}
+        />
+        <Select
+          label="Mode"
+          value={mode}
+          options={MODES}
+          onChange={(v) => update({ mode: v || null, page: null })}
+        />
+        <Select
+          label="Sort"
+          value={sort}
+          options={SORTS}
+          onChange={(v) => update({ sort: v === "recent" ? null : v, page: null })}
+          alwaysShowValue
+          defaultValue="recent"
+        />
+
+        <div
+          className="inline-flex items-center rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] p-0.5 text-[11px] tracking-[0.04em]"
+          role="group"
+          aria-label="Archived filter"
+        >
+          {(
+            [
+              { code: "active", label: "Active" },
+              { code: "archived", label: "Archived" },
+              { code: "all", label: "All" },
+            ] as { code: ArchivedMode; label: string }[]
+          ).map((opt) => {
+            const selected = archivedMode === opt.code;
+            return (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() =>
+                  update({
+                    archived: opt.code === "active" ? null : opt.code,
+                    page: null,
+                  })
+                }
+                aria-pressed={selected}
+                className={`h-8 px-3 rounded-[var(--radius-pill)] transition-[background-color,color] duration-[var(--dur-fast)]
+                            ${
+                              selected
+                                ? "bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                                : "text-[var(--ink-mute)] hover:text-[var(--ink)]"
+                            }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {anyFilter ? (
+            <button
+              type="button"
+              onClick={reset}
+              className="h-9 px-3 rounded-[var(--radius-pill)] text-[12px] tracking-[0.04em]
+                         text-[var(--ink-mute)] hover:text-[var(--ink)] hover:bg-[var(--paper-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,color] duration-[var(--dur-fast)]"
+            >
+              Reset
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-[var(--paper-shadow)] bg-[var(--paper)]/50 text-[11px] tracking-[0.14em] uppercase text-[var(--ink-mute)]">
+        <span>
+          {activeCount.toLocaleString()}{" "}
+          {typeof totalCount === "number" && totalCount !== activeCount ? (
+            <span className="text-[var(--ink-faint)]">
+              · of {totalCount.toLocaleString()}
+            </span>
+          ) : null}{" "}
+          matching
+        </span>
+        <span className={`transition-opacity duration-[var(--dur-fast)] ${isPending ? "opacity-100" : "opacity-0"}`}>
+          <span className="inline-flex items-center gap-1.5 text-[var(--cinnabar)]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--cinnabar)] animate-pulse" aria-hidden="true" />
+            Refreshing
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function Select({
+  label,
+  value,
+  options,
+  onChange,
+  alwaysShowValue = false,
+  defaultValue = "",
+}: {
+  label: string;
+  value: string;
+  options: { code: string; label: string }[];
+  onChange: (v: string) => void;
+  alwaysShowValue?: boolean;
+  defaultValue?: string;
+}) {
+  const isDefault = value === defaultValue;
+  const current = options.find((o) => o.code === value);
+  const displayLabel = alwaysShowValue
+    ? `${label} · ${current?.label ?? ""}`
+    : isDefault
+      ? label
+      : current?.label ?? label;
+
+  return (
+    <label
+      className={`relative inline-flex items-center gap-2 h-9 px-3 pr-8 rounded-[var(--radius-pill)]
+                  border text-[12px] tracking-[0.04em]
+                  cursor-pointer
+                  transition-[background-color,border-color,color] duration-[var(--dur-fast)]
+                  ${
+                    !isDefault
+                      ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                      : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-soft)] hover:bg-[var(--paper-deep)] hover:text-[var(--ink)]"
+                  }`}
+    >
+      <span className="truncate max-w-[180px]">{displayLabel}</span>
+      <svg
+        width="10"
+        height="10"
+        viewBox="0 0 10 10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-60"
+      >
+        <path d="M2.5 4L5 6.5 7.5 4" />
+      </svg>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+      >
+        {options.map((o) => (
+          <option key={o.code || "_"} value={o.code}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}

@@ -22,10 +22,10 @@ type IconName =
 const PRIMARY: NavItem[] = [
   { href: "/admin", label: "Overview", labelZh: "概览", icon: "overview" },
   { href: "/admin/participants", label: "Participants", labelZh: "学员", icon: "participants" },
+  { href: "/admin/events", label: "Events", labelZh: "活动", icon: "events" },
 ];
 
 const UPCOMING: NavItem[] = [
-  { href: "/admin/events", label: "Events", labelZh: "活动", icon: "events", soon: true },
   { href: "/admin/travel", label: "Travel", labelZh: "出行", icon: "travel", soon: true },
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance", soon: true },
   { href: "/admin/notifications", label: "Notifications", labelZh: "通知", icon: "bell", soon: true },

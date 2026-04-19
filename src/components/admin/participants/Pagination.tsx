@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 type Props = {
   page: number;
@@ -11,6 +11,7 @@ type Props = {
 
 export function Pagination({ page, pageSize, total }: Props) {
   const sp = useSearchParams();
+  const pathname = usePathname() ?? "/admin/participants";
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(total, page * pageSize);
@@ -20,7 +21,7 @@ export function Pagination({ page, pageSize, total }: Props) {
     if (p <= 1) next.delete("page");
     else next.set("page", String(p));
     const qs = next.toString();
-    return qs ? `/admin/participants?${qs}` : "/admin/participants";
+    return qs ? `${pathname}?${qs}` : pathname;
   }
 
   const prevDisabled = page <= 1;
