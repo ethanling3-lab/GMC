@@ -10,6 +10,7 @@ import type {
 } from "@/lib/events-shared";
 import { STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
 import { PAYMENT_METHODS } from "@/lib/event-update-schema";
+import { PosterUploader } from "./PosterUploader";
 
 export type EventFull = {
   id: string;
@@ -131,6 +132,13 @@ export function EventEditor({
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
 
+  // Keep draft.poster_url in sync with the server: the PosterUploader writes
+  // it directly via its own API + router.refresh(), bypassing draft. Without
+  // this effect the draft would look "dirty" right after an upload.
+  useEffect(() => {
+    setDraft((d) => ({ ...d, poster_url: event.poster_url }));
+  }, [event.poster_url]);
+
   useEffect(() => {
     if (!statusMenuOpen) return;
     function onDown(e: MouseEvent) {
@@ -224,7 +232,7 @@ export function EventEditor({
         sub_heading_cn: draft.sub_heading_cn,
         body_en: draft.body_en,
         body_cn: draft.body_cn,
-        poster_url: draft.poster_url,
+        // poster_url is owned by PosterUploader — do not overwrite here.
         gallery: draft.gallery,
         type: draft.type,
         mode: draft.mode,
@@ -453,11 +461,19 @@ export function EventEditor({
           </Field>
         </div>
 
-        <Field label="Poster URL" labelZh="海报链接" hint="Use a CDN URL for now — uploader comes in a later slice.">
-          <input type="url" value={draft.poster_url ?? ""} onChange={(e) => update("poster_url", e.target.value || null)} placeholder="https://…" disabled={!canEdit} className={inputCls("font-mono text-[12px]")} />
+        <Field label="Poster" labelZh="海报" hint="Shown as the hero on the public event page and thumbnail in the listing. Uploads save immediately — no need to hit Save.">
+          <PosterUploader
+            eventId={event.id}
+            initialUrl={event.poster_url}
+            canEdit={canEdit}
+          />
         </Field>
 
-        <Field label="Gallery URLs" labelZh="图库" hint="One URL per line.">
+        <Field
+          label="Gallery URLs"
+          labelZh="图库"
+          hint="Optional — one URL per line. Supporting images shown below the fold on the public event page."
+        >
           <textarea
             rows={4}
             value={draft.gallery.join("\n")}
