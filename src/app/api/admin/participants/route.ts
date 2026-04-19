@@ -14,7 +14,7 @@ import { REGIONS } from "@/lib/participant-import-schema";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 26;
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const ALLOWED_PHOTO_TYPES = new Set([

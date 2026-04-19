@@ -9,7 +9,7 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 26;
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TEXT_CHARS = 250_000;
