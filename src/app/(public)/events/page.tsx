@@ -227,8 +227,9 @@ export default async function EventsPage() {
                   <div className="mt-auto pt-6">
                     <Link
                       href={`/register?event=${encodeURIComponent(e.slug)}`}
+                      style={{ color: "#ffffff" }}
                       className="group/cta inline-flex items-center gap-2 h-11 px-5 rounded-full
-                                 bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)] text-white
+                                 bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)]
                                  text-[13px] tracking-[0.02em] font-bold
                                  shadow-[0_4px_14px_rgba(37,99,235,0.28)]
                                  hover:shadow-[0_6px_18px_rgba(37,99,235,0.38)]
