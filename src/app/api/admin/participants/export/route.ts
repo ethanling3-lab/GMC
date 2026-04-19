@@ -67,6 +67,15 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const filters = parseFilters(url.searchParams);
 
+  // Optional ?ids=uuid,uuid,... — export only those rows (still scoped to role).
+  const idsParam = url.searchParams.get("ids")?.trim();
+  const selectedIds = idsParam
+    ? idsParam
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : null;
+
   const supabase = await createSupabaseServerClient();
 
   const columns =
@@ -74,7 +83,11 @@ export async function GET(req: Request) {
 
   let q = supabase.from("participants").select(columns);
   q = applyRoleScope(q, admin.role, admin.id, admin.region);
-  q = applyParticipantFilters(q, filters);
+  if (selectedIds && selectedIds.length > 0) {
+    q = q.in("id", selectedIds);
+  } else {
+    q = applyParticipantFilters(q, filters);
+  }
   // Cap export at 10k to avoid runaway; admins can refine filters for larger sets.
   q = q.limit(10_000);
 
@@ -90,8 +103,12 @@ export async function GET(req: Request) {
 
   const stamp = new Date().toISOString().slice(0, 10);
   const parts = ["participants"];
-  if (filters.region) parts.push(filters.region.toLowerCase());
-  if (filters.status) parts.push(filters.status);
+  if (selectedIds && selectedIds.length > 0) {
+    parts.push(`selected-${selectedIds.length}`);
+  } else {
+    if (filters.region) parts.push(filters.region.toLowerCase());
+    if (filters.status) parts.push(filters.status);
+  }
   parts.push(stamp);
   const filename = `${parts.join("-")}.csv`;
 
