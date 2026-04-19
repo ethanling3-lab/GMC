@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { PagePreamble } from "@/components/marketing/PagePreamble";
 import { CTABlock } from "@/components/marketing/CTABlock";
@@ -13,11 +14,19 @@ export type ProgramContent = {
   mode: string;
 };
 
-export function ProgramDetail({ content, locale, ctaLabel, secondaryLabel }: {
+export type ProgramHeroImage = {
+  src: string;
+  alt: string;
+  captionZh?: string;
+  captionEn?: string;
+};
+
+export function ProgramDetail({ content, locale, ctaLabel, secondaryLabel, heroImage }: {
   content: ProgramContent;
   locale: "zh" | "en";
   ctaLabel: string;
   secondaryLabel: string;
+  heroImage?: ProgramHeroImage;
 }) {
   return (
     <>
@@ -26,6 +35,37 @@ export function ProgramDetail({ content, locale, ctaLabel, secondaryLabel }: {
         heading={content.heading}
         sub={content.sub}
       />
+
+      {heroImage ? (
+        <section className="mx-auto max-w-[1200px] px-6 md:px-10 pb-16 md:pb-20">
+          <figure className="relative">
+            <div className="relative aspect-[16/9] md:aspect-[21/9] rounded-[var(--radius-lg)] overflow-hidden bg-[var(--ink)] shadow-[var(--shadow-paper-2)]">
+              <Image
+                src={heroImage.src}
+                alt={heroImage.alt}
+                fill
+                sizes="(min-width: 1200px) 1120px, 100vw"
+                className="object-cover"
+                priority
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-0"
+                style={{
+                  background:
+                    "linear-gradient(180deg, rgba(11,41,84,0) 55%, rgba(11,41,84,0.55) 100%)",
+                }}
+              />
+            </div>
+            {(heroImage.captionZh || heroImage.captionEn) ? (
+              <figcaption className="mt-4 flex items-center gap-3 text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
+                <span className="w-6 h-px bg-[var(--cinnabar)]" />
+                {locale === "zh" ? (heroImage.captionZh ?? heroImage.captionEn) : (heroImage.captionEn ?? heroImage.captionZh)}
+              </figcaption>
+            ) : null}
+          </figure>
+        </section>
+      ) : null}
 
       <section className="mx-auto max-w-[1080px] px-6 md:px-10 pb-16">
         <div className="grid md:grid-cols-[1fr_1.4fr] gap-12">

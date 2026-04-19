@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { PagePreamble } from "@/components/marketing/PagePreamble";
 import { createSupabaseServiceClient } from "@/lib/supabase";
@@ -36,6 +37,33 @@ export default async function EventsPage() {
         heading={locale === "zh" ? "近期活动与报名信息。" : "What's currently open."}
         sub={locale === "zh" ? "查看近期开放报名的课程、工作坊与静修活动。" : "Browse upcoming courses, workshops, and retreats."}
       />
+
+      <section className="mx-auto max-w-[1200px] px-6 md:px-10 pb-16 md:pb-20">
+        <figure className="relative">
+          <div className="relative aspect-[16/9] md:aspect-[21/9] rounded-[var(--radius-lg)] overflow-hidden bg-[var(--ink)] shadow-[var(--shadow-paper-2)]">
+            <Image
+              src="/hero-bg.jpg"
+              alt={locale === "zh" ? "《永不落空的力量》· Grand Hyatt 站" : "The Infallible Power — at Grand Hyatt"}
+              fill
+              sizes="(min-width: 1200px) 1120px, 100vw"
+              className="object-cover"
+              priority
+            />
+            <div
+              aria-hidden="true"
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(11,41,84,0) 55%, rgba(11,41,84,0.55) 100%)",
+              }}
+            />
+          </div>
+          <figcaption className="mt-4 flex items-center gap-3 text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
+            <span className="w-6 h-px bg-[var(--cinnabar)]" />
+            {locale === "zh" ? "《永不落空的力量》· Grand Hyatt 站" : "The Infallible Power · Grand Hyatt"}
+          </figcaption>
+        </figure>
+      </section>
 
       <section className="mx-auto max-w-[1280px] px-6 md:px-10 pb-24">
         {events.length === 0 ? (

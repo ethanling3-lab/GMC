@@ -12,6 +12,12 @@ export default async function Page() {
       locale={locale}
       ctaLabel={locale === "zh" ? "立即报名" : "Register"}
       secondaryLabel={locale === "zh" ? "返回课程列表" : "All programs"}
+      heroImage={{
+        src: "/content/culinary-event.jpg",
+        alt: "Culinary Management — Prosperity Catalyst at Pan Pacific Singapore",
+        captionZh: "《食尚财富》· 财富跃升 · Pan Pacific 新加坡",
+        captionEn: "Culinary Management · Prosperity Catalyst · Pan Pacific Singapore",
+      }}
     />
   );
 }

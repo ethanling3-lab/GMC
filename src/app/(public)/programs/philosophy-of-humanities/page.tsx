@@ -12,6 +12,12 @@ export default async function Page() {
       locale={locale}
       ctaLabel={locale === "zh" ? "立即报名" : "Register"}
       secondaryLabel={locale === "zh" ? "返回课程列表" : "All programs"}
+      heroImage={{
+        src: "/programs/philosophy.jpg",
+        alt: "Everlasting Classics — the program reader",
+        captionZh: "《经典永流传》· 读本",
+        captionEn: "Everlasting Classics · the reader",
+      }}
     />
   );
 }

@@ -12,6 +12,12 @@ export default async function Page() {
       locale={locale}
       ctaLabel={locale === "zh" ? "立即报名" : "Register"}
       secondaryLabel={locale === "zh" ? "返回课程列表" : "All programs"}
+      heroImage={{
+        src: "/content/bgm-dancing.jpg",
+        alt: "BGM Youth — on stage",
+        captionZh: "BGM 少年班 · 舞台一刻",
+        captionEn: "BGM Youth · on stage",
+      }}
     />
   );
 }

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { PagePreamble } from "@/components/marketing/PagePreamble";
 import { CTABlock } from "@/components/marketing/CTABlock";
 import { getServerLocale } from "@/lib/locale-server";
@@ -73,13 +74,35 @@ export default async function AboutPage() {
       <section className="mx-auto max-w-[1080px] px-6 md:px-10 pb-20 md:pb-28">
         <div className="rule-notch mb-14" aria-hidden="true"><span className="mark" /></div>
 
-        <div className="grid md:grid-cols-[280px_1fr] gap-10 md:gap-16 items-start">
+        <div className="grid md:grid-cols-[320px_1fr] gap-10 md:gap-16 items-start">
           <div>
-            <span className="eyebrow">{copy.founderEyebrow}</span>
-            <h2 className="mt-5 font-display text-[32px] md:text-[40px] leading-[1.1] tracking-[-0.02em] text-[var(--ink)]">
+            <div className="relative aspect-[3/4] rounded-[var(--radius-lg)] overflow-hidden bg-[var(--ink)] shadow-[var(--shadow-paper-2)]">
+              <Image
+                src="/founders/dr-wu.jpg"
+                alt={locale === "zh" ? "吴博士在「永不落空的力量」课堂上" : "Dr Eric Wu on stage at The Infallible Power"}
+                fill
+                sizes="(min-width: 768px) 320px, 100vw"
+                className="object-cover"
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-0"
+                style={{
+                  background:
+                    "linear-gradient(180deg, rgba(11,41,84,0.0) 55%, rgba(11,41,84,0.65) 100%)",
+                }}
+              />
+              <div className="absolute left-4 bottom-4 right-4 flex items-center gap-2 text-[10px] tracking-[0.22em] uppercase text-[var(--paper-warm)]/85">
+                <span className="w-5 h-px bg-current" />
+                {locale === "zh" ? "吴博士 · 新加坡" : "Dr Eric Wu · Singapore"}
+              </div>
+            </div>
+
+            <span className="eyebrow mt-8 inline-flex">{copy.founderEyebrow}</span>
+            <h2 className="mt-5 font-display text-[28px] md:text-[34px] leading-[1.15] tracking-[-0.015em] text-[var(--ink)]">
               {copy.founderTitle}
             </h2>
-            <ul className="mt-8 flex flex-col gap-3 text-[13px] leading-[1.6] text-[var(--ink-mute)]">
+            <ul className="mt-7 flex flex-col gap-3 text-[13px] leading-[1.6] text-[var(--ink-mute)]">
               {copy.founderRoles.map((role, i) => (
                 <li key={i} className="flex gap-3">
                   <span aria-hidden="true" className="w-4 h-px mt-2.5 bg-[var(--cinnabar)] flex-none" />
