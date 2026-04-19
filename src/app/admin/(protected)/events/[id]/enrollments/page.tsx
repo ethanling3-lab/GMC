@@ -3,7 +3,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
-import { EnrollmentsTable, type EnrollmentRow } from "@/components/admin/events/EnrollmentsTable";
+import {
+  EnrollmentsTable,
+  type EnrollmentRow,
+  type ReferrerRef,
+} from "@/components/admin/events/EnrollmentsTable";
+import { EnrollmentsToolbar } from "@/components/admin/events/EnrollmentsToolbar";
 import { STATUS_LABEL as EVENT_STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
 
 export const metadata: Metadata = { title: "Enrollments" };
@@ -29,6 +34,9 @@ export default async function EventEnrollmentsPage({
     )
       ? (sp.status as EnrollmentRow["status"])
       : null;
+
+  const qRaw = typeof sp.q === "string" ? sp.q.trim() : "";
+  const q = qRaw.slice(0, 120);
 
   const supabase = await createSupabaseServerClient();
 
@@ -69,45 +77,122 @@ export default async function EventEnrollmentsPage({
   }
   if (!event) notFound();
 
-  // Enrollments joined with participants for display. Service-level read
-  // (RLS bypass not needed — admin session + role check). If the form_answers
-  // column is missing (pre-migration 008), fall back.
-  const enrollmentCols =
-    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(id, region_id, name_en, name_cn, region, email, phone, language)";
-  const enrollmentColsLegacy =
-    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, participant:participants(id, region_id, name_en, name_cn, region, email, phone, language)";
+  // If a search term is set, resolve participant ids that match first, then
+  // scope the enrolments by those ids. Two small queries are simpler than a
+  // nested-or on a foreign table and avoids PostgREST embedding quirks.
+  let participantIdsForQ: string[] | null = null;
+  if (q) {
+    const needle = `%${q.replace(/[%_]/g, "\\$&")}%`;
+    const { data: pRows, error: pErr } = await supabase
+      .from("participants")
+      .select("id")
+      .or(
+        [
+          `name_en.ilike.${needle}`,
+          `name_cn.ilike.${needle}`,
+          `region_id.ilike.${needle}`,
+          `email.ilike.${needle}`,
+          `phone.ilike.${needle}`,
+        ].join(","),
+      )
+      .limit(5000);
+    if (pErr) throw new Error(pErr.message);
+    participantIdsForQ = (pRows ?? []).map((r) => r.id as string);
+  }
+
+  // Participant join includes referrer free-text columns (migration 009) so
+  // we can render the referrer pill inline. If 009 hasn't been applied yet,
+  // the select falls back to the legacy column set.
+  const participantFull =
+    "id, region_id, name_en, name_cn, region, email, phone, language, referrer_id, referrer_name, referrer_contact";
+  const participantLegacy =
+    "id, region_id, name_en, name_cn, region, email, phone, language, referrer_id";
+  const enrollmentColsWithSchema = (participant: string) =>
+    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(${participant})`;
+  const enrollmentColsLegacy = (participant: string) =>
+    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, participant:participants(${participant})`;
+
   let enrollments: unknown[] | null = null;
   {
-    let q = supabase
-      .from("enrollments")
-      .select(enrollmentCols)
-      .eq("event_id", eventId)
-      .order("created_at", { ascending: false });
-    if (statusFilter) q = q.eq("status", statusFilter);
-    const primary = await q;
-    if (primary.error) {
-      const code = (primary.error as { code?: string }).code;
-      if (code !== "42703") throw new Error(primary.error.message);
+    const runQuery = async (selectCols: string) => {
       let q2 = supabase
         .from("enrollments")
-        .select(enrollmentColsLegacy)
+        .select(selectCols)
         .eq("event_id", eventId)
         .order("created_at", { ascending: false });
       if (statusFilter) q2 = q2.eq("status", statusFilter);
-      const fallback = await q2;
-      if (fallback.error) throw new Error(fallback.error.message);
-      enrollments = (fallback.data ?? []).map((r) => ({
-        ...r,
-        form_answers: {},
-      }));
-    } else {
-      enrollments = primary.data ?? [];
+      if (participantIdsForQ) {
+        if (participantIdsForQ.length === 0) return { data: [], error: null };
+        q2 = q2.in("participant_id", participantIdsForQ);
+      }
+      return q2;
+    };
+
+    const attempts: { cols: () => string; stripForm: boolean; stripReferrer: boolean }[] = [
+      { cols: () => enrollmentColsWithSchema(participantFull), stripForm: false, stripReferrer: false },
+      { cols: () => enrollmentColsWithSchema(participantLegacy), stripForm: false, stripReferrer: true },
+      { cols: () => enrollmentColsLegacy(participantFull), stripForm: true, stripReferrer: false },
+      { cols: () => enrollmentColsLegacy(participantLegacy), stripForm: true, stripReferrer: true },
+    ];
+
+    let success = false;
+    for (const attempt of attempts) {
+      const res = await runQuery(attempt.cols());
+      if (res.error) {
+        const code = (res.error as { code?: string }).code;
+        if (code !== "42703") throw new Error(res.error.message);
+        continue;
+      }
+      const rows = (res.data ?? []) as Array<Record<string, unknown>>;
+      enrollments = rows.map((r) => {
+        const next: Record<string, unknown> = { ...r };
+        if (attempt.stripForm) next.form_answers = {};
+        if (attempt.stripReferrer && next.participant && typeof next.participant === "object") {
+          next.participant = {
+            ...(next.participant as Record<string, unknown>),
+            referrer_name: null,
+            referrer_contact: null,
+          };
+        }
+        return next;
+      });
+      success = true;
+      break;
     }
+    if (!success) throw new Error("Failed to load enrolments");
   }
 
   const rows = (enrollments ?? []) as unknown as EnrollmentRow[];
 
-  // Counts per status for the filter bar tabs
+  // Resolve referrer participants in a single second query when enrolments
+  // reference other participants as the source of the 感召.
+  const referrerIds = Array.from(
+    new Set(
+      rows
+        .map((r) => r.participant?.referrer_id ?? null)
+        .filter((v): v is string => typeof v === "string" && v.length > 0),
+    ),
+  );
+  const referrerById: Record<string, ReferrerRef> = {};
+  if (referrerIds.length > 0) {
+    const { data: refRows, error: refErr } = await supabase
+      .from("participants")
+      .select("id, region_id, name_en, name_cn")
+      .in("id", referrerIds);
+    if (refErr) throw new Error(refErr.message);
+    for (const r of refRows ?? []) {
+      referrerById[(r as { id: string }).id] = {
+        id: (r as { id: string }).id,
+        region_id: (r as { region_id: string | null }).region_id,
+        name_en: (r as { name_en: string | null }).name_en,
+        name_cn: (r as { name_cn: string | null }).name_cn,
+      };
+    }
+  }
+
+  // Counts per status for the filter bar tabs. The counts ignore `q` so the
+  // tab totals always describe the full event — the active tab indicates
+  // what the table is filtered to, not how many matched the search.
   const { data: counts } = await supabase
     .from("enrollments")
     .select("status")
@@ -180,14 +265,25 @@ export default async function EventEnrollmentsPage({
           </div>
         </div>
 
+        {/* Toolbar: search + export. Renders above the status tabs so the
+            tabs remain the visually primary control. */}
+        <EnrollmentsToolbar
+          eventId={event.id}
+          initialQ={q}
+          statusFilter={statusFilter}
+          matched={rows.length}
+          hasQ={q.length > 0}
+        />
+
         {/* Status tabs */}
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <StatusTab
             eventId={event.id}
             code={null}
             label="All"
             count={statusCounts.all}
             active={statusFilter === null}
+            q={q}
           />
           <StatusTab
             eventId={event.id}
@@ -195,6 +291,7 @@ export default async function EventEnrollmentsPage({
             label="Pending · 待审核"
             count={statusCounts.pending_approval}
             active={statusFilter === "pending_approval"}
+            q={q}
           />
           <StatusTab
             eventId={event.id}
@@ -202,6 +299,7 @@ export default async function EventEnrollmentsPage({
             label="Approved · 已批准"
             count={statusCounts.approved}
             active={statusFilter === "approved"}
+            q={q}
           />
           <StatusTab
             eventId={event.id}
@@ -209,6 +307,7 @@ export default async function EventEnrollmentsPage({
             label="Paid · 已付款"
             count={statusCounts.paid}
             active={statusFilter === "paid"}
+            q={q}
           />
           <StatusTab
             eventId={event.id}
@@ -216,6 +315,7 @@ export default async function EventEnrollmentsPage({
             label="Rejected · 已拒绝"
             count={statusCounts.rejected}
             active={statusFilter === "rejected"}
+            q={q}
           />
           <StatusTab
             eventId={event.id}
@@ -223,6 +323,7 @@ export default async function EventEnrollmentsPage({
             label="Cancelled · 已取消"
             count={statusCounts.cancelled}
             active={statusFilter === "cancelled"}
+            q={q}
           />
         </div>
       </div>
@@ -231,8 +332,9 @@ export default async function EventEnrollmentsPage({
         eventId={event.id}
         rows={rows}
         canEdit={admin.role === "super_admin"}
-        hasFilter={statusFilter !== null}
+        hasFilter={statusFilter !== null || q.length > 0}
         formSchema={event.form_schema ?? {}}
+        referrerById={referrerById}
       />
     </div>
   );
@@ -244,15 +346,21 @@ function StatusTab({
   label,
   count,
   active,
+  q,
 }: {
   eventId: string;
   code: EnrollmentRow["status"] | null;
   label: string;
   count: number;
   active: boolean;
+  q: string;
 }) {
-  const href = code
-    ? `/admin/events/${eventId}/enrollments?status=${code}`
+  const params = new URLSearchParams();
+  if (code) params.set("status", code);
+  if (q) params.set("q", q);
+  const qs = params.toString();
+  const href = qs
+    ? `/admin/events/${eventId}/enrollments?${qs}`
     : `/admin/events/${eventId}/enrollments`;
   return (
     <Link

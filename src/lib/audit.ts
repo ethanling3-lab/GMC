@@ -20,7 +20,8 @@ export type AuditAction =
   | "enrollment.bulk_cancel"
   | "enrollment.bulk_mark_paid"
   | "enrollment.capacity_override"
-  | "enrollment.import_row";
+  | "enrollment.import_row"
+  | "enrollment.update_amount";
 
 export type WriteAuditLog = {
   actor_id: string | null;

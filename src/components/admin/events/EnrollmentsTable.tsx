@@ -4,9 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ENROLLMENT_STATUS_LABEL,
   PAYMENT_METHOD_LABEL,
-  PAYMENT_STATUS_LABEL,
   type EnrollmentStatus,
   type PaymentMethod,
   type PaymentStatus,
@@ -36,6 +34,16 @@ type ParticipantRef = {
   email: string | null;
   phone: string | null;
   language: string | null;
+  referrer_id: string | null;
+  referrer_name: string | null;
+  referrer_contact: string | null;
+};
+
+export type ReferrerRef = {
+  id: string;
+  region_id: string | null;
+  name_en: string | null;
+  name_cn: string | null;
 };
 
 export type EnrollmentRow = {
@@ -58,6 +66,7 @@ type Props = {
   canEdit: boolean;
   hasFilter: boolean;
   formSchema: unknown;
+  referrerById: Record<string, ReferrerRef>;
 };
 
 type BulkAction = EnrollmentAction;
@@ -123,50 +132,6 @@ const JOURNEY_SECONDARY_ZH: Record<JourneyStage, string | null> = {
   cancelled: null,
 };
 
-const STATUS_TONE: Record<
-  EnrollmentStatus,
-  { dot: string; bg: string; ring: string; text: string }
-> = {
-  pending_approval: {
-    dot: "bg-[var(--cinnabar-soft)]",
-    bg: "bg-[var(--gold-soft)]",
-    ring: "border-[var(--cinnabar-soft)]/35",
-    text: "text-[var(--cinnabar-deep)]",
-  },
-  approved: {
-    dot: "bg-[var(--jade)]",
-    bg: "bg-[var(--jade-wash)]",
-    ring: "border-[var(--jade)]/25",
-    text: "text-[var(--jade-deep)]",
-  },
-  paid: {
-    dot: "bg-[var(--ink)]",
-    bg: "bg-[var(--paper-deep)]",
-    ring: "border-[var(--ink-faint)]/40",
-    text: "text-[var(--ink)]",
-  },
-  rejected: {
-    dot: "bg-[var(--cinnabar)]",
-    bg: "bg-[var(--cinnabar-wash)]",
-    ring: "border-[var(--cinnabar)]/25",
-    text: "text-[var(--cinnabar-deep)]",
-  },
-  cancelled: {
-    dot: "bg-[var(--ink-faint)]",
-    bg: "bg-[var(--paper)]",
-    ring: "border-[var(--paper-shadow)]",
-    text: "text-[var(--ink-mute)]",
-  },
-};
-
-const PAYMENT_TONE: Record<PaymentStatus, string> = {
-  none: "text-[var(--ink-faint)]",
-  pending: "text-[var(--cinnabar-deep)]",
-  paid: "text-[var(--jade-deep)]",
-  failed: "text-[var(--cinnabar-deep)]",
-  refunded: "text-[var(--ink-mute)]",
-};
-
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -177,6 +142,19 @@ function formatDate(iso: string | null): string {
   });
 }
 
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  })}  ${d.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
 function participantName(p: ParticipantRef | null): string {
   if (!p) return "(removed)";
   const en = p.name_en?.trim();
@@ -185,12 +163,67 @@ function participantName(p: ParticipantRef | null): string {
   return en || cn || "(unnamed)";
 }
 
+function referrerLabel(r: ReferrerRef): string {
+  const en = r.name_en?.trim();
+  const cn = r.name_cn?.trim();
+  if (en && cn) return `${en} · ${cn}`;
+  return en || cn || r.region_id || "(unnamed)";
+}
+
+// Picks the first answerable field that has a filled value, then returns a
+// compact "Label: Value" string for preview purposes. Returns null when no
+// field has an answer yet.
+function firstAnswerPreview(
+  fields: CustomField[],
+  answers: Record<string, unknown>,
+): { label: string; value: string } | null {
+  for (const f of fields) {
+    const raw = answers[f.id];
+    if (raw === undefined || raw === null || raw === "") continue;
+    if (Array.isArray(raw) && raw.length === 0) continue;
+    const label = f.label_en || f.label_cn || f.id;
+    const rendered = renderPreviewValue(f, raw, answers[`${f.id}__other`]);
+    if (!rendered) continue;
+    return { label, value: rendered };
+  }
+  return null;
+}
+
+function renderPreviewValue(
+  f: CustomField,
+  v: unknown,
+  otherText?: unknown,
+): string {
+  if (f.type === "checkbox_ack") return v === true ? "✓" : "";
+  const otherLabel =
+    typeof otherText === "string" && otherText.trim()
+      ? `Other: ${otherText.trim()}`
+      : "Other";
+  if (f.type === "multi_select") {
+    if (!Array.isArray(v) || v.length === 0) return "";
+    return v
+      .map((val) => {
+        if (val === OTHER_OPTION_VALUE) return otherLabel;
+        const opt = f.options.find((o) => o.value === val);
+        return opt ? opt.label_en || opt.label_cn || opt.value : String(val);
+      })
+      .join(", ");
+  }
+  if (f.type === "single_select") {
+    if (v === OTHER_OPTION_VALUE) return otherLabel;
+    const opt = f.options.find((o) => o.value === v);
+    return opt ? opt.label_en || opt.label_cn || opt.value : String(v);
+  }
+  return String(v);
+}
+
 export function EnrollmentsTable({
   eventId,
   rows,
   canEdit,
   hasFilter,
   formSchema,
+  referrerById,
 }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -198,6 +231,9 @@ export function EnrollmentsTable({
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [editingAmountId, setEditingAmountId] = useState<string | null>(null);
+  const [amountDraft, setAmountDraft] = useState<string>("");
+  const [amountBusy, setAmountBusy] = useState<string | null>(null);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   const parsedSchema: FormSchema = useMemo(
@@ -223,6 +259,7 @@ export function EnrollmentsTable({
   useEffect(() => {
     setSelected(new Set());
     setError(null);
+    setEditingAmountId(null);
   }, [rowKey]);
 
   const allOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id));
@@ -349,6 +386,61 @@ export function EnrollmentsTable({
     }
   }
 
+  function startEditAmount(row: EnrollmentRow) {
+    if (!canEdit) return;
+    setEditingAmountId(row.id);
+    setAmountDraft(
+      row.amount_paid === null ? "" : String(row.amount_paid),
+    );
+    setError(null);
+  }
+
+  function cancelEditAmount() {
+    setEditingAmountId(null);
+    setAmountDraft("");
+  }
+
+  async function saveEditAmount(id: string, original: number | null) {
+    const trimmed = amountDraft.trim();
+    // Treat empty string as "no change requested" — just close the editor.
+    if (trimmed === "") {
+      cancelEditAmount();
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1_000_000) {
+      setError("Amount must be between 0 and 1,000,000.");
+      return;
+    }
+    if (original !== null && parsed === original) {
+      cancelEditAmount();
+      return;
+    }
+    setAmountBusy(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount_paid: parsed }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error ?? `Couldn't update amount (${res.status})`);
+      }
+      setEditingAmountId(null);
+      setAmountDraft("");
+      router.refresh();
+      setToast({
+        message: `Amount updated to ${parsed.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Amount update failed");
+    } finally {
+      setAmountBusy(null);
+    }
+  }
+
   const count = selected.size;
 
   return (
@@ -417,6 +509,13 @@ export function EnrollmentsTable({
         </div>
       ) : null}
 
+      {/* Non-bulk errors (e.g. amount update) still need a surface. */}
+      {count === 0 && error ? (
+        <div className="px-5 py-2.5 border-b border-[var(--paper-shadow)] bg-[var(--cinnabar-wash)]/40 text-[12px] text-[var(--cinnabar-deep)] font-medium">
+          {error}
+        </div>
+      ) : null}
+
       <div className="overflow-x-auto">
         <table className="w-full text-left text-[13px] text-[var(--ink-soft)]">
           <thead className="bg-[var(--paper-deep)]/70 text-[9px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
@@ -443,7 +542,9 @@ export function EnrollmentsTable({
                 <th scope="col" className="w-10 pr-1 py-3.5" aria-label="Row actions" />
               ) : null}
               {hasCustomFields ? (
-                <th scope="col" className="w-10 pr-3 py-3.5" aria-label="Expand answers" />
+                <th scope="col" className="w-[180px] pr-3 py-3.5 font-medium text-right">
+                  Answers
+                </th>
               ) : null}
             </tr>
           </thead>
@@ -452,8 +553,6 @@ export function EnrollmentsTable({
               <tr>
                 <td
                   colSpan={
-                    // Participant + Region + Journey + Amount + Enrolled
-                    // + (checkbox + actions when canEdit) + (expand when hasCustomFields)
                     5 + (canEdit ? 2 : 0) + (hasCustomFields ? 1 : 0)
                   }
                   className="px-6 py-16 text-center"
@@ -471,11 +570,11 @@ export function EnrollmentsTable({
                       </svg>
                     </span>
                     <div className="text-[13px] text-[var(--ink)]">
-                      {hasFilter ? "No enrollments in this status" : "No enrollments yet"}
+                      {hasFilter ? "No enrollments match" : "No enrollments yet"}
                     </div>
                     <div className="text-[12px] text-[var(--ink-mute)] max-w-[44ch]">
                       {hasFilter
-                        ? "Switch the status tab above to see the rest."
+                        ? "Try clearing the search or switching the status tab above."
                         : "Once the public event page is live (or an admin enrolls a participant manually), rows will appear here."}
                     </div>
                   </div>
@@ -497,6 +596,32 @@ export function EnrollmentsTable({
                 const isExpanded = expanded.has(r.id);
                 const totalCols =
                   5 + (canEdit ? 2 : 0) + (hasCustomFields ? 1 : 0);
+
+                const p = r.participant;
+                const referrerLinked =
+                  p?.referrer_id && referrerById[p.referrer_id]
+                    ? referrerById[p.referrer_id]
+                    : null;
+                const referrerFreeText =
+                  !referrerLinked && (p?.referrer_name || p?.referrer_contact)
+                    ? `${p?.referrer_name ?? ""}${p?.referrer_name && p?.referrer_contact ? " · " : ""}${p?.referrer_contact ?? ""}`.trim()
+                    : null;
+
+                const preview =
+                  hasCustomFields
+                    ? firstAnswerPreview(answerableFields, r.form_answers ?? {})
+                    : null;
+
+                const trail = [
+                  `Registered: ${formatDateTime(r.created_at)}`,
+                  `Confirmed: ${formatDateTime(r.confirmed_at)}`,
+                  `Approved: ${formatDateTime(r.approved_at)}`,
+                  `Paid: ${formatDateTime(r.paid_at)}`,
+                ].join("\n");
+
+                const isEditingAmount = editingAmountId === r.id;
+                const isSavingAmount = amountBusy === r.id;
+
                 return [
                   <tr
                     key={r.id}
@@ -508,41 +633,126 @@ export function EnrollmentsTable({
                                ${isExpanded ? "bg-[var(--paper-deep)]/40" : ""}`}
                   >
                     {canEdit ? (
-                      <td className="w-10 pl-5 pr-2 py-3.5">
+                      <td className="w-10 pl-5 pr-2 py-3.5 align-top">
                         <input
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleRow(r.id)}
-                          aria-label={`Select ${participantName(r.participant)}`}
-                          className="w-3.5 h-3.5 accent-[var(--cinnabar)] cursor-pointer"
+                          aria-label={`Select ${participantName(p)}`}
+                          className="w-3.5 h-3.5 accent-[var(--cinnabar)] cursor-pointer mt-0.5"
                         />
                       </td>
                     ) : null}
-                    <td className="px-5 py-3.5">
-                      {r.participant ? (
-                        <Link
-                          href={`/admin/participants/${r.participant.id}`}
-                          className="block hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
-                        >
-                          <div className="text-[var(--ink)] font-medium">
-                            {participantName(r.participant)}
+                    <td className="px-5 py-3.5 align-top">
+                      {p ? (
+                        <div className="flex flex-col gap-1">
+                          <Link
+                            href={`/admin/participants/${p.id}`}
+                            className="text-[var(--ink)] font-medium hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
+                          >
+                            {participantName(p)}
+                          </Link>
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--ink-faint)]">
+                            <span className="font-mono">
+                              {p.region_id ?? "—"}
+                            </span>
+                            {p.email ? (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <a
+                                  href={`mailto:${p.email}`}
+                                  className="font-mono !text-[var(--ink-mute)] hover:!text-[var(--cinnabar-deep)] transition-colors duration-[var(--dur-fast)]"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {p.email}
+                                </a>
+                              </>
+                            ) : null}
+                            {p.phone ? (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <a
+                                  href={`tel:${p.phone.replace(/\s+/g, "")}`}
+                                  className="font-mono !text-[var(--ink-mute)] hover:!text-[var(--cinnabar-deep)] transition-colors duration-[var(--dur-fast)]"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {p.phone}
+                                </a>
+                              </>
+                            ) : null}
                           </div>
-                          <div className="mt-0.5 font-mono text-[11px] text-[var(--ink-faint)]">
-                            {r.participant.region_id ?? "—"}
-                          </div>
-                        </Link>
+                          {referrerLinked || referrerFreeText ? (
+                            <div className="mt-0.5">
+                              {referrerLinked ? (
+                                <Link
+                                  href={`/admin/participants/${referrerLinked.id}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1.5 h-5 px-2 rounded-full
+                                             border border-[var(--paper-shadow)] bg-[var(--paper)]
+                                             text-[10.5px] tracking-[0.04em] !text-[var(--ink-mute)]
+                                             hover:border-[var(--cinnabar)]/30 hover:bg-[var(--cinnabar-wash)] hover:!text-[var(--cinnabar-deep)]
+                                             transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+                                  title="Referred by · 感召"
+                                >
+                                  <svg
+                                    width="9"
+                                    height="9"
+                                    viewBox="0 0 10 10"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.6"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    aria-hidden="true"
+                                    className="opacity-70"
+                                  >
+                                    <path d="M2 6.5l2 2 4-5" />
+                                  </svg>
+                                  <span className="truncate max-w-[24ch]">
+                                    {referrerLabel(referrerLinked)}
+                                  </span>
+                                </Link>
+                              ) : (
+                                <span
+                                  className="inline-flex items-center gap-1.5 h-5 px-2 rounded-full
+                                             border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)]
+                                             text-[10.5px] tracking-[0.04em] text-[var(--ink-faint)]"
+                                  title="Referred by (free text) · 感召（文字）"
+                                >
+                                  <svg
+                                    width="9"
+                                    height="9"
+                                    viewBox="0 0 10 10"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.4"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    aria-hidden="true"
+                                  >
+                                    <circle cx="5" cy="3.5" r="1.4" />
+                                    <path d="M2 8.2a3 3 0 0 1 6 0" />
+                                  </svg>
+                                  <span className="truncate max-w-[24ch]">
+                                    {referrerFreeText}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
                       ) : (
                         <span className="text-[var(--ink-faint)] italic">
                           participant removed
                         </span>
                       )}
                     </td>
-                    <td className="px-5 py-3.5 text-[var(--ink-mute)] whitespace-nowrap">
-                      {r.participant?.region ?? (
+                    <td className="px-5 py-3.5 text-[var(--ink-mute)] whitespace-nowrap align-top">
+                      {p?.region ?? (
                         <span className="text-[var(--ink-faint)]">—</span>
                       )}
                     </td>
-                    <td className="px-5 py-3.5">
+                    <td className="px-5 py-3.5 align-top">
                       <div className="flex flex-col gap-1.5 items-start">
                         <span
                           className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
@@ -570,8 +780,100 @@ export function EnrollmentsTable({
                         ) : null}
                       </div>
                     </td>
-                    <td className="px-5 py-3.5 text-right tabular-nums">
-                      {r.amount_paid !== null ? (
+                    <td className="px-5 py-3.5 text-right tabular-nums align-top">
+                      {isEditingAmount ? (
+                        <div
+                          className="inline-flex items-center gap-1 justify-end"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0"
+                            max="1000000"
+                            autoFocus
+                            value={amountDraft}
+                            onChange={(e) => setAmountDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                saveEditAmount(r.id, r.amount_paid);
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelEditAmount();
+                              }
+                            }}
+                            disabled={isSavingAmount}
+                            aria-label="Amount paid"
+                            className="w-[104px] h-7 px-2 rounded-[var(--radius-sm)] border border-[var(--cinnabar)]/40 bg-[var(--paper)]
+                                       text-[12.5px] text-right text-[var(--ink)]
+                                       focus:outline-none focus:shadow-[var(--shadow-focus)]
+                                       tabular-nums"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => saveEditAmount(r.id, r.amount_paid)}
+                            disabled={isSavingAmount}
+                            aria-label="Save amount"
+                            className="w-7 h-7 rounded-full inline-flex items-center justify-center border border-[var(--jade)]/40 text-[var(--jade-deep)] hover:bg-[var(--jade-wash)] transition-colors duration-[var(--dur-fast)] disabled:opacity-50"
+                          >
+                            {isSavingAmount ? (
+                              <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="animate-spin">
+                                <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.5" />
+                                <path d="M12.5 7a5.5 5.5 0 0 0-5.5-5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                              </svg>
+                            ) : (
+                              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M2 5.2l2 2 4-4.4" />
+                              </svg>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditAmount}
+                            disabled={isSavingAmount}
+                            aria-label="Cancel edit"
+                            className="w-7 h-7 rounded-full inline-flex items-center justify-center border border-[var(--paper-shadow)] text-[var(--ink-mute)] hover:text-[var(--ink)] hover:bg-[var(--paper-deep)] transition-colors duration-[var(--dur-fast)] disabled:opacity-50"
+                          >
+                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                              <path d="M3 3l4 4M7 3l-4 4" />
+                            </svg>
+                          </button>
+                        </div>
+                      ) : canEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => startEditAmount(r)}
+                          title="Click to edit amount"
+                          className="group inline-flex items-center gap-1.5 px-1.5 py-0.5 -mr-1.5 rounded-[var(--radius-sm)]
+                                     hover:bg-[var(--cinnabar-wash)]/60 hover:text-[var(--cinnabar-deep)]
+                                     focus-visible:shadow-[var(--shadow-focus)]
+                                     transition-colors duration-[var(--dur-fast)]"
+                        >
+                          {r.amount_paid !== null ? (
+                            <span className="text-[var(--ink)] tabular-nums">
+                              {r.amount_paid.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            </span>
+                          ) : (
+                            <span className="text-[var(--ink-faint)]">—</span>
+                          )}
+                          <svg
+                            width="10"
+                            height="10"
+                            viewBox="0 0 10 10"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                            className="opacity-0 group-hover:opacity-70 text-[var(--cinnabar)] transition-opacity duration-[var(--dur-fast)]"
+                          >
+                            <path d="M6.5 2l1.5 1.5L4 7.5l-1.8.3L2.5 6z" />
+                          </svg>
+                        </button>
+                      ) : r.amount_paid !== null ? (
                         <span className="text-[var(--ink)]">
                           {r.amount_paid.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                         </span>
@@ -579,11 +881,16 @@ export function EnrollmentsTable({
                         <span className="text-[var(--ink-faint)]">—</span>
                       )}
                     </td>
-                    <td className="px-5 py-3.5 text-right text-[var(--ink-mute)] whitespace-nowrap">
-                      {formatDate(r.created_at)}
+                    <td className="px-5 py-3.5 text-right text-[var(--ink-mute)] whitespace-nowrap align-top">
+                      <span
+                        title={trail}
+                        className="cursor-help underline decoration-dotted decoration-[var(--ink-faint)] underline-offset-[3px]"
+                      >
+                        {formatDate(r.created_at)}
+                      </span>
                     </td>
                     {canEdit ? (
-                      <td className="pr-1 py-3.5 text-right">
+                      <td className="pr-1 py-3.5 text-right align-top">
                         <RowActions
                           status={r.status}
                           onAction={(a) => runRow(r.id, a)}
@@ -591,37 +898,54 @@ export function EnrollmentsTable({
                       </td>
                     ) : null}
                     {hasCustomFields ? (
-                      <td className="pr-3 py-3.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => toggleExpanded(r.id)}
-                          aria-label={
-                            isExpanded ? "Hide form answers" : "Show form answers"
-                          }
-                          aria-expanded={isExpanded}
-                          className={`w-7 h-7 rounded-full border inline-flex items-center justify-center
-                                      transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)]
-                                      ${
-                                        isExpanded
-                                          ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
-                                          : "border-[var(--paper-shadow)] text-[var(--ink-mute)] hover:border-[var(--cinnabar)]/30 hover:text-[var(--cinnabar-deep)]"
-                                      }`}
-                        >
-                          <svg
-                            width="10"
-                            height="10"
-                            viewBox="0 0 10 10"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.8"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
-                            className={`transition-transform duration-[var(--dur-fast)] ${isExpanded ? "rotate-180" : ""}`}
+                      <td className="pr-3 py-3.5 text-right align-top">
+                        <div className="inline-flex flex-col items-end gap-1 max-w-[180px]">
+                          {preview ? (
+                            <span
+                              className="text-[10.5px] leading-[1.4] text-[var(--ink-mute)] truncate max-w-[172px] text-right"
+                              title={`${preview.label}: ${preview.value}`}
+                            >
+                              <span className="text-[var(--ink-faint)]">
+                                {preview.label}:
+                              </span>{" "}
+                              {preview.value}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] tracking-[0.1em] uppercase text-[var(--ink-faint)]">
+                              No answers
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(r.id)}
+                            aria-label={
+                              isExpanded ? "Hide form answers" : "Show form answers"
+                            }
+                            aria-expanded={isExpanded}
+                            className={`w-7 h-7 rounded-full border inline-flex items-center justify-center
+                                        transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)]
+                                        ${
+                                          isExpanded
+                                            ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                                            : "border-[var(--paper-shadow)] text-[var(--ink-mute)] hover:border-[var(--cinnabar)]/30 hover:text-[var(--cinnabar-deep)]"
+                                        }`}
                           >
-                            <path d="M2 4l3 3 3-3" />
-                          </svg>
-                        </button>
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 10 10"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                              className={`transition-transform duration-[var(--dur-fast)] ${isExpanded ? "rotate-180" : ""}`}
+                            >
+                              <path d="M2 4l3 3 3-3" />
+                            </svg>
+                          </button>
+                        </div>
                       </td>
                     ) : null}
                   </tr>,

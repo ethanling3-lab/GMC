@@ -24,13 +24,22 @@ const PAYMENT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const ACTIONS = ["approve", "reject", "cancel", "mark_paid", "mark_unpaid"] as const;
 
-const PatchBody = z.object({
-  action: z.enum(ACTIONS),
-  amount_paid: z.number().min(0).max(1_000_000).optional(),
-  payment_method: z
-    .enum(["hitpay", "stripe", "bank_transfer", "tt"])
-    .optional(),
-});
+// Two-mode PATCH:
+//   { action: "...", amount_paid?, payment_method? } — state transition
+//   { amount_paid: number }                           — bare amount edit
+// Bare edits skip the state machine. Used by the inline edit on the enrolments
+// console for quick corrections on already-paid rows.
+const PatchBody = z
+  .object({
+    action: z.enum(ACTIONS).optional(),
+    amount_paid: z.number().min(0).max(1_000_000).optional(),
+    payment_method: z
+      .enum(["hitpay", "stripe", "bank_transfer", "tt"])
+      .optional(),
+  })
+  .refine((b) => b.action !== undefined || b.amount_paid !== undefined, {
+    message: "Provide an action or amount_paid",
+  });
 
 const PER_ROW_AUDIT_ACTION: Record<(typeof ACTIONS)[number], AuditAction> = {
   approve: "enrollment.approve",
@@ -76,6 +85,32 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   }
   if (!row) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
+
+  // Amount-only edit path — no state transition, no notifications.
+  if (body.action === undefined) {
+    const before = row.amount_paid;
+    const { error: updErr } = await service
+      .from("enrollments")
+      .update({ amount_paid: body.amount_paid })
+      .eq("id", enrollmentId);
+    if (updErr) {
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "enrollment.update_amount",
+      entity: "enrollments",
+      entity_id: enrollmentId,
+      before: { amount_paid: before },
+      after: { amount_paid: body.amount_paid },
+      metadata: { event_id: row.event_id, via: "inline_edit" },
+    });
+    return NextResponse.json({
+      ok: true,
+      id: enrollmentId,
+      amount_paid: body.amount_paid,
+    });
   }
 
   const current = row.status as EnrollmentStatus;
