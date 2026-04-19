@@ -106,9 +106,15 @@ type Props = {
   event: EventFull;
   canEdit: boolean;
   canDelete: boolean;
+  enrollmentCount: number;
 };
 
-export function EventEditor({ event, canEdit, canDelete }: Props) {
+export function EventEditor({
+  event,
+  canEdit,
+  canDelete,
+  enrollmentCount,
+}: Props) {
   const router = useRouter();
   const [draft, setDraft] = useState(event);
   const [saving, setSaving] = useState(false);
@@ -309,8 +315,29 @@ export function EventEditor({ event, canEdit, canDelete }: Props) {
             </div>
           </div>
 
-          {/* Status picker */}
-          <div ref={statusMenuRef} className="relative">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Enrollments link */}
+            <Link
+              href={`/admin/events/${event.id}/enrollments`}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12.5px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="8" cy="6" r="2.6" />
+                <path d="M3 13.2a5 5 0 0 1 10 0" />
+              </svg>
+              Enrollments
+              <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
+                {enrollmentCount.toLocaleString()}
+              </span>
+            </Link>
+
+            {/* Status picker */}
+            <div ref={statusMenuRef} className="relative">
             <button
               type="button"
               onClick={() => canEdit && setStatusMenuOpen((p) => !p)}
@@ -371,6 +398,7 @@ export function EventEditor({ event, canEdit, canDelete }: Props) {
                 })}
               </ul>
             ) : null}
+            </div>
           </div>
         </div>
       </div>

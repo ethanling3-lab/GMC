@@ -33,5 +33,17 @@ export default async function EventDetailPage({ params }: PageProps) {
   const canEdit = admin.role === "super_admin";
   const canDelete = admin.role === "super_admin";
 
-  return <EventEditor event={event} canEdit={canEdit} canDelete={canDelete} />;
+  const { count: enrollmentCount } = await supabase
+    .from("enrollments")
+    .select("id", { count: "exact", head: true })
+    .eq("event_id", event.id);
+
+  return (
+    <EventEditor
+      event={event}
+      canEdit={canEdit}
+      canDelete={canDelete}
+      enrollmentCount={enrollmentCount ?? 0}
+    />
+  );
 }
