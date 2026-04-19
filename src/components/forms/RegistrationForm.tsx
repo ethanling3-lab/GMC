@@ -76,6 +76,7 @@ type RegistrationFormValues = {
   industry?: string;
   referrer_name?: string;
   referrer_contact?: string;
+  region_other?: string;
   prefill_token?: string;
   answers: Record<string, unknown>;
 };
@@ -161,6 +162,9 @@ export function RegistrationForm({
   useEffect(() => {
     setSelectedSlug(watchedSlug || "");
   }, [watchedSlug]);
+
+  // Reveal the "please specify" input inline when Region is set to Other.
+  const watchedRegion = watch("region");
 
   // When the selected event changes, reset `answers` to the new schema's defaults
   // but preserve all other identity fields the user may have typed.
@@ -353,7 +357,7 @@ export function RegistrationForm({
         <FieldBlock
           label={t("register.region")}
           required
-          error={errors.region?.message}
+          error={errors.region?.message || errors.region_other?.message}
         >
           <SelectField {...register("region")} error={!!errors.region}>
             <option value="">{t("register.selectEventPlaceholder")}</option>
@@ -363,6 +367,29 @@ export function RegistrationForm({
               </option>
             ))}
           </SelectField>
+          {watchedRegion === "OTHER" ? (
+            <div className="mt-3 pl-4 border-l-2 border-[var(--cinnabar)]/50">
+              <label className="block text-[11px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">
+                {locale === "zh" ? "请填写国家 / 地区" : "Please specify country / region"}
+              </label>
+              <input
+                type="text"
+                {...register("region_other")}
+                placeholder={
+                  locale === "zh" ? "例如：英国" : "e.g. United Kingdom"
+                }
+                className={
+                  "mt-1 block w-full h-10 px-3 bg-[var(--paper-warm)] border-0 border-b-[1.5px] " +
+                  "text-[15px] text-[var(--ink)] placeholder:text-[var(--ink-faint)] " +
+                  "transition-[border-color,background-color] duration-[var(--dur-fast)] ease-[var(--ease-out)] " +
+                  "hover:border-[var(--ink-mute)] focus:outline-none focus:border-[var(--cinnabar)] focus:bg-white " +
+                  (errors.region_other
+                    ? "border-[var(--cinnabar)]"
+                    : "border-[var(--paper-shadow)]")
+                }
+              />
+            </div>
+          ) : null}
         </FieldBlock>
         <FieldBlock
           label={t("register.language")}

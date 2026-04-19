@@ -97,12 +97,20 @@ export async function POST(req: NextRequest) {
   // 2) Resolve participant — prefill token takes precedence so returning
   //    attendees are matched to their canonical record even if their phone
   //    format differs from what we have on file.
+  // If the participant picked "Other" for region, use their free-text value
+  // as the stored region so admin/export sees e.g. "United Kingdom" instead
+  // of the generic "OTHER" placeholder.
+  const resolvedRegion =
+    input.region === "OTHER" && input.region_other && input.region_other.trim()
+      ? input.region_other.trim()
+      : input.region;
+
   const participantPayload = {
     name_cn: input.name_cn || null,
     name_en: input.name_en,
     email: input.email,
     phone: input.phone,
-    region: input.region,
+    region: resolvedRegion,
     language: input.language,
     gender: input.gender,
     birth_date: input.birth_date || null,

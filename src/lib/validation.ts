@@ -77,6 +77,7 @@ export function buildRegistrationSchemaFor(
       .max(30, "Phone is too long")
       .regex(/^[+0-9()\s-]+$/, "Invalid phone format"),
     region: z.enum(SUPPORTED_REGIONS, { message: "Please pick your region" }),
+    region_other: z.string().trim().max(80).optional().or(z.literal("")),
     language: z.enum(["zh", "en", "both"]).default("zh"),
     gender: i.require_gender
       ? z.enum(["male", "female", "other"], {
@@ -107,7 +108,19 @@ export function buildRegistrationSchemaFor(
     answers: buildAnswersSchema(formSchema),
   });
 
-  return base;
+  // When region === "OTHER", the companion text field is required.
+  return base.superRefine((data, ctx) => {
+    if (data.region === "OTHER") {
+      const txt = (data.region_other ?? "").trim();
+      if (!txt) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["region_other"],
+          message: "Please specify your country / region.",
+        });
+      }
+    }
+  });
 }
 
 // Confirmation submission — participant re-confirms their details from the link.
