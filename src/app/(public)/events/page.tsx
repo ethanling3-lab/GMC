@@ -228,8 +228,8 @@ export default async function EventsPage() {
                     <Link
                       href={`/register?event=${encodeURIComponent(e.slug)}`}
                       className="group/cta inline-flex items-center gap-2 h-11 px-5 rounded-full
-                                 bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)] text-[var(--paper-warm)]
-                                 text-[13px] tracking-[0.02em] font-medium
+                                 bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)] text-white
+                                 text-[13px] tracking-[0.02em] font-bold
                                  shadow-[0_4px_14px_rgba(37,99,235,0.28)]
                                  hover:shadow-[0_6px_18px_rgba(37,99,235,0.38)]
                                  focus-visible:shadow-[var(--shadow-focus)]
