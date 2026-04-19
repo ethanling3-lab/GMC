@@ -73,9 +73,9 @@ export default async function EventEnrollmentsPage({
   // (RLS bypass not needed — admin session + role check). If the form_answers
   // column is missing (pre-migration 008), fall back.
   const enrollmentCols =
-    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(id, region_id, name_en, name_cn, region, email, phone)";
+    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(id, region_id, name_en, name_cn, region, email, phone, language)";
   const enrollmentColsLegacy =
-    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, participant:participants(id, region_id, name_en, name_cn, region, email, phone)";
+    "id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, participant:participants(id, region_id, name_en, name_cn, region, email, phone, language)";
   let enrollments: unknown[] | null = null;
   {
     let q = supabase

@@ -45,6 +45,7 @@ export type EventFull = {
   status: EventStatus;
   requires_approval: boolean;
   form_schema: Record<string, unknown>;
+  bank_details: { en?: string; zh?: string } | null;
   created_at: string;
   updated_at: string;
 };
@@ -256,6 +257,7 @@ export function EventEditor({
         payment_methods: draft.payment_methods,
         target_audience_filter: targetFilter,
         requires_approval: draft.requires_approval,
+        bank_details: draft.bank_details ?? {},
       });
       setSuccess("Saved");
       router.refresh();
@@ -646,6 +648,54 @@ export function EventEditor({
             {draft.requires_approval ? "Yes · manual approval" : "No · auto-approve"}
           </label>
         </Field>
+      </Section>
+
+      {/* Bank transfer instructions — rendered on the participant's /pay/<token> page */}
+      <Section
+        title="Bank transfer instructions"
+        titleZh="银行转账说明"
+        description="Shown on the participant's /pay/<token> page after approval. Leave blank to hide the bank panel on that page."
+      >
+        <div className="grid md:grid-cols-2 gap-5">
+          <Field
+            label="English"
+            labelZh="英文"
+            hint="Bank name · account holder · account number · SWIFT. Plain text, multi-line. Shown when payment_methods includes bank_transfer or tt."
+          >
+            <textarea
+              rows={7}
+              value={draft.bank_details?.en ?? ""}
+              onChange={(e) =>
+                update("bank_details", {
+                  ...(draft.bank_details ?? {}),
+                  en: e.target.value,
+                })
+              }
+              disabled={!canEdit}
+              placeholder={
+                "Glorious Melodies Consultancy Pte Ltd\nDBS Bank · Account 123-456789-0\nSWIFT: DBSSSGSG"
+              }
+              className={textareaCls("font-mono text-[12.5px]")}
+            />
+          </Field>
+          <Field label="中文" labelZh="Chinese" hint="同上 · 中文版。">
+            <textarea
+              rows={7}
+              value={draft.bank_details?.zh ?? ""}
+              onChange={(e) =>
+                update("bank_details", {
+                  ...(draft.bank_details ?? {}),
+                  zh: e.target.value,
+                })
+              }
+              disabled={!canEdit}
+              placeholder={
+                "Glorious Melodies Consultancy Pte Ltd\n星展银行 · 账号 123-456789-0\nSWIFT: DBSSSGSG"
+              }
+              className={textareaCls("font-mono text-[12.5px]")}
+            />
+          </Field>
+        </div>
       </Section>
 
       {/* Registration form */}

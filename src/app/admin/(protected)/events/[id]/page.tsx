@@ -18,7 +18,7 @@ export default async function EventDetailPage({ params }: PageProps) {
 
   const supabase = await createSupabaseServerClient();
   const columnsWithSchema =
-    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, form_schema, created_at, updated_at";
+    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, form_schema, bank_details, created_at, updated_at";
   const columnsLegacy =
     "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, created_at, updated_at";
 
@@ -39,7 +39,9 @@ export default async function EventDetailPage({ params }: PageProps) {
         .eq("id", id)
         .maybeSingle();
       if (fallback.error) throw new Error(fallback.error.message);
-      data = fallback.data ? { ...fallback.data, form_schema: {} } : null;
+      data = fallback.data
+        ? { ...fallback.data, form_schema: {}, bank_details: {} }
+        : null;
     } else {
       data = primary.data;
     }

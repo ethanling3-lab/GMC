@@ -17,6 +17,15 @@ import {
   type CustomField,
   type FormSchema,
 } from "@/lib/event-form-schema";
+import {
+  canTransition,
+  deriveJourneyStage,
+  JOURNEY_LABEL,
+  JOURNEY_TONE,
+  TRANSITION_REASON_LABEL,
+  type EnrollmentAction,
+  type JourneyStage,
+} from "@/lib/enrollment-transitions";
 
 type ParticipantRef = {
   id: string;
@@ -26,6 +35,7 @@ type ParticipantRef = {
   region: string | null;
   email: string | null;
   phone: string | null;
+  language: string | null;
 };
 
 export type EnrollmentRow = {
@@ -50,8 +60,68 @@ type Props = {
   formSchema: unknown;
 };
 
-type BulkAction = "approve" | "reject" | "cancel" | "mark_paid";
+type BulkAction = EnrollmentAction;
 type Toast = { message: string } | null;
+
+const JOURNEY_TONE_CLASS: Record<
+  "neutral" | "info" | "warn" | "go" | "done" | "danger",
+  { dot: string; bg: string; ring: string; text: string }
+> = {
+  neutral: {
+    dot: "bg-[var(--ink-faint)]",
+    bg: "bg-[var(--paper-deep)]",
+    ring: "border-[var(--paper-shadow)]",
+    text: "text-[var(--ink-mute)]",
+  },
+  info: {
+    dot: "bg-[var(--cinnabar-soft)]",
+    bg: "bg-[var(--cinnabar-wash)]",
+    ring: "border-[var(--cinnabar-soft)]/35",
+    text: "text-[var(--cinnabar-deep)]",
+  },
+  warn: {
+    dot: "bg-[var(--gold)]",
+    bg: "bg-[var(--gold-soft)]",
+    ring: "border-[var(--gold)]/40",
+    text: "text-[var(--ink)]",
+  },
+  go: {
+    dot: "bg-[var(--jade)]",
+    bg: "bg-[var(--jade-wash)]",
+    ring: "border-[var(--jade)]/30",
+    text: "text-[var(--jade-deep)]",
+  },
+  done: {
+    dot: "bg-[var(--ink)]",
+    bg: "bg-[var(--paper-deep)]",
+    ring: "border-[var(--ink-faint)]/40",
+    text: "text-[var(--ink)]",
+  },
+  danger: {
+    dot: "bg-[var(--cinnabar)]",
+    bg: "bg-[var(--cinnabar-wash)]",
+    ring: "border-[var(--cinnabar)]/30",
+    text: "text-[var(--cinnabar-deep)]",
+  },
+};
+
+const JOURNEY_SECONDARY_EN: Record<JourneyStage, string | null> = {
+  registered: "Not confirmed",
+  info_confirmed: "Confirmed",
+  approved_unpaid: "Awaiting payment",
+  paid: "Complete",
+  rejected: null,
+  cancelled: null,
+};
+
+const JOURNEY_SECONDARY_ZH: Record<JourneyStage, string | null> = {
+  registered: "未核对",
+  info_confirmed: "已核对",
+  approved_unpaid: "待付款",
+  paid: "已完成",
+  rejected: null,
+  cancelled: null,
+};
 
 const STATUS_TONE: Record<
   EnrollmentStatus,
@@ -199,11 +269,28 @@ export function EnrollmentsTable({
           body: JSON.stringify({ action, ids }),
         },
       );
+      const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload.error ?? `Bulk ${action} failed (${res.status})`);
+        if (payload?.error === "transition_blocked") {
+          const blocked = (payload.results ?? []).filter(
+            (r: { ok: boolean }) => !r.ok,
+          );
+          const reasons = blocked
+            .map((r: { reason?: string }) =>
+              r.reason
+                ? TRANSITION_REASON_LABEL[r.reason]?.en ?? r.reason
+                : "blocked",
+            )
+            .join(", ");
+          throw new Error(
+            `${blocked.length} enrolment${blocked.length === 1 ? "" : "s"} can't ${action.replace("_", " ")}: ${reasons}`,
+          );
+        }
+        throw new Error(
+          payload?.error ?? `Bulk ${action} failed (${res.status})`,
+        );
       }
-      const count = ids.length;
+      const count = payload?.affected ?? ids.length;
       const verb =
         action === "approve"
           ? "approved"
@@ -211,7 +298,9 @@ export function EnrollmentsTable({
             ? "rejected"
             : action === "cancel"
               ? "cancelled"
-              : "marked paid";
+              : action === "mark_paid"
+                ? "marked paid"
+                : "marked unpaid";
       setSelected(new Set());
       router.refresh();
       setToast({
@@ -221,6 +310,42 @@ export function EnrollmentsTable({
       setError(err instanceof Error ? err.message : `Bulk ${action} failed`);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function runRow(id: string, action: EnrollmentAction) {
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (payload?.error === "transition_blocked" && payload.reason) {
+          const hint =
+            TRANSITION_REASON_LABEL[payload.reason]?.en ?? payload.reason;
+          throw new Error(hint);
+        }
+        throw new Error(
+          payload?.error ?? `Couldn't ${action.replace("_", " ")}`,
+        );
+      }
+      router.refresh();
+      const verb =
+        action === "approve"
+          ? "Approved"
+          : action === "reject"
+            ? "Rejected"
+            : action === "cancel"
+              ? "Cancelled"
+              : action === "mark_paid"
+                ? "Marked paid"
+                : "Marked unpaid";
+      setToast({ message: verb });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Row action failed");
     }
   }
 
@@ -265,6 +390,12 @@ export function EnrollmentsTable({
             disabled={busy !== null}
           />
           <BulkButton
+            label="Mark unpaid"
+            onClick={() => runBulk("mark_unpaid")}
+            busy={busy === "mark_unpaid"}
+            disabled={busy !== null}
+          />
+          <BulkButton
             label="Reject"
             onClick={() => runBulk("reject")}
             busy={busy === "reject"}
@@ -305,10 +436,12 @@ export function EnrollmentsTable({
               ) : null}
               <th scope="col" className="px-5 py-3.5 font-medium">Participant</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Region</th>
-              <th scope="col" className="px-5 py-3.5 font-medium">Status</th>
-              <th scope="col" className="px-5 py-3.5 font-medium">Payment</th>
+              <th scope="col" className="px-5 py-3.5 font-medium">Journey</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Amount</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Enrolled</th>
+              {canEdit ? (
+                <th scope="col" className="w-10 pr-1 py-3.5" aria-label="Row actions" />
+              ) : null}
               {hasCustomFields ? (
                 <th scope="col" className="w-10 pr-3 py-3.5" aria-label="Expand answers" />
               ) : null}
@@ -319,7 +452,9 @@ export function EnrollmentsTable({
               <tr>
                 <td
                   colSpan={
-                    (canEdit ? 7 : 6) + (hasCustomFields ? 1 : 0)
+                    // Participant + Region + Journey + Amount + Enrolled
+                    // + (checkbox + actions when canEdit) + (expand when hasCustomFields)
+                    5 + (canEdit ? 2 : 0) + (hasCustomFields ? 1 : 0)
                   }
                   className="px-6 py-16 text-center"
                 >
@@ -348,11 +483,20 @@ export function EnrollmentsTable({
               </tr>
             ) : (
               rows.flatMap((r) => {
-                const tone = STATUS_TONE[r.status];
-                const payTone = PAYMENT_TONE[r.payment_status];
+                const stage = deriveJourneyStage({
+                  status: r.status,
+                  payment_status: r.payment_status,
+                  confirmed_at: r.confirmed_at,
+                });
+                const journeyTone = JOURNEY_TONE_CLASS[JOURNEY_TONE[stage]];
+                const journeyPrimary = JOURNEY_LABEL[stage].en;
+                const journeyZh = JOURNEY_LABEL[stage].zh;
+                const journeySecondaryEn = JOURNEY_SECONDARY_EN[stage];
+                const journeySecondaryZh = JOURNEY_SECONDARY_ZH[stage];
                 const isSelected = selected.has(r.id);
                 const isExpanded = expanded.has(r.id);
-                const totalCols = (canEdit ? 7 : 6) + (hasCustomFields ? 1 : 0);
+                const totalCols =
+                  5 + (canEdit ? 2 : 0) + (hasCustomFields ? 1 : 0);
                 return [
                   <tr
                     key={r.id}
@@ -399,26 +543,29 @@ export function EnrollmentsTable({
                       )}
                     </td>
                     <td className="px-5 py-3.5">
-                      <span
-                        className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
-                                    text-[10px] tracking-[0.14em] uppercase
-                                    ${tone.bg} ${tone.ring} ${tone.text}`}
-                      >
+                      <div className="flex flex-col gap-1.5 items-start">
                         <span
-                          className={`w-1.5 h-1.5 rounded-full ${tone.dot}`}
-                          aria-hidden="true"
-                        />
-                        {ENROLLMENT_STATUS_LABEL[r.status].en}
-                      </span>
-                    </td>
-                    <td className={`px-5 py-3.5 ${payTone}`}>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-[12px]">
-                          {PAYMENT_STATUS_LABEL[r.payment_status].en}
+                          className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
+                                      text-[10px] tracking-[0.14em] uppercase
+                                      ${journeyTone.bg} ${journeyTone.ring} ${journeyTone.text}`}
+                          title={journeyZh}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${journeyTone.dot}`}
+                            aria-hidden="true"
+                          />
+                          {journeyPrimary}
                         </span>
-                        {r.payment_method ? (
-                          <span className="text-[10px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
-                            {PAYMENT_METHOD_LABEL[r.payment_method]}
+                        {journeySecondaryEn ? (
+                          <span
+                            className="text-[10.5px] tracking-[0.06em] text-[var(--ink-mute)]"
+                            title={journeySecondaryZh ?? undefined}
+                          >
+                            {journeySecondaryEn}
+                            {r.payment_method &&
+                            (stage === "approved_unpaid" || stage === "paid")
+                              ? ` · ${PAYMENT_METHOD_LABEL[r.payment_method]}`
+                              : ""}
                           </span>
                         ) : null}
                       </div>
@@ -435,6 +582,14 @@ export function EnrollmentsTable({
                     <td className="px-5 py-3.5 text-right text-[var(--ink-mute)] whitespace-nowrap">
                       {formatDate(r.created_at)}
                     </td>
+                    {canEdit ? (
+                      <td className="pr-1 py-3.5 text-right">
+                        <RowActions
+                          status={r.status}
+                          onAction={(a) => runRow(r.id, a)}
+                        />
+                      </td>
+                    ) : null}
                     {hasCustomFields ? (
                       <td className="pr-3 py-3.5 text-right">
                         <button
@@ -578,6 +733,127 @@ function AnswersGrid({
           );
         })}
       </dl>
+    </div>
+  );
+}
+
+const ACTION_LABEL: Record<EnrollmentAction, { en: string; tone: "default" | "jade" | "danger" }> = {
+  approve: { en: "Approve", tone: "jade" },
+  mark_paid: { en: "Mark paid", tone: "default" },
+  mark_unpaid: { en: "Mark unpaid", tone: "default" },
+  reject: { en: "Reject", tone: "danger" },
+  cancel: { en: "Cancel", tone: "default" },
+};
+
+const ACTION_ORDER: EnrollmentAction[] = [
+  "approve",
+  "mark_paid",
+  "mark_unpaid",
+  "reject",
+  "cancel",
+];
+
+function RowActions({
+  status,
+  onAction,
+}: {
+  status: EnrollmentStatus;
+  onAction: (a: EnrollmentAction) => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        menuRef.current?.contains(e.target as Node) ||
+        buttonRef.current?.contains(e.target as Node)
+      )
+        return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Row actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="w-7 h-7 rounded-full border border-[var(--paper-shadow)]
+                   text-[var(--ink-mute)] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)]
+                   inline-flex items-center justify-center
+                   transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <circle cx="2" cy="6" r="1" />
+          <circle cx="6" cy="6" r="1" />
+          <circle cx="10" cy="6" r="1" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          ref={menuRef}
+          role="menu"
+          className="absolute right-0 top-[calc(100%+6px)] z-20 w-[168px]
+                     rounded-[var(--radius-md)] border border-[var(--paper-shadow)]
+                     bg-[var(--paper-warm)] shadow-[var(--shadow-paper-2)] p-1.5"
+        >
+          {ACTION_ORDER.map((a) => {
+            const check = canTransition(status, a);
+            const disabled = !check.ok;
+            const { en, tone } = ACTION_LABEL[a];
+            const toneCls =
+              tone === "danger"
+                ? "text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)]"
+                : tone === "jade"
+                  ? "text-[var(--jade-deep)] hover:bg-[var(--jade-wash)]"
+                  : "text-[var(--ink)] hover:bg-[var(--paper-deep)]";
+            return (
+              <button
+                key={a}
+                type="button"
+                role="menuitem"
+                disabled={disabled}
+                title={
+                  disabled && !check.ok
+                    ? TRANSITION_REASON_LABEL[check.reason]?.en ?? check.reason
+                    : undefined
+                }
+                onClick={() => {
+                  setOpen(false);
+                  onAction(a);
+                }}
+                className={`w-full text-left px-3 py-2 rounded-[var(--radius-sm)] text-[12.5px]
+                            transition-[background-color,color] duration-[var(--dur-fast)]
+                            ${disabled ? "opacity-40 cursor-not-allowed" : toneCls}`}
+              >
+                {en}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

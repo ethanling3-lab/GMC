@@ -81,3 +81,34 @@ export function verifyPrefillToken(
   if (!timingSafeEqual(a, b)) return null;
   return { participantId };
 }
+
+// Stateless payment-access token — binds enrollment_id + expiry in the HMAC,
+// so approvals can mint a `/pay/<token>` URL without persisting anything.
+// Default TTL is 30 days to cover typical payment windows; callers control it.
+export function createPaymentAccessToken(
+  enrollmentId: string,
+  ttlMs: number,
+): string {
+  const expiry = Date.now() + ttlMs;
+  const nonce = b64url(randomBytes(12));
+  const payload = `${enrollmentId}~${expiry}~${nonce}`;
+  const sig = b64url(hmac(`payment_access|${payload}`));
+  return `${payload}.${sig}`;
+}
+
+export function verifyPaymentAccessToken(
+  token: string,
+): { enrollmentId: string } | null {
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+  const [enrollmentId, expiryStr] = payload.split("~");
+  if (!enrollmentId || !expiryStr) return null;
+  const expiry = Number(expiryStr);
+  if (!Number.isFinite(expiry) || expiry < Date.now()) return null;
+  const expected = b64url(hmac(`payment_access|${payload}`));
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return null;
+  if (!timingSafeEqual(a, b)) return null;
+  return { enrollmentId };
+}

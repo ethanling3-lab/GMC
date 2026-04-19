@@ -71,6 +71,13 @@ export const EventUpdateSchema = z
     requires_approval: z.boolean().optional(),
 
     form_schema: FormSchema.optional(),
+
+    bank_details: z
+      .object({
+        en: z.string().max(4000).optional(),
+        zh: z.string().max(4000).optional(),
+      })
+      .optional(),
   })
   .strict();
 export type EventUpdate = z.infer<typeof EventUpdateSchema>;
