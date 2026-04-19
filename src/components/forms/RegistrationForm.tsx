@@ -322,11 +322,11 @@ export function RegistrationForm({
         </FieldBlock>
       </div>
 
-      {/* Email + phone — right side has a hint, so reserve matching space on the left. */}
+      {/* Email + phone — neither has a hint; the phone dropdown already
+          communicates the country-code requirement. */}
       <div className="grid md:grid-cols-2 gap-8">
         <FieldBlock
           label={t("register.email")}
-          reserveHint
           required
           error={errors.email?.message}
         >
@@ -340,8 +340,6 @@ export function RegistrationForm({
         </FieldBlock>
         <FieldBlock
           label={t("register.phone")}
-          hint={t("register.phoneHint")}
-          reserveHint
           required
           error={errors.phone?.message}
         >

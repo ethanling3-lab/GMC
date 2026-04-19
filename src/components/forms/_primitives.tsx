@@ -1,6 +1,6 @@
 "use client";
 
-import type React from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 // Shared form field primitives used by both the public RegistrationForm and
 // the admin DynamicFormFields renderer. Styling matches the editorial blue
@@ -230,9 +230,39 @@ export function PhoneField({
   name?: string;
 }) {
   const { code, digits } = splitPhone(value);
+  const [open, setOpen] = useState(false);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        popupRef.current?.contains(e.target as Node) ||
+        buttonRef.current?.contains(e.target as Node)
+      ) {
+        return;
+      }
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    }
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   function pushCode(next: string) {
     onChange(`${next} ${digits}`.trim());
+    setOpen(false);
+    buttonRef.current?.focus();
   }
   function pushDigits(next: string) {
     // Allow digits, spaces, dashes, parens — strip everything else.
@@ -241,36 +271,70 @@ export function PhoneField({
   }
 
   return (
-    <div className="grid grid-cols-[120px_1fr] gap-2">
+    <div className="grid grid-cols-[92px_1fr] gap-2">
       <div className="relative">
-        <select
-          value={code}
-          onChange={(e) => pushCode(e.target.value)}
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
           aria-label={locale === "zh" ? "国际区号" : "Country calling code"}
-          className={`${fieldCls} pr-8 appearance-none text-[14px] tabular-nums ${
+          className={`${fieldCls} inline-flex items-center justify-between px-3 pr-2.5 text-[14px] tabular-nums cursor-pointer ${
             error ? "border-[var(--cinnabar)]" : "border-[var(--paper-shadow)]"
-          }`}
+          } ${open ? "border-[var(--cinnabar)]" : ""}`}
         >
-          {PHONE_COUNTRY_CODES.map((c) => (
-            <option key={c.code} value={c.code}>
-              {c.code} · {locale === "zh" ? c.label_cn : c.label_en}
-            </option>
-          ))}
-        </select>
-        <svg
-          aria-hidden="true"
-          className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--ink-mute)]"
-          viewBox="0 0 12 12"
-          fill="none"
-        >
-          <path
-            d="M2 4.5l4 4 4-4"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+          <span>{code}</span>
+          <svg
+            aria-hidden="true"
+            className={`w-3 h-3 text-[var(--ink-mute)] transition-transform duration-[var(--dur-fast)] ${open ? "rotate-180" : ""}`}
+            viewBox="0 0 12 12"
+            fill="none"
+          >
+            <path
+              d="M2 4.5l4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+
+        {open ? (
+          <div
+            ref={popupRef}
+            role="listbox"
+            className="absolute left-0 top-[calc(100%+4px)] z-20 w-[260px] max-h-[320px] overflow-y-auto
+                       rounded-[var(--radius-md)] border border-[var(--paper-shadow)]
+                       bg-[var(--paper-warm)] shadow-[var(--shadow-paper-2)] p-1.5"
+          >
+            {PHONE_COUNTRY_CODES.map((c) => {
+              const selected = c.code === code;
+              return (
+                <button
+                  key={c.code}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => pushCode(c.code)}
+                  className={`w-full flex items-baseline justify-between gap-3 px-3 py-2 rounded-[var(--radius-sm)] text-left
+                              transition-[background-color,color] duration-[var(--dur-fast)]
+                              ${
+                                selected
+                                  ? "bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                                  : "text-[var(--ink)] hover:bg-[var(--paper-deep)]"
+                              }`}
+                >
+                  <span className="font-medium tabular-nums">{c.code}</span>
+                  <span className="text-[12.5px] text-[var(--ink-mute)] text-right truncate">
+                    {locale === "zh" ? c.label_cn : c.label_en}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
       <input
         type="tel"
