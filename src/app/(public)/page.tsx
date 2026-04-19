@@ -73,10 +73,10 @@ export default async function HomePage() {
   const l = (path: string, fallback?: string) => t(d, path, fallback);
 
   const programs = [
-    { idx: "01", key: "ph",  href: "/programs/philosophy-of-humanities" },
-    { idx: "02", key: "bp",  href: "/programs/business-program" },
-    { idx: "03", key: "cw",  href: "/programs/culinary-wealth" },
-    { idx: "04", key: "bgm", href: "/programs/bgm-youth" },
+    { idx: "01", key: "ph",  href: "/programs/philosophy-of-humanities", image: "/programs/philosophy.jpg" },
+    { idx: "02", key: "bp",  href: "/programs/business-program",         image: undefined },
+    { idx: "03", key: "cw",  href: "/programs/culinary-wealth",          image: "/programs/culinary.jpg" },
+    { idx: "04", key: "bgm", href: "/programs/bgm-youth",                image: "/programs/bgm-youth.jpg" },
   ];
 
   const stats = [
@@ -139,6 +139,8 @@ export default async function HomePage() {
               teaser={l(`programs.${p.key}.teaser`)}
               href={p.href}
               ctaLabel={l("common.learnMore")}
+              imageSrc={p.image}
+              imageAlt={l(`programs.${p.key}.title`)}
             />
           ))}
         </div>

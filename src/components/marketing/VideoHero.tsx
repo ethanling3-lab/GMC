@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useLocale } from "@/lib/locale-client";
 
 type Props = {
@@ -34,35 +33,31 @@ export function VideoHero({ video }: Props) {
             <source src={video.src} />
           </video>
         ) : (
-          <div className="absolute inset-0 bg-[var(--ink)]">
-            <Image
-              src="/hero-bg.jpg"
-              alt=""
-              fill
-              priority
-              sizes="100vw"
-              className="object-cover"
-            />
-            {/* Ink color tint — unifies photo with brand palette without burying it */}
-            <div
-              className="absolute inset-0 mix-blend-multiply"
-              style={{ background: "linear-gradient(180deg, rgba(12,24,56,0.20), rgba(12,24,56,0.45))" }}
-            />
+          <div
+            className="absolute inset-0 animate-drift"
+            style={{
+              background:
+                "radial-gradient(1100px 620px at 12% 18%, rgba(125,164,244,0.32), transparent 60%)," +
+                "radial-gradient(820px 560px at 88% 82%, rgba(37,99,235,0.34), transparent 65%)," +
+                "radial-gradient(560px 420px at 50% 110%, rgba(59,130,246,0.22), transparent 70%)," +
+                "linear-gradient(180deg, #0B2954 0%, #081f44 55%, #05173a 100%)",
+            }}
+          >
             {/* Luminous grain for texture */}
             <div
-              className="absolute inset-0 opacity-[0.25] mix-blend-overlay"
+              className="absolute inset-0 opacity-[0.32] mix-blend-overlay"
               style={{
                 backgroundImage:
-                  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.88' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
+                  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.88' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
                 backgroundSize: "260px 260px",
               }}
             />
           </div>
         )}
-        {/* Legibility gradient — dark only where text sits (bottom half) */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[var(--ink)]/90 via-[var(--ink)]/50 to-transparent" />
+        {/* Legibility gradient — gentle lift toward the bottom where text sits */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[var(--ink)]/70 via-[var(--ink)]/20 to-transparent" />
         {/* Subtle vignette */}
-        <div className="absolute inset-0" style={{ boxShadow: "inset 0 -160px 240px -60px rgba(0,0,0,0.55)" }} />
+        <div className="absolute inset-0" style={{ boxShadow: "inset 0 -160px 240px -60px rgba(0,0,0,0.45)" }} />
       </div>
 
       {/* Foreground content */}
