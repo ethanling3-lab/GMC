@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
   const emailLocale: "zh" | "en" =
     input.language === "en" ? "en" : input.language === "zh" ? "zh" : "en";
 
-  const participantPayload = {
+  const participantPayload: Record<string, unknown> = {
     name_cn: input.name_cn || null,
     name_en: input.name_en,
     email: input.email,
@@ -129,6 +129,12 @@ export async function POST(req: NextRequest) {
     industry: input.industry || null,
     status: "new" as const,
   };
+  if (input.referrer_name && input.referrer_name.trim()) {
+    participantPayload.referrer_name = input.referrer_name.trim();
+  }
+  if (input.referrer_contact && input.referrer_contact.trim()) {
+    participantPayload.referrer_contact = input.referrer_contact.trim();
+  }
 
   let participantId: string;
   let regionId: string | null = null;
@@ -139,6 +145,40 @@ export async function POST(req: NextRequest) {
 
   if (input.prefill_token && !prefillResolved) {
     return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
+  }
+
+  // Writes drop referrer_name / referrer_contact and retry when migration 009
+  // hasn't landed yet (42703 = column does not exist).
+  async function updateParticipant(id: string) {
+    const res = await supabase
+      .from("participants")
+      .update(participantPayload)
+      .eq("id", id);
+    if (res.error && (res.error as { code?: string }).code === "42703") {
+      const { referrer_name, referrer_contact, ...rest } = participantPayload;
+      void referrer_name;
+      void referrer_contact;
+      return supabase.from("participants").update(rest).eq("id", id);
+    }
+    return res;
+  }
+  async function insertParticipant() {
+    const primary = await supabase
+      .from("participants")
+      .insert(participantPayload)
+      .select("id, region_id")
+      .single();
+    if (primary.error && (primary.error as { code?: string }).code === "42703") {
+      const { referrer_name, referrer_contact, ...rest } = participantPayload;
+      void referrer_name;
+      void referrer_contact;
+      return supabase
+        .from("participants")
+        .insert(rest)
+        .select("id, region_id")
+        .single();
+    }
+    return primary;
   }
 
   if (prefillResolved) {
@@ -152,10 +192,7 @@ export async function POST(req: NextRequest) {
     }
     participantId = byId.id;
     regionId = byId.region_id;
-    await supabase
-      .from("participants")
-      .update(participantPayload)
-      .eq("id", byId.id);
+    await updateParticipant(byId.id);
   } else {
     const { data: existing } = await supabase
       .from("participants")
@@ -167,21 +204,14 @@ export async function POST(req: NextRequest) {
     if (existing) {
       participantId = existing.id;
       regionId = existing.region_id;
-      await supabase
-        .from("participants")
-        .update(participantPayload)
-        .eq("id", existing.id);
+      await updateParticipant(existing.id);
     } else {
-      const { data: inserted, error: insertErr } = await supabase
-        .from("participants")
-        .insert(participantPayload)
-        .select("id, region_id")
-        .single();
-      if (insertErr || !inserted) {
+      const res = await insertParticipant();
+      if (res.error || !res.data) {
         return NextResponse.json({ error: "insert_failed" }, { status: 500 });
       }
-      participantId = inserted.id;
-      regionId = inserted.region_id;
+      participantId = res.data.id;
+      regionId = res.data.region_id;
     }
   }
 

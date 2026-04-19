@@ -50,6 +50,8 @@ type Participant = {
   assigned_region_lead_id: string | null;
   assigned_cs_id: string | null;
   cs_notes: string | null;
+  referrer_name: string | null;
+  referrer_contact: string | null;
   status: ParticipantStatus;
   archived_at: string | null;
   created_at: string;
@@ -325,6 +327,29 @@ export default async function ParticipantDetailPage({ params }: Props) {
             <dl className="mt-6 grid md:grid-cols-2 gap-x-8 gap-y-5">
               <RelField label="Family of" participant={family} />
               <RelField label="Referred by · 感召" participant={referrer} />
+              {!referrer && (p.referrer_name || p.referrer_contact) ? (
+                <div className="md:col-span-2">
+                  <dt className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
+                    Referred by (unverified) · 感召（文字）
+                  </dt>
+                  <dd className="mt-1.5 flex items-baseline gap-3 flex-wrap">
+                    {p.referrer_name ? (
+                      <span className="font-display text-[16px] text-[var(--ink)]">
+                        {p.referrer_name}
+                      </span>
+                    ) : null}
+                    {p.referrer_contact ? (
+                      <span className="font-mono text-[12px] text-[var(--ink-mute)]">
+                        {p.referrer_contact}
+                      </span>
+                    ) : null}
+                  </dd>
+                  <p className="mt-1 text-[11.5px] leading-[1.5] text-[var(--ink-faint)] max-w-[48ch]">
+                    Free-text entry from the registration form. Link to a
+                    participant record once verified.
+                  </p>
+                </div>
+              ) : null}
             </dl>
 
             <div className="mt-6 pt-5 border-t border-[var(--paper-shadow)]">
