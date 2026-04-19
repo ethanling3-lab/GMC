@@ -108,9 +108,8 @@ export default async function EventsPage() {
               const arrivalTxt = fmtDate(e.arrival_day, locale);
               const departureTxt = fmtDate(e.departure_day, locale);
               return (
-                <Link
+                <article
                   key={e.slug}
-                  href={`/events/${e.slug}`}
                   className="group flex flex-col bg-[var(--paper-warm)] border border-[var(--paper-shadow)]
                              shadow-[var(--shadow-paper-1)]
                              transition-[transform,box-shadow] duration-[var(--dur-base)] ease-[var(--ease-spring)]
@@ -224,8 +223,37 @@ export default async function EventsPage() {
                         : "Requires approval · enrolments are reviewed before confirmation."}
                     </p>
                   ) : null}
+
+                  <div className="mt-auto pt-6">
+                    <Link
+                      href={`/register?event=${encodeURIComponent(e.slug)}`}
+                      className="group/cta inline-flex items-center gap-2 h-11 px-5 rounded-[var(--radius-pill)]
+                                 bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)] text-[var(--paper-warm)]
+                                 text-[12.5px] tracking-[0.06em] font-medium
+                                 shadow-[0_4px_14px_rgba(193,34,34,0.22)]
+                                 focus-visible:shadow-[var(--shadow-focus)]
+                                 transition-[background-color,transform,box-shadow] duration-[var(--dur-fast)]
+                                 active:scale-[0.98]"
+                    >
+                      {locale === "zh" ? "立即报名" : "Register now"}
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                        className="transition-transform duration-[var(--dur-fast)] group-hover/cta:translate-x-0.5"
+                      >
+                        <path d="M3 7h8M7.5 3l4 4-4 4" />
+                      </svg>
+                    </Link>
                   </div>
-                </Link>
+                  </div>
+                </article>
               );
             })}
           </div>
