@@ -34,7 +34,7 @@ export default async function RegisterPage({ searchParams }: PageProps) {
   const l = (p: string, f?: string) => t(d, p, f);
 
   return (
-    <div className="relative">
+    <div className="relative overflow-hidden">
       <div aria-hidden="true" className="absolute inset-0 pointer-events-none">
         <div className="absolute top-[10%] -left-[8%] w-[420px] h-[420px] rounded-full"
              style={{ background: "radial-gradient(closest-side, var(--cinnabar-wash), transparent 70%)" }} />

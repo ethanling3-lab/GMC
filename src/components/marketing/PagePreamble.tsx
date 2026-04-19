@@ -8,7 +8,7 @@ export function PagePreamble({
   sub?: string;
 }) {
   return (
-    <div className="relative">
+    <div className="relative overflow-hidden">
       <div aria-hidden="true" className="absolute inset-0 pointer-events-none">
         <div className="absolute top-[10%] -right-[8%] w-[520px] h-[520px] rounded-full"
              style={{ background: "radial-gradient(closest-side, var(--cinnabar-wash), transparent 70%)" }} />
