@@ -54,7 +54,7 @@ type SubmitState =
       status: "success";
       devConfirmUrl?: string;
     }
-  | { status: "error"; code?: string };
+  | { status: "error"; code?: string; detail?: string; issues?: unknown };
 
 type PrefillRequestState =
   | { status: "idle" }
@@ -190,14 +190,24 @@ export function RegistrationForm({
       });
       const json = await res.json();
       if (!res.ok) {
-        setSubmitState({ status: "error", code: json?.error });
+        // Surface upstream details to the browser console so devs can
+        // diagnose without poking the network tab. Production users still
+        // get the friendly message below.
+        console.error("/api/register failed", { status: res.status, body: json });
+        setSubmitState({
+          status: "error",
+          code: json?.error,
+          detail: typeof json?.detail === "string" ? json.detail : undefined,
+          issues: json?.issues,
+        });
         return;
       }
       setSubmitState({
         status: "success",
         devConfirmUrl: json.dev_confirm_url,
       });
-    } catch {
+    } catch (err) {
+      console.error("/api/register network error", err);
       setSubmitState({ status: "error", code: "network" });
     }
   }
@@ -553,7 +563,25 @@ export function RegistrationForm({
                 ? locale === "zh"
                   ? "快速填入链接无效或已过期，请重新申请。"
                   : "Your quick-fill link has expired. Request a new one."
-                : t("register.errorGeneric")}
+                : submitState.code === "validation_error"
+                  ? locale === "zh"
+                    ? "请检查表单内容是否完整。"
+                    : "Please check that all required fields are filled correctly."
+                  : submitState.code === "event_not_open"
+                    ? locale === "zh"
+                      ? "此次活动暂未开放报名。"
+                      : "This event isn't open for registration right now."
+                    : submitState.code === "event_not_found"
+                      ? locale === "zh"
+                        ? "找不到此活动。"
+                        : "We couldn't find this event."
+                      : t("register.errorGeneric")}
+          {submitState.code && submitState.code !== "already_enrolled" ? (
+            <span className="ml-2 font-mono text-[11.5px] opacity-70">
+              [{submitState.code}
+              {submitState.detail ? `: ${submitState.detail}` : ""}]
+            </span>
+          ) : null}
         </div>
       ) : null}
 

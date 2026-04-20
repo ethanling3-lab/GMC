@@ -15,6 +15,7 @@ import {
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
+import { ensureRegionId } from "@/lib/region-id";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -243,6 +244,12 @@ export async function POST(req: Request, { params }: RouteCtx) {
         current_count: cap.current,
       },
     });
+  }
+
+  // Mint the student ID when admin lands the row already approved or paid.
+  // Pending lands without one — the ID gets minted on later approval.
+  if (body.initial_state === "approved" || body.initial_state === "paid") {
+    await ensureRegionId(service, participantId);
   }
 
   // Fetch the participant for notification dispatch.

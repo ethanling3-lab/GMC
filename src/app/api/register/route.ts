@@ -175,6 +175,12 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : "insert_failed";
+    console.error("[/api/register] participant upsert failed", {
+      email: participantInput.email,
+      phone: participantInput.phone,
+      detail: msg,
+      err,
+    });
     return NextResponse.json({ error: "insert_failed", detail: msg }, { status: 500 });
   }
 
@@ -229,7 +235,17 @@ export async function POST(req: NextRequest) {
   const { data: enrollment, error: enrollErr } = enrollRes;
 
   if (enrollErr || !enrollment) {
-    return NextResponse.json({ error: "enroll_failed" }, { status: 500 });
+    console.error("[/api/register] enrolment insert failed", {
+      participantId,
+      eventId: event.id,
+      detail: enrollErr?.message,
+      code: (enrollErr as { code?: string } | null | undefined)?.code,
+      err: enrollErr,
+    });
+    return NextResponse.json(
+      { error: "enroll_failed", detail: enrollErr?.message },
+      { status: 500 },
+    );
   }
 
   // 4) Record the referrer note in the CS notes field so CS can follow up.

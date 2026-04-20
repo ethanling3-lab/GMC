@@ -18,6 +18,7 @@ import {
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
+import { ensureRegionId } from "@/lib/region-id";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -199,6 +200,13 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         : {}),
     },
   });
+
+  // Mint the student ID on approval (and on mark_paid for offline-paid rows
+  // that never went through approve). Idempotent — returning students keep
+  // their existing region_id.
+  if (body.action === "approve" || body.action === "mark_paid") {
+    await ensureRegionId(service, row.participant_id);
+  }
 
   // Dispatch the participant-facing notification for action types that warrant it.
   try {

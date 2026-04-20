@@ -19,6 +19,7 @@ import {
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLogBatch, type AuditAction } from "@/lib/audit";
+import { ensureRegionId } from "@/lib/region-id";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -200,6 +201,15 @@ export async function POST(req: Request, { params }: RouteCtx) {
     },
   }));
   await writeAuditLogBatch(auditRows);
+
+  // Mint student IDs for approve / mark_paid bulk actions. Idempotent +
+  // serialized per-country inside the SQL function, so 200 SG approvals
+  // serialize among themselves but run in parallel with MY approvals.
+  if (body.action === "approve" || body.action === "mark_paid") {
+    await Promise.all(
+      found.map((r) => ensureRegionId(service, r.participant_id)),
+    );
+  }
 
   const notifyTasks = found.map(async (r) => {
     if (!r.participant || !r.event) return;

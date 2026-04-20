@@ -75,6 +75,10 @@ async function safeInsert(
   client: SupabaseClient,
   payload: Record<string, unknown>,
 ) {
+  // Migration 012 dropped the auto-assign trigger, so participant inserts
+  // land with region_id = NULL until an admin approves. The participant_id
+  // is allocated by the database default; nothing to retry here.
+  // 42703 = column does not exist (pre-009). Drop referrer_* and retry once.
   const primary = await client
     .from("participants")
     .insert(payload)
