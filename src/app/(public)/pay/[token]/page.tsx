@@ -5,11 +5,15 @@ import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 import { verifyPaymentAccessToken } from "@/lib/tokens";
 import { TransferSlipUploader } from "@/components/payment/TransferSlipUploader";
+import { HitPayCheckoutButton } from "@/components/payment/HitPayCheckoutButton";
 
 export const metadata = { title: "Complete payment" };
 export const dynamic = "force-dynamic";
 
-type PageProps = { params: Promise<{ token: string }> };
+type PageProps = {
+  params: Promise<{ token: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
 
 type EnrollmentRow = {
   id: string;
@@ -123,11 +127,17 @@ function paymentReference(enrollmentId: string, regionId: string | null): string
   return `${regionId ?? "GMC"}-${tail}`;
 }
 
-export default async function PayPage({ params }: PageProps) {
-  const [locale, { token }] = await Promise.all([
+export default async function PayPage({ params, searchParams }: PageProps) {
+  const [locale, { token }, sp] = await Promise.all([
     getServerLocale(),
     params,
+    searchParams ?? Promise.resolve({} as Record<string, string | string[] | undefined>),
   ]);
+
+  // ?paid=1 lands here after the HitPay redirect. We show a "we're confirming
+  // your payment" banner until the webhook flips the row to paid; refreshing
+  // the page (or just waiting a few seconds) reveals the success state.
+  const justReturnedFromCheckout = sp?.paid === "1" || sp?.paid === "true";
 
   const enrollment = await loadEnrollment(token);
   if (!enrollment) {
@@ -267,20 +277,63 @@ export default async function PayPage({ params }: PageProps) {
           </div>
         </div>
 
+        {/* Confirming-payment banner. Shown when the participant has just
+            returned from HitPay's hosted checkout (?paid=1). The webhook is
+            the source of truth — once it lands, alreadyPaid flips and this
+            banner disappears on next page load. */}
+        {justReturnedFromCheckout && !alreadyPaid ? (
+          <div className="mt-10 rounded-[var(--radius-md)] border border-[var(--cinnabar)]/30 bg-[var(--cinnabar-wash)]/60 px-5 py-4 flex items-start gap-3">
+            <span className="inline-flex w-7 h-7 rounded-full bg-[var(--cinnabar)]/15 text-[var(--cinnabar-deep)] items-center justify-center" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="animate-spin">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1.5" />
+                <path d="M12.5 7a5.5 5.5 0 0 0-5.5-5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </span>
+            <div className="text-[13px] text-[var(--cinnabar-deep)] leading-[1.55]">
+              <div className="font-medium">
+                {locale === "zh" ? "正在确认您的付款…" : "Confirming your payment…"}
+              </div>
+              <div className="mt-0.5 text-[12px] text-[var(--ink-mute)]">
+                {locale === "zh"
+                  ? "通常 1–2 分钟内完成。我们会通过邮件发送收据。如长时间未确认，请联系 GMC 客服。"
+                  : "Usually within a minute or two. We'll email a receipt as soon as the payment clears. If the page doesn't update, reach out to the GMC team."}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {/* Method panels */}
         {!alreadyPaid ? (
           <div className="mt-12 md:mt-16 flex flex-col gap-5">
-            {(methods.has("hitpay") || methods.has("stripe")) ? (
+            {methods.has("hitpay") ? (
               <MethodCard
-                label={locale === "zh" ? "线上付款" : "Pay online"}
-                zh="HitPay / Stripe"
+                label={locale === "zh" ? "线上付款 · HitPay" : "Pay online · HitPay"}
+                zh={locale === "zh" ? "信用卡 / PayNow / 数字钱包" : "Card · PayNow · digital wallets"}
+              >
+                <p className="text-[14px] leading-[1.7] text-[var(--ink-soft)] mb-5">
+                  {locale === "zh"
+                    ? "通过 HitPay 安全付款，支持信用卡、PayNow、Apple Pay、Google Pay 等。完成后会立即返回本页。"
+                    : "Secure checkout via HitPay — credit card, PayNow, Apple Pay, Google Pay and more. You'll return here right after."}
+                </p>
+                <HitPayCheckoutButton
+                  token={token}
+                  locale={locale}
+                  amountLabel={price}
+                />
+              </MethodCard>
+            ) : null}
+
+            {methods.has("stripe") ? (
+              <MethodCard
+                label={locale === "zh" ? "线上付款 · Stripe" : "Pay online · Stripe"}
+                zh={locale === "zh" ? "国际信用卡" : "International cards"}
                 tag={locale === "zh" ? "即将开放" : "Coming soon"}
                 disabled
               >
                 <p className="text-[14px] leading-[1.7] text-[var(--ink-soft)]">
                   {locale === "zh"
-                    ? "网上付款功能即将上线。在此之前，请使用下方的银行转账方式。"
-                    : "Online payment is coming soon. In the meantime, please use the bank transfer option below."}
+                    ? "Stripe 国际付款即将上线。在此之前，请使用 HitPay 或下方的银行转账。"
+                    : "Stripe checkout is coming soon. In the meantime, please use HitPay above or the bank transfer below."}
                 </p>
               </MethodCard>
             ) : null}

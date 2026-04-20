@@ -24,7 +24,10 @@ export type AuditAction =
   | "enrollment.update_amount"
   | "enrollment.created_from_admin"
   | "enrollment.notification_resent"
-  | "enrollment.transfer_slip_uploaded";
+  | "enrollment.transfer_slip_uploaded"
+  | "enrollment.checkout_started"
+  | "enrollment.webhook_paid"
+  | "enrollment.webhook_failed";
 
 export type WriteAuditLog = {
   actor_id: string | null;
