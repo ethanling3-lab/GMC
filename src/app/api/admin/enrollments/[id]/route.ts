@@ -10,9 +10,11 @@ import type { EnrollmentStatus, PaymentMethod } from "@/lib/enrollments-shared";
 import {
   buildPaymentUrl,
   fmtAmount,
+  isRejectReason,
   notifyApproved,
   notifyPaymentReceived,
   notifyRejected,
+  type RejectReason,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
@@ -36,6 +38,10 @@ const PatchBody = z
     payment_method: z
       .enum(["hitpay", "stripe", "bank_transfer", "tt"])
       .optional(),
+    reject_reason: z
+      .enum(["no_seats", "duplicate", "unsuitable", "other"])
+      .optional(),
+    reject_note: z.string().trim().max(500).optional(),
   })
   .refine((b) => b.action !== undefined || b.amount_paid !== undefined, {
     message: "Provide an action or amount_paid",
@@ -126,11 +132,22 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const nextStatus = ACTION_NEXT_STATUS[body.action];
 
   const update: Record<string, unknown> = { status: nextStatus };
+  let resolvedRejectReason: RejectReason | null = null;
+  let resolvedRejectNote: string | null = null;
   switch (body.action) {
     case "approve":
+      update.approved_by = admin.id;
+      update.approved_at = now;
+      break;
     case "reject":
       update.approved_by = admin.id;
       update.approved_at = now;
+      resolvedRejectReason = isRejectReason(body.reject_reason)
+        ? body.reject_reason
+        : "no_seats";
+      resolvedRejectNote = body.reject_note?.trim() || null;
+      update.reject_reason = resolvedRejectReason;
+      update.reject_note = resolvedRejectNote;
       break;
     case "mark_paid":
       update.payment_status = "paid";
@@ -147,12 +164,24 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       break;
   }
 
-  const { error: updErr } = await service
+  // Tolerate pre-011 schemas (no reject_reason / reject_note columns) by
+  // dropping them and retrying once. Reject still completes; the audit row
+  // captures the reason regardless.
+  let updRes = await service
     .from("enrollments")
     .update(update)
     .eq("id", enrollmentId);
-  if (updErr) {
-    return NextResponse.json({ error: updErr.message }, { status: 500 });
+  if (updRes.error && (updRes.error as { code?: string }).code === "42703") {
+    const { reject_reason, reject_note, ...rest } = update;
+    void reject_reason;
+    void reject_note;
+    updRes = await service
+      .from("enrollments")
+      .update(rest)
+      .eq("id", enrollmentId);
+  }
+  if (updRes.error) {
+    return NextResponse.json({ error: updRes.error.message }, { status: 500 });
   }
 
   await writeAuditLog({
@@ -162,7 +191,13 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     entity_id: enrollmentId,
     before: { status: current, payment_status: row.payment_status },
     after: { status: nextStatus, payment_status: update.payment_status ?? row.payment_status },
-    metadata: { event_id: row.event_id, via: "per_row" },
+    metadata: {
+      event_id: row.event_id,
+      via: "per_row",
+      ...(body.action === "reject"
+        ? { reject_reason: resolvedRejectReason, reject_note: resolvedRejectNote }
+        : {}),
+    },
   });
 
   // Dispatch the participant-facing notification for action types that warrant it.
@@ -196,7 +231,13 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
           amountLabel,
         });
       } else if (body.action === "reject") {
-        await notifyRejected({ enrollment: enr, participant, event });
+        await notifyRejected({
+          enrollment: enr,
+          participant,
+          event,
+          reason: resolvedRejectReason,
+          note: resolvedRejectNote,
+        });
       } else if (body.action === "mark_paid") {
         await notifyPaymentReceived({
           enrollment: enr,

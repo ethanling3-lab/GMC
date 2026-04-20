@@ -21,7 +21,10 @@ export type AuditAction =
   | "enrollment.bulk_mark_paid"
   | "enrollment.capacity_override"
   | "enrollment.import_row"
-  | "enrollment.update_amount";
+  | "enrollment.update_amount"
+  | "enrollment.created_from_admin"
+  | "enrollment.notification_resent"
+  | "enrollment.transfer_slip_uploaded";
 
 export type WriteAuditLog = {
   actor_id: string | null;

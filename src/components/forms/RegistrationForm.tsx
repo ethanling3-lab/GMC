@@ -545,11 +545,15 @@ export function RegistrationForm({
           <strong className="font-semibold">{t("register.errorTitle")}: </strong>
           {submitState.code === "already_enrolled"
             ? t("register.errorDuplicate")
-            : submitState.code === "prefill_invalid"
+            : submitState.code === "no_seats"
               ? locale === "zh"
-                ? "快速填入链接无效或已过期，请重新申请。"
-                : "Your quick-fill link has expired. Request a new one."
-              : t("register.errorGeneric")}
+                ? "本次活动名额已满，期待未来与您再次相聚。"
+                : "Sorry, this session is fully booked. We hope to see you at a future programme."
+              : submitState.code === "prefill_invalid"
+                ? locale === "zh"
+                  ? "快速填入链接无效或已过期，请重新申请。"
+                  : "Your quick-fill link has expired. Request a new one."
+                : t("register.errorGeneric")}
         </div>
       ) : null}
 

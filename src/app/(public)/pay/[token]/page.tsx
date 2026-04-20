@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 import { verifyPaymentAccessToken } from "@/lib/tokens";
+import { TransferSlipUploader } from "@/components/payment/TransferSlipUploader";
 
 export const metadata = { title: "Complete payment" };
 export const dynamic = "force-dynamic";
@@ -17,6 +18,8 @@ type EnrollmentRow = {
   payment_method: string | null;
   amount_paid: number | string | null;
   paid_at: string | null;
+  transfer_slip_url?: string | null;
+  transfer_slip_uploaded_at?: string | null;
   participant: {
     id: string;
     region_id: string | null;
@@ -46,29 +49,29 @@ async function loadEnrollment(token: string): Promise<EnrollmentRow | null> {
 
   try {
     const supabase = createSupabaseServiceClient();
-    // Best effort: select including bank_details. If migration 010 hasn't
-    // landed yet, fall back without it.
-    const primary = await supabase
-      .from("enrollments")
-      .select(
-        "id, status, payment_status, payment_method, amount_paid, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
-      )
-      .eq("id", parsed.enrollmentId)
-      .maybeSingle();
-    if (primary.error) {
-      const code = (primary.error as { code?: string }).code;
-      if (code !== "42703") return null;
-      const fb = await supabase
+    // Three-tier fallback. Optimistic select pulls the migration-011 columns
+    // (transfer_slip_*) and migration-010 bank_details; older databases drop
+    // back tier by tier. The page renders identically; just without the slip
+    // upload UI on legacy schemas.
+    const tiers: string[] = [
+      "id, status, payment_status, payment_method, amount_paid, paid_at, transfer_slip_url, transfer_slip_uploaded_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
+      "id, status, payment_status, payment_method, amount_paid, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
+      "id, status, payment_status, payment_method, amount_paid, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods)",
+    ];
+    for (const select of tiers) {
+      const res = await supabase
         .from("enrollments")
-        .select(
-          "id, status, payment_status, payment_method, amount_paid, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods)",
-        )
+        .select(select)
         .eq("id", parsed.enrollmentId)
         .maybeSingle();
-      if (fb.error || !fb.data) return null;
-      return fb.data as unknown as EnrollmentRow;
+      if (res.error) {
+        const code = (res.error as { code?: string }).code;
+        if (code === "42703") continue;
+        return null;
+      }
+      return (res.data as unknown as EnrollmentRow) ?? null;
     }
-    return (primary.data as unknown as EnrollmentRow) ?? null;
+    return null;
   } catch {
     return null;
   }
@@ -311,9 +314,16 @@ export default async function PayPage({ params }: PageProps) {
                   </div>
                   <p className="mt-4 text-[13px] leading-[1.7] text-[var(--ink-mute)]">
                     {locale === "zh"
-                      ? "转账后无需再次通知我们。团队确认到账后，会发送收据邮件。"
-                      : "No need to notify us after transferring — once we confirm the funds, we'll email you a receipt."}
+                      ? "转账完成后，请在下方上传转账凭证 — 或通过 WhatsApp / 邮件回复也可以。团队核对后会发送正式收据邮件。"
+                      : "After your transfer, please upload the receipt below — or reply on WhatsApp / email if easier. We'll confirm and email you the official receipt."}
                   </p>
+                  <div className="mt-4">
+                    <TransferSlipUploader
+                      token={token}
+                      initialUploaded={!!enrollment.transfer_slip_url}
+                      locale={locale}
+                    />
+                  </div>
                 </div>
               </MethodCard>
             ) : null}

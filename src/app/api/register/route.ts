@@ -6,6 +6,12 @@ import { createToken, verifyPrefillToken } from "@/lib/tokens";
 import { sendEmail } from "@/lib/email";
 import { sendWhatsAppTemplate } from "@/lib/whatsapp";
 import { normalizeFormSchema } from "@/lib/event-form-schema";
+import {
+  upsertParticipant,
+  updateExistingParticipant,
+  type ParticipantInsertInput,
+} from "@/lib/participants-write";
+import { isEventFull } from "@/lib/event-capacity";
 
 export const runtime = "nodejs";
 
@@ -80,6 +86,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
   }
 
+  // Capacity gate. We re-check after the participant resolve too (just before
+  // enrolment insert) since two registrations can race here, but the early
+  // check keeps the error feedback fast for the common "already full" case.
+  if (await isEventFull(supabase, event.id, event.capacity)) {
+    return NextResponse.json({ error: "no_seats" }, { status: 409 });
+  }
+
   const eventFormSchema = normalizeFormSchema(event.form_schema);
   const dynamicSchema = buildRegistrationSchemaFor(
     eventFormSchema.identity,
@@ -116,9 +129,9 @@ export async function POST(req: NextRequest) {
   const emailLocale: "zh" | "en" =
     input.language === "en" ? "en" : input.language === "zh" ? "zh" : "en";
 
-  const participantPayload: Record<string, unknown> = {
-    name_cn: input.name_cn || null,
+  const participantInput: ParticipantInsertInput = {
     name_en: input.name_en,
+    name_cn: input.name_cn || null,
     email: input.email,
     phone: input.phone,
     region: resolvedRegion,
@@ -127,14 +140,10 @@ export async function POST(req: NextRequest) {
     birth_date: input.birth_date || null,
     occupation: input.occupation || null,
     industry: input.industry || null,
-    status: "new" as const,
+    status: "new",
+    referrer_name: input.referrer_name?.trim() || null,
+    referrer_contact: input.referrer_contact?.trim() || null,
   };
-  if (input.referrer_name && input.referrer_name.trim()) {
-    participantPayload.referrer_name = input.referrer_name.trim();
-  }
-  if (input.referrer_contact && input.referrer_contact.trim()) {
-    participantPayload.referrer_contact = input.referrer_contact.trim();
-  }
 
   let participantId: string;
   let regionId: string | null = null;
@@ -147,72 +156,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
   }
 
-  // Writes drop referrer_name / referrer_contact and retry when migration 009
-  // hasn't landed yet (42703 = column does not exist).
-  async function updateParticipant(id: string) {
-    const res = await supabase
-      .from("participants")
-      .update(participantPayload)
-      .eq("id", id);
-    if (res.error && (res.error as { code?: string }).code === "42703") {
-      const { referrer_name, referrer_contact, ...rest } = participantPayload;
-      void referrer_name;
-      void referrer_contact;
-      return supabase.from("participants").update(rest).eq("id", id);
-    }
-    return res;
-  }
-  async function insertParticipant() {
-    const primary = await supabase
-      .from("participants")
-      .insert(participantPayload)
-      .select("id, region_id")
-      .single();
-    if (primary.error && (primary.error as { code?: string }).code === "42703") {
-      const { referrer_name, referrer_contact, ...rest } = participantPayload;
-      void referrer_name;
-      void referrer_contact;
-      return supabase
-        .from("participants")
-        .insert(rest)
-        .select("id, region_id")
-        .single();
-    }
-    return primary;
-  }
-
-  if (prefillResolved) {
-    const { data: byId } = await supabase
-      .from("participants")
-      .select("id, region_id")
-      .eq("id", prefillResolved.participantId)
-      .maybeSingle();
-    if (!byId) {
-      return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
-    }
-    participantId = byId.id;
-    regionId = byId.region_id;
-    await updateParticipant(byId.id);
-  } else {
-    const { data: existing } = await supabase
-      .from("participants")
-      .select("id, region_id")
-      .eq("email", input.email)
-      .eq("phone", input.phone)
-      .maybeSingle();
-
-    if (existing) {
-      participantId = existing.id;
-      regionId = existing.region_id;
-      await updateParticipant(existing.id);
-    } else {
-      const res = await insertParticipant();
-      if (res.error || !res.data) {
-        return NextResponse.json({ error: "insert_failed" }, { status: 500 });
+  try {
+    if (prefillResolved) {
+      const updated = await updateExistingParticipant(
+        supabase,
+        prefillResolved.participantId,
+        participantInput,
+      );
+      if (!updated) {
+        return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
       }
-      participantId = res.data.id;
-      regionId = res.data.region_id;
+      participantId = updated.id;
+      regionId = updated.region_id;
+    } else {
+      const upserted = await upsertParticipant(supabase, participantInput);
+      participantId = upserted.id;
+      regionId = upserted.region_id;
     }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "insert_failed";
+    return NextResponse.json({ error: "insert_failed", detail: msg }, { status: 500 });
   }
 
   // 3) Check duplicate enrollment, then insert with the custom form answers.
@@ -225,6 +188,12 @@ export async function POST(req: NextRequest) {
 
   if (existingEnrollment) {
     return NextResponse.json({ error: "already_enrolled" }, { status: 409 });
+  }
+
+  // Re-check capacity after the participant resolve — closes the race
+  // between the early gate and the actual enrolment insert.
+  if (await isEventFull(supabase, event.id, event.capacity)) {
+    return NextResponse.json({ error: "no_seats" }, { status: 409 });
   }
 
   const confirmationToken = createToken("confirm_registration", `${participantId}:${event.id}`);

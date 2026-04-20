@@ -11,9 +11,11 @@ import type { EnrollmentStatus } from "@/lib/enrollments-shared";
 import {
   buildPaymentUrl,
   fmtAmount,
+  isRejectReason,
   notifyApproved,
   notifyPaymentReceived,
   notifyRejected,
+  type RejectReason,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLogBatch, type AuditAction } from "@/lib/audit";
@@ -33,6 +35,10 @@ const BULK_ACTIONS = [
 const BulkBody = z.object({
   action: z.enum(BULK_ACTIONS),
   ids: z.array(z.string().uuid()).min(1).max(500),
+  reject_reason: z
+    .enum(["no_seats", "duplicate", "unsuitable", "other"])
+    .optional(),
+  reject_note: z.string().trim().max(500).optional(),
 });
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -120,11 +126,22 @@ export async function POST(req: Request, { params }: RouteCtx) {
   // Apply the status mutation. Extra per-action columns (approved_at,
   // paid_at, payment_status) are layered on top.
   const baseUpdate: Record<string, unknown> = { status: nextStatus };
+  let resolvedRejectReason: RejectReason | null = null;
+  let resolvedRejectNote: string | null = null;
   switch (body.action) {
     case "approve":
+      baseUpdate.approved_by = admin.id;
+      baseUpdate.approved_at = now;
+      break;
     case "reject":
       baseUpdate.approved_by = admin.id;
       baseUpdate.approved_at = now;
+      resolvedRejectReason = isRejectReason(body.reject_reason)
+        ? body.reject_reason
+        : "no_seats";
+      resolvedRejectNote = body.reject_note?.trim() || null;
+      baseUpdate.reject_reason = resolvedRejectReason;
+      baseUpdate.reject_note = resolvedRejectNote;
       break;
     case "mark_paid":
       baseUpdate.payment_status = "paid";
@@ -139,15 +156,29 @@ export async function POST(req: Request, { params }: RouteCtx) {
       break;
   }
 
-  const { error: updErr } = await service
+  // Tolerate pre-011 schemas (no reject_reason / reject_note) by retrying
+  // without those columns once. Audit metadata still captures the reason.
+  let updRes = await service
     .from("enrollments")
     .update(baseUpdate)
     .in(
       "id",
       found.map((r) => r.id),
     );
-  if (updErr) {
-    return NextResponse.json({ error: updErr.message }, { status: 500 });
+  if (updRes.error && (updRes.error as { code?: string }).code === "42703") {
+    const { reject_reason, reject_note, ...rest } = baseUpdate;
+    void reject_reason;
+    void reject_note;
+    updRes = await service
+      .from("enrollments")
+      .update(rest)
+      .in(
+        "id",
+        found.map((r) => r.id),
+      );
+  }
+  if (updRes.error) {
+    return NextResponse.json({ error: updRes.error.message }, { status: 500 });
   }
 
   // Fan out notifications + audit rows in parallel. Notification failures are
@@ -160,7 +191,13 @@ export async function POST(req: Request, { params }: RouteCtx) {
     entity_id: r.id,
     before: { status: r.status, payment_status: r.payment_status },
     after: { status: nextStatus, payment_status: baseUpdate.payment_status ?? r.payment_status },
-    metadata: { event_id: eventId, via: "bulk" },
+    metadata: {
+      event_id: eventId,
+      via: "bulk",
+      ...(body.action === "reject"
+        ? { reject_reason: resolvedRejectReason, reject_note: resolvedRejectNote }
+        : {}),
+    },
   }));
   await writeAuditLogBatch(auditRows);
 
@@ -192,7 +229,13 @@ export async function POST(req: Request, { params }: RouteCtx) {
           amountLabel,
         });
       } else if (body.action === "reject") {
-        await notifyRejected({ enrollment: enr, participant: p, event });
+        await notifyRejected({
+          enrollment: enr,
+          participant: p,
+          event,
+          reason: resolvedRejectReason,
+          note: resolvedRejectNote,
+        });
       } else if (body.action === "mark_paid") {
         await notifyPaymentReceived({
           enrollment: enr,

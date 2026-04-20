@@ -6,10 +6,12 @@ import { requireAdmin } from "@/lib/admin-guard";
 import {
   EnrollmentsTable,
   type EnrollmentRow,
+  type LatestNotification,
   type ReferrerRef,
 } from "@/components/admin/events/EnrollmentsTable";
 import { EnrollmentsToolbar } from "@/components/admin/events/EnrollmentsToolbar";
 import { STATUS_LABEL as EVENT_STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
+import { checkCapacity } from "@/lib/event-capacity";
 
 export const metadata: Metadata = { title: "Enrollments" };
 export const dynamic = "force-dynamic";
@@ -50,6 +52,7 @@ export default async function EventEnrollmentsPage({
         status: string;
         start_date: string | null;
         end_date: string | null;
+        capacity: number | null;
         form_schema?: unknown;
       }
     | null = null;
@@ -57,7 +60,7 @@ export default async function EventEnrollmentsPage({
     const primary = await supabase
       .from("events")
       .select(
-        "id, slug, title_en, title_cn, type, status, start_date, end_date, form_schema",
+        "id, slug, title_en, title_cn, type, status, start_date, end_date, capacity, form_schema",
       )
       .eq("id", eventId)
       .maybeSingle();
@@ -66,7 +69,7 @@ export default async function EventEnrollmentsPage({
       if (code !== "42703") throw new Error(primary.error.message);
       const fallback = await supabase
         .from("events")
-        .select("id, slug, title_en, title_cn, type, status, start_date, end_date")
+        .select("id, slug, title_en, title_cn, type, status, start_date, end_date, capacity")
         .eq("id", eventId)
         .maybeSingle();
       if (fallback.error) throw new Error(fallback.error.message);
@@ -100,13 +103,18 @@ export default async function EventEnrollmentsPage({
     participantIdsForQ = (pRows ?? []).map((r) => r.id as string);
   }
 
-  // Participant join includes referrer free-text columns (migration 009) so
-  // we can render the referrer pill inline. If 009 hasn't been applied yet,
-  // the select falls back to the legacy column set.
+  // Participant join includes referrer free-text columns (migration 009) +
+  // is_old_student so we can render the referrer pill and OLD chip inline.
+  // If 009 hasn't been applied yet, the select falls back to the legacy set.
   const participantFull =
-    "id, region_id, name_en, name_cn, region, email, phone, language, referrer_id, referrer_name, referrer_contact";
+    "id, region_id, name_en, name_cn, region, email, phone, language, is_old_student, referrer_id, referrer_name, referrer_contact";
   const participantLegacy =
-    "id, region_id, name_en, name_cn, region, email, phone, language, referrer_id";
+    "id, region_id, name_en, name_cn, region, email, phone, language, is_old_student, referrer_id";
+  // Enrolment selects come in four shapes (cross-product of: form_answers
+  // shipped in 008, transfer_slip_* shipped in 011). Older databases
+  // gracefully fall back via the attempt ladder below.
+  const enrollmentColsWithBoth = (participant: string) =>
+    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, transfer_slip_url, transfer_slip_uploaded_at, participant:participants(${participant})`;
   const enrollmentColsWithSchema = (participant: string) =>
     `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(${participant})`;
   const enrollmentColsLegacy = (participant: string) =>
@@ -128,11 +136,18 @@ export default async function EventEnrollmentsPage({
       return q2;
     };
 
-    const attempts: { cols: () => string; stripForm: boolean; stripReferrer: boolean }[] = [
-      { cols: () => enrollmentColsWithSchema(participantFull), stripForm: false, stripReferrer: false },
-      { cols: () => enrollmentColsWithSchema(participantLegacy), stripForm: false, stripReferrer: true },
-      { cols: () => enrollmentColsLegacy(participantFull), stripForm: true, stripReferrer: false },
-      { cols: () => enrollmentColsLegacy(participantLegacy), stripForm: true, stripReferrer: true },
+    const attempts: {
+      cols: () => string;
+      stripSlip: boolean;
+      stripForm: boolean;
+      stripReferrer: boolean;
+    }[] = [
+      { cols: () => enrollmentColsWithBoth(participantFull), stripSlip: false, stripForm: false, stripReferrer: false },
+      { cols: () => enrollmentColsWithBoth(participantLegacy), stripSlip: false, stripForm: false, stripReferrer: true },
+      { cols: () => enrollmentColsWithSchema(participantFull), stripSlip: true, stripForm: false, stripReferrer: false },
+      { cols: () => enrollmentColsWithSchema(participantLegacy), stripSlip: true, stripForm: false, stripReferrer: true },
+      { cols: () => enrollmentColsLegacy(participantFull), stripSlip: true, stripForm: true, stripReferrer: false },
+      { cols: () => enrollmentColsLegacy(participantLegacy), stripSlip: true, stripForm: true, stripReferrer: true },
     ];
 
     let success = false;
@@ -147,6 +162,10 @@ export default async function EventEnrollmentsPage({
       enrollments = rows.map((r) => {
         const next: Record<string, unknown> = { ...r };
         if (attempt.stripForm) next.form_answers = {};
+        if (attempt.stripSlip) {
+          next.transfer_slip_url = null;
+          next.transfer_slip_uploaded_at = null;
+        }
         if (attempt.stripReferrer && next.participant && typeof next.participant === "object") {
           next.participant = {
             ...(next.participant as Record<string, unknown>),
@@ -190,6 +209,32 @@ export default async function EventEnrollmentsPage({
     }
   }
 
+  // Latest notification per visible enrolment, for the delivery dot in the
+  // table. Ordered desc on created_at so the first row per enrollment_id is
+  // the most recent. We grab a wide window (4 × the row count) to make the
+  // group-by-then-pick-first work without touching server functions.
+  const enrollmentIdsForNotif = rows.map((r) => r.id);
+  const latestNotificationByEnrollment: Record<string, LatestNotification> = {};
+  if (enrollmentIdsForNotif.length > 0) {
+    const { data: notifRows } = await supabase
+      .from("notifications")
+      .select("enrollment_id, channel, template, status, sent_at, created_at")
+      .in("enrollment_id", enrollmentIdsForNotif)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(2000, enrollmentIdsForNotif.length * 8));
+    for (const n of notifRows ?? []) {
+      const id = (n as { enrollment_id: string | null }).enrollment_id;
+      if (!id || latestNotificationByEnrollment[id]) continue;
+      latestNotificationByEnrollment[id] = {
+        channel: (n as { channel: string }).channel,
+        template: (n as { template: string }).template,
+        status: (n as { status: string }).status,
+        sent_at: (n as { sent_at: string | null }).sent_at,
+        created_at: (n as { created_at: string }).created_at,
+      };
+    }
+  }
+
   // Counts per status for the filter bar tabs. The counts ignore `q` so the
   // tab totals always describe the full event — the active tab indicates
   // what the table is filtered to, not how many matched the search.
@@ -209,6 +254,10 @@ export default async function EventEnrollmentsPage({
     const s = row.status as EnrollmentRow["status"];
     if (s in statusCounts) statusCounts[s]++;
   }
+
+  // Capacity check uses pending_approval + approved + paid (the same set the
+  // enrolment guard uses) so the chip matches what the public form sees.
+  const cap = await checkCapacity(supabase, event.id, event.capacity ?? null);
 
   const title =
     event.title_en || event.title_cn
@@ -255,15 +304,40 @@ export default async function EventEnrollmentsPage({
               </span>
             </div>
           </div>
-          <div className="rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] px-5 py-3 text-right">
-            <div className="text-[9px] tracking-[0.28em] uppercase text-[var(--ink-faint)]">
-              Total enrolled
-            </div>
-            <div className="mt-0.5 font-display text-[28px] leading-[1] tracking-[-0.015em] text-[var(--ink)]">
-              {statusCounts.all.toLocaleString()}
+          <div className="flex items-stretch gap-3">
+            <CapacityChip current={cap.current} capacity={cap.capacity} full={cap.full} />
+            <div className="rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] px-5 py-3 text-right">
+              <div className="text-[9px] tracking-[0.28em] uppercase text-[var(--ink-faint)]">
+                Total enrolled
+              </div>
+              <div className="mt-0.5 font-display text-[28px] leading-[1] tracking-[-0.015em] text-[var(--ink)]">
+                {statusCounts.all.toLocaleString()}
+              </div>
             </div>
           </div>
         </div>
+
+        {admin.role === "super_admin" ? (
+          <div className="mt-5 -mb-2">
+            <Link
+              href={`/admin/events/${event.id}/enrollments/new`}
+              className="inline-flex items-center gap-2 h-9 px-3.5 rounded-[var(--radius-pill)]
+                         border border-[var(--cinnabar)]/40 bg-[var(--cinnabar)] text-[var(--paper-warm)]
+                         text-[12px] tracking-[0.04em] font-medium
+                         hover:bg-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color] duration-[var(--dur-fast)]"
+            >
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                <path d="M5.5 2v7M2 5.5h7" />
+              </svg>
+              Enrol participant
+            </Link>
+            <span className="ml-3 text-[11px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
+              Walk-ins · admin-assisted
+            </span>
+          </div>
+        ) : null}
 
         {/* Toolbar: search + export. Renders above the status tabs so the
             tabs remain the visually primary control. */}
@@ -335,7 +409,36 @@ export default async function EventEnrollmentsPage({
         hasFilter={statusFilter !== null || q.length > 0}
         formSchema={event.form_schema ?? {}}
         referrerById={referrerById}
+        latestNotificationByEnrollment={latestNotificationByEnrollment}
       />
+    </div>
+  );
+}
+
+function CapacityChip({
+  current,
+  capacity,
+  full,
+}: {
+  current: number;
+  capacity: number | null;
+  full: boolean;
+}) {
+  if (capacity === null) return null;
+  const pct = capacity === 0 ? 0 : current / capacity;
+  const tone = full
+    ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+    : pct >= 0.9
+      ? "border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[var(--ink)]"
+      : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)]";
+  return (
+    <div className={`rounded-[var(--radius-md)] border ${tone} px-5 py-3 text-right`}>
+      <div className="text-[9px] tracking-[0.28em] uppercase opacity-70">
+        {full ? "Full" : "Capacity"}
+      </div>
+      <div className="mt-0.5 font-display text-[22px] leading-[1] tracking-[-0.015em] tabular-nums">
+        {current.toLocaleString()} / {capacity.toLocaleString()}
+      </div>
     </div>
   );
 }

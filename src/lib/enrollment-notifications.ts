@@ -150,26 +150,59 @@ export async function notifyApproved({
 
 // --- Rejection --------------------------------------------------------------
 
+export type RejectReason = "no_seats" | "duplicate" | "unsuitable" | "other";
+
+const REJECT_REASON_VALUES: readonly RejectReason[] = [
+  "no_seats",
+  "duplicate",
+  "unsuitable",
+  "other",
+];
+
+export function isRejectReason(v: unknown): v is RejectReason {
+  return typeof v === "string" && (REJECT_REASON_VALUES as readonly string[]).includes(v);
+}
+
+export const REJECT_REASON_LABEL: Record<RejectReason, { en: string; zh: string }> = {
+  no_seats: { en: "No seats available", zh: "名额已满" },
+  duplicate: { en: "Duplicate registration", zh: "重复报名" },
+  unsuitable: { en: "Doesn't meet event criteria", zh: "未满足参与条件" },
+  other: { en: "Other reason", zh: "其他原因" },
+};
+
 export async function notifyRejected({
   enrollment,
   participant,
   event,
+  reason,
+  note,
 }: {
   enrollment: Enrollment;
   participant: Participant;
   event: EventRow;
+  reason?: RejectReason | null;
+  note?: string | null;
 }): Promise<void> {
   if (!participant.email && !participant.phone) return;
   const locale = pickLocale(participant);
   const name = participantName(participant);
   const title = eventTitle(event, locale);
+  const resolvedReason: RejectReason = reason ?? "no_seats";
 
-  const subject =
-    locale === "zh"
-      ? `关于您的 GMC 报名 · 抱歉无法确认`
-      : `Regarding your GMC registration`;
+  const subject = subjectFor(resolvedReason, locale);
+  const html = buildRejectedEmail({
+    locale,
+    name,
+    eventTitle: title,
+    reason: resolvedReason,
+    note: note?.trim() || null,
+  });
 
-  const html = buildRejectedEmail({ locale, name, eventTitle: title });
+  // Per-reason WhatsApp template name. The Meta Business Manager templates
+  // mirror the four reasons; a project-side workspace alias falls back to
+  // the generic gmc_enrollment_rejected when a per-reason template is not
+  // approved yet (the WhatsApp transport silently no-ops on missing template).
+  const waTemplate = `gmc_enrollment_rejected_${resolvedReason}`;
 
   const emailRes = participant.email
     ? await sendEmail({ to: participant.email, subject, html })
@@ -178,7 +211,7 @@ export async function notifyRejected({
   const waRes = participant.phone
     ? await sendWhatsAppTemplate({
         to: participant.phone,
-        template: "gmc_enrollment_rejected",
+        template: waTemplate,
         languageCode: locale === "zh" ? "zh_CN" : "en_US",
         components: [
           {
@@ -196,13 +229,42 @@ export async function notifyRejected({
     participant_id: participant.id,
     enrollment_id: enrollment.id,
     event_id: event.id,
-    email: { to: participant.email, template: "enrollment_rejected", result: emailRes },
+    email: {
+      to: participant.email,
+      template: `enrollment_rejected_${resolvedReason}`,
+      result: emailRes,
+    },
     whatsapp: {
       to: participant.phone,
-      template: "gmc_enrollment_rejected",
+      template: waTemplate,
       result: waRes,
     },
   });
+}
+
+function subjectFor(reason: RejectReason, locale: Locale): string {
+  if (locale === "zh") {
+    switch (reason) {
+      case "no_seats":
+        return `关于您的 GMC 报名 · 名额已满`;
+      case "duplicate":
+        return `关于您的 GMC 报名 · 重复报名`;
+      case "unsuitable":
+        return `关于您的 GMC 报名 · 暂不适合本次活动`;
+      case "other":
+        return `关于您的 GMC 报名`;
+    }
+  }
+  switch (reason) {
+    case "no_seats":
+      return `Regarding your GMC registration — no seats available`;
+    case "duplicate":
+      return `Regarding your GMC registration — duplicate found`;
+    case "unsuitable":
+      return `Regarding your GMC registration`;
+    case "other":
+      return `Regarding your GMC registration`;
+  }
 }
 
 // --- Payment received -------------------------------------------------------
@@ -392,24 +454,59 @@ function buildRejectedEmail({
   locale,
   name,
   eventTitle,
+  reason,
+  note,
 }: {
   locale: Locale;
   name: string;
   eventTitle: string;
+  reason: RejectReason;
+  note: string | null;
 }): string {
   const isZh = locale === "zh";
   const heading = isZh ? `${name}，您好：` : `Dear ${name},`;
-  const body = isZh
-    ? `非常感谢您对「${eventTitle}」的报名。很遗憾目前无法为您确认这次的参加名额。如对此有疑问或希望进一步了解，请随时回复此邮件或联系 GMC 客服。`
-    : `Thank you for registering for <strong>${eventTitle}</strong>. We regret to inform you that we're unable to confirm your spot for this session. If you'd like to discuss further or explore future programmes, please reply to this email or reach out to the GMC team.`;
+
+  let body = "";
+  if (reason === "no_seats") {
+    body = isZh
+      ? `非常感谢您对「${eventTitle}」的报名。很抱歉，本次活动的名额已满，目前已无可分配的座位。希望未来还能与您相聚。`
+      : `Thank you for registering for <strong>${eventTitle}</strong>. Unfortunately there are no seats available for this session. We hope to see you at a future GMC programme.`;
+  } else if (reason === "duplicate") {
+    body = isZh
+      ? `感谢您对「${eventTitle}」的报名。系统中已存在您本次活动的报名记录，因此本次提交未做重复处理。如您有其他疑问，请随时联系 GMC 团队。`
+      : `Thank you for your interest in <strong>${eventTitle}</strong>. We already have a registration on file for you for this session, so this submission has been closed as a duplicate. Please reach out if anything looks wrong.`;
+  } else if (reason === "unsuitable") {
+    body = isZh
+      ? `感谢您对「${eventTitle}」的报名。本次活动有特定的参加条件，目前无法为您确认席位。我们期待在更适合的活动中与您再次相聚。`
+      : `Thank you for registering for <strong>${eventTitle}</strong>. This particular session has specific participant criteria and we're unable to confirm a spot at this time. We'll keep you in mind for upcoming programmes that are a better fit.`;
+  } else {
+    body = isZh
+      ? `非常感谢您对「${eventTitle}」的报名。很遗憾目前无法为您确认这次的参加名额。如对此有疑问或希望进一步了解，请随时回复此邮件或联系 GMC 客服。`
+      : `Thank you for registering for <strong>${eventTitle}</strong>. We regret to inform you that we're unable to confirm your spot for this session. If you'd like to discuss further or explore future programmes, please reply to this email or reach out to the GMC team.`;
+  }
+
+  const noteBlock = note
+    ? `<p style="font-size:14px;line-height:1.7;margin:0 0 24px;padding:14px 16px;border-left:3px solid #2563EB;background:#EEF3FB;color:#1E3A6B;border-radius:0 8px 8px 0;">${escapeHtml(note)}</p>`
+    : "";
+
   const footer = isZh
     ? `期待未来与您再次相聚。`
     : `We look forward to welcoming you to a future programme.`;
   return emailShell(`
     <h1 style="font-size:26px;line-height:1.25;margin:32px 0 16px;color:#0B2954;letter-spacing:-0.02em;">${heading}</h1>
     <p style="font-size:15px;line-height:1.75;margin:0 0 24px;color:#1E3A6B;">${body}</p>
+    ${noteBlock}
     <p style="margin:0;font-size:13px;color:#5A6B8A;line-height:1.7;">${footer}</p>
   `);
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function buildPaymentReceivedEmail({

@@ -24,6 +24,10 @@ import {
   type EnrollmentAction,
   type JourneyStage,
 } from "@/lib/enrollment-transitions";
+import {
+  RejectReasonModal,
+  type RejectReasonValue,
+} from "./RejectReasonModal";
 
 type ParticipantRef = {
   id: string;
@@ -34,6 +38,7 @@ type ParticipantRef = {
   email: string | null;
   phone: string | null;
   language: string | null;
+  is_old_student: boolean | null;
   referrer_id: string | null;
   referrer_name: string | null;
   referrer_contact: string | null;
@@ -44,6 +49,14 @@ export type ReferrerRef = {
   region_id: string | null;
   name_en: string | null;
   name_cn: string | null;
+};
+
+export type LatestNotification = {
+  channel: string;
+  template: string;
+  status: string;
+  sent_at: string | null;
+  created_at: string;
 };
 
 export type EnrollmentRow = {
@@ -58,6 +71,9 @@ export type EnrollmentRow = {
   created_at: string;
   form_answers: Record<string, unknown> | null;
   participant: ParticipantRef | null;
+  /** Set when the participant uploaded a transfer slip on /pay/[token]. Optional so pre-011 schemas still work. */
+  transfer_slip_url?: string | null;
+  transfer_slip_uploaded_at?: string | null;
 };
 
 type Props = {
@@ -67,7 +83,13 @@ type Props = {
   hasFilter: boolean;
   formSchema: unknown;
   referrerById: Record<string, ReferrerRef>;
+  latestNotificationByEnrollment?: Record<string, LatestNotification>;
 };
+
+type PendingReject =
+  | { kind: "row"; id: string }
+  | { kind: "bulk"; ids: string[] }
+  | null;
 
 type BulkAction = EnrollmentAction;
 type Toast = { message: string } | null;
@@ -224,6 +246,7 @@ export function EnrollmentsTable({
   hasFilter,
   formSchema,
   referrerById,
+  latestNotificationByEnrollment = {},
 }: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -234,6 +257,8 @@ export function EnrollmentsTable({
   const [editingAmountId, setEditingAmountId] = useState<string | null>(null);
   const [amountDraft, setAmountDraft] = useState<string>("");
   const [amountBusy, setAmountBusy] = useState<string | null>(null);
+  const [pendingReject, setPendingReject] = useState<PendingReject>(null);
+  const [resendBusyId, setResendBusyId] = useState<string | null>(null);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   const parsedSchema: FormSchema = useMemo(
@@ -292,18 +317,26 @@ export function EnrollmentsTable({
     else setSelected(new Set(rows.map((r) => r.id)));
   }
 
-  async function runBulk(action: BulkAction) {
+  async function runBulk(
+    action: BulkAction,
+    extra?: { reject_reason?: RejectReasonValue; reject_note?: string | null },
+  ) {
     if (selected.size === 0) return;
     setBusy(action);
     setError(null);
     try {
       const ids = Array.from(selected);
+      const payloadBody: Record<string, unknown> = { action, ids };
+      if (action === "reject" && extra?.reject_reason) {
+        payloadBody.reject_reason = extra.reject_reason;
+        if (extra.reject_note) payloadBody.reject_note = extra.reject_note;
+      }
       const res = await fetch(
         `/api/admin/events/${eventId}/enrollments/bulk`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, ids }),
+          body: JSON.stringify(payloadBody),
         },
       );
       const payload = await res.json().catch(() => ({}));
@@ -350,13 +383,22 @@ export function EnrollmentsTable({
     }
   }
 
-  async function runRow(id: string, action: EnrollmentAction) {
+  async function runRow(
+    id: string,
+    action: EnrollmentAction,
+    extra?: { reject_reason?: RejectReasonValue; reject_note?: string | null },
+  ) {
     setError(null);
     try {
+      const payloadBody: Record<string, unknown> = { action };
+      if (action === "reject" && extra?.reject_reason) {
+        payloadBody.reject_reason = extra.reject_reason;
+        if (extra.reject_note) payloadBody.reject_note = extra.reject_note;
+      }
       const res = await fetch(`/api/admin/enrollments/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify(payloadBody),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -398,6 +440,45 @@ export function EnrollmentsTable({
   function cancelEditAmount() {
     setEditingAmountId(null);
     setAmountDraft("");
+  }
+
+  async function runResend(id: string) {
+    setResendBusyId(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${id}/resend`, {
+        method: "POST",
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (payload?.error === "no_template_for_status") {
+          throw new Error(`No template applies to a "${payload.status}" enrolment.`);
+        }
+        throw new Error(payload?.detail ?? payload?.error ?? `Re-send failed (${res.status})`);
+      }
+      router.refresh();
+      setToast({ message: "Notification re-sent" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Re-send failed");
+    } finally {
+      setResendBusyId(null);
+    }
+  }
+
+  async function confirmReject(args: { reason: RejectReasonValue; note: string | null }) {
+    if (!pendingReject) return;
+    if (pendingReject.kind === "row") {
+      await runRow(pendingReject.id, "reject", {
+        reject_reason: args.reason,
+        reject_note: args.note,
+      });
+    } else {
+      await runBulk("reject", {
+        reject_reason: args.reason,
+        reject_note: args.note,
+      });
+    }
+    setPendingReject(null);
   }
 
   async function saveEditAmount(id: string, original: number | null) {
@@ -489,7 +570,9 @@ export function EnrollmentsTable({
           />
           <BulkButton
             label="Reject"
-            onClick={() => runBulk("reject")}
+            onClick={() =>
+              setPendingReject({ kind: "bulk", ids: Array.from(selected) })
+            }
             busy={busy === "reject"}
             disabled={busy !== null}
             tone="danger"
@@ -646,12 +729,18 @@ export function EnrollmentsTable({
                     <td className="px-5 py-3.5 align-top">
                       {p ? (
                         <div className="flex flex-col gap-1">
-                          <Link
-                            href={`/admin/participants/${p.id}`}
-                            className="text-[var(--ink)] font-medium hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
-                          >
-                            {participantName(p)}
-                          </Link>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Link
+                              href={`/admin/participants/${p.id}`}
+                              className="text-[var(--ink)] font-medium hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
+                            >
+                              {participantName(p)}
+                            </Link>
+                            {p.is_old_student ? <OldChipInline /> : null}
+                            <DeliveryDot
+                              latest={latestNotificationByEnrollment[r.id]}
+                            />
+                          </div>
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--ink-faint)]">
                             <span className="font-mono">
                               {p.region_id ?? "—"}
@@ -778,6 +867,19 @@ export function EnrollmentsTable({
                               : ""}
                           </span>
                         ) : null}
+                        {r.transfer_slip_url && stage === "approved_unpaid" ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] tracking-[0.1em] uppercase text-[var(--cinnabar-deep)]"
+                            title={
+                              r.transfer_slip_uploaded_at
+                                ? `Slip uploaded ${formatDateTime(r.transfer_slip_uploaded_at)} · verify and mark paid`
+                                : "Slip uploaded · verify and mark paid"
+                            }
+                          >
+                            <span className="w-1 h-1 rounded-full bg-[var(--cinnabar)]" aria-hidden="true" />
+                            Slip received
+                          </span>
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-5 py-3.5 text-right tabular-nums align-top">
@@ -893,7 +995,18 @@ export function EnrollmentsTable({
                       <td className="pr-1 py-3.5 text-right align-top">
                         <RowActions
                           status={r.status}
-                          onAction={(a) => runRow(r.id, a)}
+                          resending={resendBusyId === r.id}
+                          onAction={(a) => {
+                            if (a === "reject") {
+                              setPendingReject({ kind: "row", id: r.id });
+                              return;
+                            }
+                            if (a === "resend") {
+                              runResend(r.id);
+                              return;
+                            }
+                            runRow(r.id, a);
+                          }}
                         />
                       </td>
                     ) : null}
@@ -952,6 +1065,12 @@ export function EnrollmentsTable({
                   isExpanded && hasCustomFields ? (
                     <tr key={`${r.id}-answers`} className="bg-[var(--paper-deep)]/40">
                       <td colSpan={totalCols} className="px-6 py-5 border-t border-[var(--paper-shadow)]">
+                        {r.transfer_slip_url ? (
+                          <SlipPanel
+                            enrollmentId={r.id}
+                            uploadedAt={r.transfer_slip_uploaded_at ?? null}
+                          />
+                        ) : null}
                         <AnswersGrid
                           fields={answerableFields}
                           answers={r.form_answers ?? {}}
@@ -989,6 +1108,99 @@ export function EnrollmentsTable({
           </button>
         </div>
       ) : null}
+
+      <RejectReasonModal
+        open={pendingReject !== null}
+        busy={busy === "reject"}
+        count={
+          pendingReject?.kind === "bulk"
+            ? pendingReject.ids.length
+            : 1
+        }
+        onCancel={() => setPendingReject(null)}
+        onConfirm={confirmReject}
+      />
+    </div>
+  );
+}
+
+function OldChipInline() {
+  return (
+    <span
+      title="Returning participant · 老学员"
+      className="inline-flex items-center gap-1 h-4 px-1.5 rounded-full
+                 border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)]
+                 text-[9px] tracking-[0.2em] uppercase text-[var(--cinnabar-deep)]"
+    >
+      <span className="w-1 h-1 rounded-full bg-[var(--cinnabar)]" aria-hidden="true" />
+      Old
+    </span>
+  );
+}
+
+function DeliveryDot({ latest }: { latest: LatestNotification | undefined }) {
+  if (!latest) return null;
+  const tone =
+    latest.status === "sent"
+      ? "bg-[var(--jade)]"
+      : latest.status === "failed"
+        ? "bg-[var(--cinnabar)]"
+        : "bg-[var(--gold)]";
+  const ts = latest.sent_at ?? latest.created_at;
+  const when = ts ? formatDateTime(ts) : "—";
+  return (
+    <span
+      title={`Last notification: ${latest.template} · ${latest.channel} · ${latest.status} · ${when}`}
+      className="inline-flex items-center"
+      aria-label={`Last notification ${latest.status}`}
+    >
+      <span className={`w-2 h-2 rounded-full ${tone}`} aria-hidden="true" />
+    </span>
+  );
+}
+
+function SlipPanel({
+  enrollmentId,
+  uploadedAt,
+}: {
+  enrollmentId: string;
+  uploadedAt: string | null;
+}) {
+  const href = `/api/admin/enrollments/${enrollmentId}/slip`;
+  return (
+    <div className="mb-5 rounded-[var(--radius-md)] border border-[var(--cinnabar)]/25 bg-[var(--cinnabar-wash)]/40 px-4 py-3 flex items-start gap-3">
+      <span
+        className="inline-flex items-center justify-center w-8 h-8 rounded-full
+                   border border-[var(--cinnabar)]/40 bg-[var(--paper)] text-[var(--cinnabar)]"
+        aria-hidden="true"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3.5" y="2.5" width="9" height="11" rx="1" />
+          <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" />
+        </svg>
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[12px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)]">
+          Transfer slip
+        </div>
+        <div className="mt-0.5 text-[12.5px] text-[var(--ink)] leading-[1.55]">
+          Participant uploaded a transfer receipt
+          {uploadedAt ? ` on ${formatDateTime(uploadedAt)}` : ""}. Verify before
+          marking the enrolment paid.
+        </div>
+      </div>
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-pill)]
+                   border border-[var(--cinnabar)]/40 bg-[var(--paper)] !text-[var(--cinnabar-deep)]
+                   text-[11.5px] tracking-[0.04em] font-medium
+                   hover:bg-[var(--cinnabar)] hover:!text-[var(--paper-warm)] hover:border-[var(--cinnabar)]
+                   transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+      >
+        Open slip
+      </a>
     </div>
   );
 }
@@ -1077,12 +1289,16 @@ const ACTION_ORDER: EnrollmentAction[] = [
   "cancel",
 ];
 
+type MenuAction = EnrollmentAction | "resend";
+
 function RowActions({
   status,
+  resending,
   onAction,
 }: {
   status: EnrollmentStatus;
-  onAction: (a: EnrollmentAction) => void | Promise<void>;
+  resending: boolean;
+  onAction: (a: MenuAction) => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1139,10 +1355,36 @@ function RowActions({
         <div
           ref={menuRef}
           role="menu"
-          className="absolute right-0 top-[calc(100%+6px)] z-20 w-[168px]
+          className="absolute right-0 top-[calc(100%+6px)] z-20 w-[200px]
                      rounded-[var(--radius-md)] border border-[var(--paper-shadow)]
                      bg-[var(--paper-warm)] shadow-[var(--shadow-paper-2)] p-1.5"
         >
+          {RESEND_LABEL[status] ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={resending}
+                onClick={() => {
+                  setOpen(false);
+                  onAction("resend");
+                }}
+                className="w-full text-left px-3 py-2 rounded-[var(--radius-sm)] text-[12.5px]
+                           text-[var(--ink)] hover:bg-[var(--paper-deep)]
+                           transition-[background-color,color] duration-[var(--dur-fast)]
+                           inline-flex items-center justify-between gap-2 disabled:opacity-50"
+              >
+                <span>{RESEND_LABEL[status]}</span>
+                {resending ? (
+                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="animate-spin">
+                    <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.5" />
+                    <path d="M12.5 7a5.5 5.5 0 0 0-5.5-5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                ) : null}
+              </button>
+              <div className="my-1.5 mx-2 h-px bg-[var(--paper-shadow)]/70" aria-hidden="true" />
+            </>
+          ) : null}
           {ACTION_ORDER.map((a) => {
             const check = canTransition(status, a);
             const disabled = !check.ok;
@@ -1181,6 +1423,12 @@ function RowActions({
     </div>
   );
 }
+
+const RESEND_LABEL: Partial<Record<EnrollmentStatus, string>> = {
+  approved: "Re-send payment link",
+  paid: "Re-send receipt",
+  rejected: "Re-send rejection",
+};
 
 function BulkButton({
   label,
