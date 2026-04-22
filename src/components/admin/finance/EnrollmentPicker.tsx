@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatMoney } from "@/lib/finance/finance-query";
+import { formatMoney } from "@/lib/finance/format";
 
 // Typeahead that hits /api/admin/finance/search-enrollments. Pops a dropdown
 // of candidate enrolments (approved or paid only) as the admin types. Used

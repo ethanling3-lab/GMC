@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { EnrollmentPicker } from "./EnrollmentPicker";
-import { formatMoney } from "@/lib/finance/finance-query";
+import { formatMoney } from "@/lib/finance/format";
 
 // One bank_transaction, rendered as an expandable row. Admin can confirm the
 // existing match, retarget to a different enrolment, ignore the txn, or

@@ -230,13 +230,3 @@ function emptyOverview(): FinanceOverview {
   };
 }
 
-export function formatMoney(amount: number, currency: string | null): string {
-  const ccy = (currency ?? "").trim();
-  const n = Math.round(amount * 100) / 100;
-  const display = n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  if (!ccy || ccy === "—") return display;
-  return `${ccy} ${display}`;
-}

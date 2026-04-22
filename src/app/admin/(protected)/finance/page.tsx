@@ -4,10 +4,10 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
-  formatMoney,
   loadFinanceOverview,
   type EventFinanceRow,
 } from "@/lib/finance/finance-query";
+import { formatMoney } from "@/lib/finance/format";
 import { BankCsvUploader } from "@/components/admin/finance/BankCsvUploader";
 
 export const metadata: Metadata = { title: "Finance" };
