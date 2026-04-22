@@ -5,8 +5,8 @@ import type { Locale } from "@/lib/types";
 export const DICTS = { zh, en } as const;
 export type Dict = typeof zh;
 
-export const DEFAULT_LOCALE: Locale = "zh";
-export const LOCALES: Locale[] = ["zh", "en"];
+export const DEFAULT_LOCALE: Locale = "en";
+export const LOCALES: Locale[] = ["en", "zh"];
 
 export function getDict(locale: Locale): Dict {
   return (DICTS[locale] ?? DICTS[DEFAULT_LOCALE]) as Dict;
