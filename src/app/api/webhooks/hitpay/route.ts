@@ -96,6 +96,7 @@ export async function POST(req: Request) {
   const isCompleted = status === "completed" || status === "succeeded";
   const isFailed =
     status === "failed" || status === "expired" || status === "cancelled" || status === "canceled";
+  const isRefunded = status === "refunded" || status === "partially_refunded";
 
   // Idempotency: a second "completed" webhook is a no-op.
   if (isCompleted && row.payment_status === "paid") {
@@ -205,6 +206,76 @@ export async function POST(req: Request) {
       }
     }
 
+    return NextResponse.json({ ok: true });
+  }
+
+  if (isRefunded) {
+    // HitPay sends `refunded` for a full refund and `partially_refunded` when
+    // only part of the original charge was returned. We track the running
+    // refund_amount on the enrolment so admin can see the net paid.
+    const priorRefund = 0; // No getter from the load query — we only know what HitPay tells us.
+    void priorRefund;
+    const priorPaid = row.amount_paid != null ? Number(row.amount_paid) : 0;
+    const refundAmt = Number.isFinite(amountPaid) ? amountPaid : 0;
+    const isFullRefund =
+      status === "refunded" ||
+      (Number.isFinite(refundAmt) && refundAmt >= priorPaid - 0.01);
+    const now = new Date().toISOString();
+
+    const update: Record<string, unknown> = {
+      payment_status: isFullRefund ? "refunded" : "paid",
+      refund_amount: refundAmt,
+      refunded_at: now,
+    };
+    // A fully-refunded enrolment falls out of the "paid" bucket so admin
+    // sees it in the refunded state, not still counted toward capacity.
+    if (isFullRefund) update.status = "cancelled";
+
+    let updRes = await service
+      .from("enrollments")
+      .update(update)
+      .eq("id", row.id);
+    if (updRes.error && (updRes.error as { code?: string }).code === "42703") {
+      // Pre-013 schema without refund_amount / refunded_at.
+      const { refund_amount, refunded_at, ...rest } = update;
+      void refund_amount;
+      void refunded_at;
+      updRes = await service.from("enrollments").update(rest).eq("id", row.id);
+    }
+    if (updRes.error) {
+      await writeAuditLog({
+        actor_id: null,
+        action: "enrollment.webhook_failed",
+        entity: "enrollments",
+        entity_id: row.id,
+        metadata: {
+          provider: "hitpay",
+          reason: "refund_update_error",
+          detail: updRes.error.message,
+          status,
+        },
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    await writeAuditLog({
+      actor_id: null,
+      action: "enrollment.webhook_refunded",
+      entity: "enrollments",
+      entity_id: row.id,
+      before: { status: row.status, payment_status: row.payment_status },
+      after: {
+        status: isFullRefund ? "cancelled" : row.status,
+        payment_status: isFullRefund ? "refunded" : "paid",
+        refund_amount: refundAmt,
+      },
+      metadata: {
+        provider: "hitpay",
+        status,
+        payment_id: fields.payment_id,
+        full_refund: isFullRefund,
+      },
+    });
     return NextResponse.json({ ok: true });
   }
 

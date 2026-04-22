@@ -27,7 +27,14 @@ export type AuditAction =
   | "enrollment.transfer_slip_uploaded"
   | "enrollment.checkout_started"
   | "enrollment.webhook_paid"
-  | "enrollment.webhook_failed";
+  | "enrollment.webhook_failed"
+  | "enrollment.webhook_refunded"
+  | "enrollment.refund_manual"
+  | "finance.bank_import_created"
+  | "finance.bank_txn_confirmed"
+  | "finance.bank_txn_ignored"
+  | "finance.bank_txn_rematched"
+  | "finance.bank_import_deleted";
 
 export type WriteAuditLog = {
   actor_id: string | null;
