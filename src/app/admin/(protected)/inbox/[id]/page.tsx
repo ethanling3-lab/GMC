@@ -117,7 +117,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6">
         <section
           className="relative rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] overflow-hidden flex flex-col"
-          style={{ height: "min(78vh, 820px)", minHeight: 520 }}
+          style={{ height: "clamp(420px, calc(100dvh - 340px), 640px)" }}
         >
           <div
             id="inbox-thread-scroll"
