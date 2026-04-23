@@ -16,6 +16,7 @@ import { ChannelGlyph } from "@/components/admin/inbox/ChannelGlyph";
 import { MessageBubble } from "@/components/admin/inbox/MessageBubble";
 import { MessageComposer } from "@/components/admin/inbox/MessageComposer";
 import { MarkReadOnMount } from "@/components/admin/inbox/MarkReadOnMount";
+import { ScrollAnchor } from "@/components/admin/inbox/ScrollAnchor";
 import { ParticipantCard } from "@/components/admin/inbox/ParticipantCard";
 
 export const metadata: Metadata = { title: "Conversation" };
@@ -109,11 +110,19 @@ export default async function InboxThreadPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* Main layout: thread center + participant rail right */}
+      {/* Main layout: thread center + participant rail right.
+          Thread locked to a viewport-relative height — the messages scroll
+          inside, composer stays anchored. min/max clamp so the card reads
+          the same on short laptops + tall 4K displays. */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6">
-        {/* Thread */}
-        <section className="relative rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] overflow-hidden flex flex-col min-h-[480px]">
-          <div className="flex-1 overflow-y-auto max-h-[72vh] px-5 py-6">
+        <section
+          className="relative rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] overflow-hidden flex flex-col"
+          style={{ height: "min(78vh, 820px)", minHeight: 520 }}
+        >
+          <div
+            id="inbox-thread-scroll"
+            className="flex-1 min-h-0 overflow-y-auto px-5 py-6"
+          >
             {messages.length === 0 ? (
               <div className="h-full flex items-center justify-center text-[13px] text-[var(--ink-mute)]">
                 No messages in this thread yet.
@@ -130,6 +139,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
                     )}
                   />
                 ))}
+                <ScrollAnchor dep={messages.length} />
               </ol>
             )}
           </div>
