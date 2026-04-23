@@ -15,20 +15,20 @@ type IconName =
   | "overview"
   | "participants"
   | "events"
-  | "travel"
+  | "inbox"
   | "finance"
-  | "bell";
+  | "transfer";
 
 const PRIMARY: NavItem[] = [
   { href: "/admin", label: "Overview", labelZh: "概览", icon: "overview" },
+  { href: "/admin/inbox", label: "Inbox", labelZh: "收件箱", icon: "inbox" },
   { href: "/admin/participants", label: "Participants", labelZh: "学员", icon: "participants" },
   { href: "/admin/events", label: "Events", labelZh: "活动", icon: "events" },
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance" },
 ];
 
 const UPCOMING: NavItem[] = [
-  { href: "/admin/travel", label: "Travel", labelZh: "出行", icon: "travel", soon: true },
-  { href: "/admin/notifications", label: "Notifications", labelZh: "通知", icon: "bell", soon: true },
+  { href: "/admin/transfer-lists", label: "Transfer lists", labelZh: "接送列表", icon: "transfer", soon: true },
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -75,11 +75,11 @@ function NavIcon({ name }: { name: IconName }) {
           <path d="M5.5 2v3M10.5 2v3" />
         </svg>
       );
-    case "travel":
+    case "inbox":
       return (
         <svg {...common}>
-          <path d="M2 9l5-5 1.5 1.5L5 9l3 0.2 1-1 1 1-1.5 1.5-0.2-3L5 11l-1.5-1.5z" transform="translate(1 -1) rotate(10 8 8)" />
-          <path d="M2 13h12" />
+          <path d="M2.5 4.5a1.5 1.5 0 0 1 1.5-1.5h8a1.5 1.5 0 0 1 1.5 1.5V11a1.5 1.5 0 0 1-1.5 1.5H6L3.5 14.5V12.5H4A1.5 1.5 0 0 1 2.5 11z" />
+          <path d="M5.5 7h5M5.5 9h3" />
         </svg>
       );
     case "finance":
@@ -90,11 +90,13 @@ function NavIcon({ name }: { name: IconName }) {
           <path d="M8 5.5v5M6.5 7h3M6.5 9h3" />
         </svg>
       );
-    case "bell":
+    case "transfer":
       return (
         <svg {...common}>
-          <path d="M4 11V8a4 4 0 1 1 8 0v3l1 1.5H3L4 11z" />
-          <path d="M6.5 13.5a1.5 1.5 0 0 0 3 0" />
+          <rect x="2" y="6" width="9" height="5" rx="1" />
+          <path d="M11 7h2l1 2v2h-3" />
+          <circle cx="5" cy="12" r="1.2" />
+          <circle cx="12" cy="12" r="1.2" />
         </svg>
       );
   }

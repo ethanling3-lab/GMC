@@ -34,7 +34,17 @@ export type AuditAction =
   | "finance.bank_txn_confirmed"
   | "finance.bank_txn_ignored"
   | "finance.bank_txn_rematched"
-  | "finance.bank_import_deleted";
+  | "finance.bank_import_deleted"
+  | "inbox.participant_autocreated"
+  | "inbox.identifier_linked_existing"
+  | "inbox.message_received"
+  | "inbox.message_sent"
+  | "inbox.conversation_assigned"
+  | "inbox.conversation_status_changed"
+  | "inbox.flight_info_extracted"
+  | "inbox.flight_info_confirmed"
+  | "transfer_list.generated"
+  | "transfer_list.finalized";
 
 export type WriteAuditLog = {
   actor_id: string | null;
