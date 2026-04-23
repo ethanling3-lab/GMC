@@ -89,6 +89,32 @@ export function timeAgo(iso: string | null | undefined): string {
 }
 
 /**
+ * Display name for a participant. Falls back through name → phone → email so
+ * freshly auto-created leads (no name yet) still render an identifiable label
+ * instead of "(unnamed)".
+ */
+export function participantDisplay(
+  p:
+    | {
+        name_en?: string | null;
+        name_cn?: string | null;
+        phone?: string | null;
+        email?: string | null;
+      }
+    | null
+    | undefined,
+): string {
+  if (!p) return "(unknown)";
+  const name = (p.name_en ?? p.name_cn ?? "").trim();
+  if (name) return name;
+  const phone = (p.phone ?? "").trim();
+  if (phone) return phone;
+  const email = (p.email ?? "").trim();
+  if (email) return email;
+  return "(unnamed participant)";
+}
+
+/**
  * Absolute timestamp for the thread view (tooltip + bubble metadata).
  * Example: "14 Apr, 9:42 PM".
  */

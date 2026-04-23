@@ -6,6 +6,7 @@ import {
   toneClasses,
   timeAgo,
   channelLabel,
+  participantDisplay,
 } from "@/lib/inbox/format";
 import { ChannelGlyph } from "./ChannelGlyph";
 
@@ -15,7 +16,8 @@ import { ChannelGlyph } from "./ChannelGlyph";
 
 export function InboxListItem({ row }: { row: ConversationListRow }) {
   const p = row.participant;
-  const displayName = p?.name_en ?? p?.name_cn ?? "(unnamed participant)";
+  const displayName = participantDisplay(p);
+  const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
   const regionId = p?.region_id;
   const isLead = p?.status === "lead";
   const statusLabel = CONVERSATION_STATUS_LABEL[row.status]?.en ?? row.status;
@@ -62,7 +64,11 @@ export function InboxListItem({ row }: { row: ConversationListRow }) {
                 {regionId}
               </span>
             ) : null}
-            <span className="text-[13.5px] text-[var(--ink)] truncate leading-[1.3]">
+            <span
+              className={`text-[13.5px] text-[var(--ink)] truncate leading-[1.3] ${
+                hasRealName ? "" : "font-mono text-[12.5px] text-[var(--ink-soft)]"
+              }`}
+            >
               {displayName}
             </span>
             {isLead ? (

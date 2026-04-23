@@ -8,30 +8,50 @@ const CRUMB_LABELS: Record<string, string> = {
   admin: "Workspace",
   participants: "Participants",
   events: "Events",
+  inbox: "Inbox",
   travel: "Travel",
   finance: "Finance",
+  "transfer-lists": "Transfer lists",
+  imports: "Imports",
   notifications: "Notifications",
+  enrollments: "Enrolments",
   new: "New",
   edit: "Edit",
 };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function humanize(seg: string): string {
   if (CRUMB_LABELS[seg]) return CRUMB_LABELS[seg];
+  // Short region-ID shape (MY001, SG42) → uppercase as-is.
   if (/^[a-z]{2,3}-?\d+$/i.test(seg)) return seg.toUpperCase();
+  // Full UUID → keep the first 8 chars; admins get a handle without the noise.
+  if (UUID_RE.test(seg)) return seg.slice(0, 8);
   return seg
     .split("-")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
 
-function useCrumbs(pathname: string): { href: string; label: string }[] {
+function isUuid(seg: string): boolean {
+  return UUID_RE.test(seg);
+}
+
+function useCrumbs(
+  pathname: string,
+): { href: string; label: string; mono?: boolean }[] {
   return useMemo(() => {
     const parts = pathname.split("/").filter(Boolean);
-    const crumbs: { href: string; label: string }[] = [];
+    const crumbs: { href: string; label: string; mono?: boolean }[] = [];
     let acc = "";
     for (const p of parts) {
       acc += `/${p}`;
-      crumbs.push({ href: acc, label: humanize(p) });
+      crumbs.push({
+        href: acc,
+        label: humanize(p),
+        mono: isUuid(p),
+      });
     }
     return crumbs;
   }, [pathname]);
@@ -115,14 +135,23 @@ export function TopBar() {
             return (
               <li key={c.href} className="flex items-center gap-2 min-w-0">
                 {isLast ? (
-                  <span className="font-display text-[15px] leading-[1.2] text-[var(--ink)] truncate">
+                  <span
+                    className={`leading-[1.2] text-[var(--ink)] truncate ${
+                      c.mono
+                        ? "font-mono text-[12px] text-[var(--ink-soft)]"
+                        : "font-display text-[15px]"
+                    }`}
+                    title={c.mono ? c.href : undefined}
+                  >
                     {c.label}
                   </span>
                 ) : (
                   <>
                     <Link
                       href={c.href}
-                      className="text-[var(--ink-mute)] hover:text-[var(--ink)] transition-colors duration-[var(--dur-fast)] truncate"
+                      className={`text-[var(--ink-mute)] hover:text-[var(--ink)] transition-colors duration-[var(--dur-fast)] truncate ${
+                        c.mono ? "font-mono text-[11.5px]" : ""
+                      }`}
                     >
                       {c.label}
                     </Link>

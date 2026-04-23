@@ -8,6 +8,7 @@ import {
   CONVERSATION_STATUS_LABEL,
   CONVERSATION_STATUS_TONE,
   channelLabel,
+  participantDisplay,
   toneClasses,
   timestampFull,
 } from "@/lib/inbox/format";
@@ -32,7 +33,8 @@ export default async function InboxThreadPage({ params }: PageProps) {
 
   const { conversation, messages, enrollments } = detail;
   const p = conversation.participant;
-  const displayName = p?.name_en ?? p?.name_cn ?? "(unnamed participant)";
+  const displayName = participantDisplay(p);
+  const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
   const statusLabel =
     CONVERSATION_STATUS_LABEL[conversation.status]?.en ?? conversation.status;
   const statusTone = CONVERSATION_STATUS_TONE[conversation.status] ?? "neutral";
@@ -60,7 +62,13 @@ export default async function InboxThreadPage({ params }: PageProps) {
               <span className="w-5 h-px bg-current" />
               Thread · 对话
             </div>
-            <h1 className="mt-3 font-display text-[26px] leading-[1.15] tracking-[-0.01em] text-[var(--ink)] truncate">
+            <h1
+              className={`mt-3 leading-[1.15] tracking-[-0.01em] text-[var(--ink)] truncate ${
+                hasRealName
+                  ? "font-display text-[26px]"
+                  : "font-mono text-[18px] text-[var(--ink-soft)]"
+              }`}
+            >
               {displayName}
             </h1>
             <div className="mt-2 flex items-center gap-2 flex-wrap text-[11.5px] text-[var(--ink-mute)]">

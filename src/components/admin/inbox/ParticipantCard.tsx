@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ConversationListRow, EnrollmentSummary } from "@/lib/inbox/inbox-query";
+import { participantDisplay } from "@/lib/inbox/format";
 
 // Right-rail card for the thread view. Shows:
 //   - Participant identity (name, region_id, status chip, email, phone)
@@ -27,7 +28,8 @@ export function ParticipantCard({
     );
   }
 
-  const displayName = participant.name_en ?? participant.name_cn ?? "(unnamed)";
+  const displayName = participantDisplay(participant);
+  const hasRealName = Boolean((participant.name_en ?? participant.name_cn ?? "").trim());
   const isLead = participant.status === "lead";
 
   return (
@@ -43,7 +45,13 @@ export function ParticipantCard({
               {participant.region_id}
             </span>
           ) : null}
-          <span className="font-display text-[18px] leading-[1.25] text-[var(--ink)]">
+          <span
+            className={`leading-[1.25] text-[var(--ink)] ${
+              hasRealName
+                ? "font-display text-[18px]"
+                : "font-mono text-[14px] text-[var(--ink-soft)]"
+            }`}
+          >
             {displayName}
           </span>
         </div>
