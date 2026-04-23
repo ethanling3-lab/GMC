@@ -66,24 +66,39 @@ export type ChannelAdapter = {
    * loose here; the `send.ts` caller validates per-channel.
    */
   sendMessage(payload: SendMessageInput): Promise<SendResult>;
+
+  /**
+   * WhatsApp-style providers require a separate media upload step: POST the
+   * bytes to the provider, receive a provider-scoped media id, then reference
+   * it in a subsequent sendMessage. Optional because channels that send media
+   * via URL (email, LINE image) can skip this step.
+   */
+  uploadMedia?(buffer: Buffer, mimeType: string, filename: string): Promise<UploadMediaResult>;
 };
 
 export type SendMessageInput = {
   to: string;                         // channel identifier
-  /** Freeform text body. */
+  /** Freeform text body. For media sends, this becomes the media caption. */
   body_text?: string;
-  /** Optional inline attachments. Ingest-created urls (public signed) preferred. */
-  attachments?: Array<{
-    url: string;
-    mime_type: string;
+  /** WhatsApp-only: pre-uploaded media send. One media per message. */
+  media?: {
+    media_id: string;
+    type: "image" | "document" | "audio" | "video";
     filename?: string;
-  }>;
+  };
   /** WhatsApp-only: template send. */
   template?: {
     name: string;
     language_code: "zh_CN" | "en_US";
     components?: unknown[];
   };
+};
+
+export type UploadMediaResult = {
+  /** true when creds missing — caller should flag the message as mocked. */
+  mocked: boolean;
+  media_id?: string;
+  error?: string;
 };
 
 export type ParsedWebhookResult = {

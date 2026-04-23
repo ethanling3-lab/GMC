@@ -7,6 +7,7 @@ import type {
   ParsedWebhookResult,
   SendMessageInput,
   SendResult,
+  UploadMediaResult,
 } from "./adapter";
 
 // WhatsApp Cloud API adapter. Handles:
@@ -249,7 +250,7 @@ async function downloadAttachment(mediaId: string): Promise<{ buffer: Buffer; mi
 async function sendMessage(payload: SendMessageInput): Promise<SendResult> {
   if (!isConfigured()) {
     console.log(
-      `[whatsapp:mock] to=${maskPhone(payload.to)} ${payload.template ? `template=${payload.template.name}` : `text=${(payload.body_text ?? "").slice(0, 40)}`}`,
+      `[whatsapp:mock] to=${maskPhone(payload.to)} ${payload.template ? `template=${payload.template.name}` : payload.media ? `media=${payload.media.type}:${payload.media.media_id}` : `text=${(payload.body_text ?? "").slice(0, 40)}`}`,
     );
     return { mocked: true };
   }
@@ -268,6 +269,22 @@ async function sendMessage(payload: SendMessageInput): Promise<SendResult> {
         components: payload.template.components ?? [],
       },
     };
+  } else if (payload.media) {
+    // Media send: one attachment per message. body_text becomes the caption
+    // (ignored by audio — Meta rejects captions on audio messages).
+    const mediaBlock: Record<string, unknown> = { id: payload.media.media_id };
+    if (payload.media.type !== "audio" && payload.body_text) {
+      mediaBlock.caption = payload.body_text;
+    }
+    if (payload.media.type === "document" && payload.media.filename) {
+      mediaBlock.filename = payload.media.filename;
+    }
+    body = {
+      messaging_product: "whatsapp",
+      to,
+      type: payload.media.type,
+      [payload.media.type]: mediaBlock,
+    };
   } else if (payload.body_text) {
     body = {
       messaging_product: "whatsapp",
@@ -276,7 +293,7 @@ async function sendMessage(payload: SendMessageInput): Promise<SendResult> {
       text: { body: payload.body_text },
     };
   } else {
-    return { mocked: false, error: "whatsapp send requires body_text or template" };
+    return { mocked: false, error: "whatsapp send requires body_text, media, or template" };
   }
 
   try {
@@ -306,6 +323,61 @@ function maskPhone(phone: string): string {
   const digits = phone.replace(/[^\d]/g, "");
   if (digits.length < 5) return "***";
   return digits.slice(0, 3) + "*".repeat(Math.max(1, digits.length - 5)) + digits.slice(-2);
+}
+
+// =============================================================================
+// Outbound media upload — POST bytes to /{phone_id}/media, receive media_id.
+// Meta size limits (2025): image 5MB, video 16MB, document 100MB, audio 16MB.
+// The inbox-attachments bucket caps at 10MB so we're under the image + audio
+// ceilings; document + video have headroom. Type mapping is the caller's
+// responsibility (send.ts maps from MIME).
+// =============================================================================
+
+async function uploadMedia(
+  buffer: Buffer,
+  mimeType: string,
+  filename: string,
+): Promise<UploadMediaResult> {
+  if (!isConfigured()) {
+    console.log(`[whatsapp:mock] upload mime=${mimeType} bytes=${buffer.byteLength} file=${filename}`);
+    return { mocked: true };
+  }
+
+  try {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", mimeType);
+    form.append(
+      "file",
+      new Blob([new Uint8Array(buffer)], { type: mimeType }),
+      filename,
+    );
+
+    const res = await fetch(
+      `${GRAPH_API}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+        },
+        body: form,
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      return { mocked: false, error: `whatsapp media upload ${res.status}: ${text.slice(0, 200)}` };
+    }
+    const json = (await res.json()) as { id?: string };
+    if (!json.id) {
+      return { mocked: false, error: "whatsapp media upload missing id" };
+    }
+    return { mocked: false, media_id: json.id };
+  } catch (err) {
+    return {
+      mocked: false,
+      error: err instanceof Error ? err.message : "whatsapp_media_upload_failed",
+    };
+  }
 }
 
 // =============================================================================
@@ -340,4 +412,5 @@ export const whatsappAdapter: ChannelAdapter = {
   parseWebhook,
   downloadAttachment,
   sendMessage,
+  uploadMedia,
 };

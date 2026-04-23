@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import { channelLabel } from "@/lib/inbox/format";
 import { ChannelGlyph } from "./ChannelGlyph";
@@ -9,17 +16,50 @@ import type {
   TemplateSummary,
 } from "@/lib/inbox/whatsapp-templates-types";
 
-// Reply composer. Two modes:
-//   - text: default free-form textarea (WhatsApp 24h window + LINE + future)
+// Reply composer. Three modes:
+//   - text: default free-form textarea with optional attachments (WhatsApp)
 //   - template: WhatsApp-only HSM template picker. Opens via the Templates
 //     button; auto-opens when a text send returns error_code=outside_window.
+//   - media: not a mode per se — attachments live alongside text and flip
+//     the send into the media path when present on submit.
 //
 // UX:
 //   - Enter to send in text mode, Shift+Enter for newline
 //   - Optimistic: clear textarea immediately, router.refresh() pulls the real
 //     row from the server
-//   - On send failure, text is restored + error banner
+//   - On send failure, text + attachment chips are restored + error banner
 //   - Outside-24h banner hands the admin directly into the template flow
+//   - Attachments: paperclip → file picker → parallel upload → chips. Send
+//     is disabled while any chip is still uploading.
+
+const ACCEPT_MIME = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+  "audio/mpeg",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/webm",
+] as const;
+
+const ACCEPT_ATTR = ACCEPT_MIME.join(",");
+const MAX_ATTACHMENTS = 10;
+const MAX_BYTES = 10 * 1024 * 1024;
+
+type PendingAttachment = {
+  clientId: string;
+  status: "uploading" | "ready" | "failed";
+  error?: string;
+  path?: string;
+  size: number;
+  mime_type: string;
+  filename: string;
+  abort: AbortController;
+};
+
+type MediaSummary = { sent: number; failed: number; total: number };
 
 export function MessageComposer({
   conversationId,
@@ -40,13 +80,17 @@ export function MessageComposer({
 }) {
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [value, setValue] = useState("");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<"outside_window" | "provider" | null>(null);
+  const [mediaSummary, setMediaSummary] = useState<MediaSummary | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const canUseTemplates = channel === "whatsapp";
+  const canAttach = channel === "whatsapp";
   const [mode, setMode] = useState<"text" | "template">("text");
 
   // Auto-grow the textarea. Cap the growth so the thread above stays visible.
@@ -57,52 +101,248 @@ export function MessageComposer({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value, mode]);
 
-  const sendText = useCallback(async () => {
+  // Abort any in-flight uploads on unmount.
+  useEffect(() => {
+    return () => {
+      attachments.forEach((a) => {
+        if (a.status === "uploading") a.abort.abort();
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hasUploading = attachments.some((a) => a.status === "uploading");
+  const readyAttachments = useMemo(
+    () => attachments.filter((a) => a.status === "ready"),
+    [attachments],
+  );
+
+  const uploadFile = useCallback(
+    async (item: PendingAttachment) => {
+      const form = new FormData();
+      form.append("conversation_id", conversationId);
+      // Re-attach the File object — pulling it from input.files since we don't
+      // want to store the File on state (breaks structured-clone in some envs).
+      // The upload queue is called right after setState, so we pass it through
+      // closure via the caller.
+      return form;
+    },
+    [conversationId],
+  );
+
+  const handleFiles = useCallback(
+    (files: FileList | File[]) => {
+      if (!canAttach || disabled) return;
+      setError(null);
+      setMediaSummary(null);
+
+      const picked = Array.from(files);
+      const slotsLeft = MAX_ATTACHMENTS - attachments.length;
+      if (picked.length > slotsLeft) {
+        setError(`Can only attach ${MAX_ATTACHMENTS} files per send.`);
+      }
+
+      const accepted = picked.slice(0, Math.max(0, slotsLeft));
+      const newPending: Array<{ pending: PendingAttachment; file: File }> = [];
+
+      for (const file of accepted) {
+        const mime = file.type || "application/octet-stream";
+        if (!ACCEPT_MIME.includes(mime as (typeof ACCEPT_MIME)[number])) {
+          setError(`${file.name}: unsupported file type (${mime}).`);
+          continue;
+        }
+        if (file.size > MAX_BYTES) {
+          setError(`${file.name}: file larger than 10 MB.`);
+          continue;
+        }
+        const abort = new AbortController();
+        const pending: PendingAttachment = {
+          clientId: (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`),
+          status: "uploading",
+          size: file.size,
+          mime_type: mime,
+          filename: file.name,
+          abort,
+        };
+        newPending.push({ pending, file });
+      }
+
+      if (newPending.length === 0) return;
+
+      setAttachments((prev) => [...prev, ...newPending.map((p) => p.pending)]);
+
+      // Fire uploads in parallel.
+      for (const { pending, file } of newPending) {
+        const form = new FormData();
+        form.append("conversation_id", conversationId);
+        form.append("file", file);
+
+        fetch(`/api/admin/inbox/attachments/upload`, {
+          method: "POST",
+          body: form,
+          signal: pending.abort.signal,
+        })
+          .then(async (res) => {
+            const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+            if (!res.ok) {
+              const detail = typeof body.detail === "string"
+                ? (body.detail as string)
+                : typeof body.error === "string"
+                  ? (body.error as string)
+                  : `Upload failed (${res.status})`;
+              setAttachments((prev) =>
+                prev.map((a) =>
+                  a.clientId === pending.clientId
+                    ? { ...a, status: "failed", error: detail }
+                    : a,
+                ),
+              );
+              return;
+            }
+            const path = typeof body.path === "string" ? (body.path as string) : undefined;
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.clientId === pending.clientId
+                  ? { ...a, status: "ready", path }
+                  : a,
+              ),
+            );
+          })
+          .catch((err: unknown) => {
+            if ((err as { name?: string })?.name === "AbortError") return;
+            const msg = err instanceof Error ? err.message : "Network error";
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.clientId === pending.clientId
+                  ? { ...a, status: "failed", error: msg }
+                  : a,
+              ),
+            );
+          });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attachments.length, canAttach, conversationId, disabled],
+  );
+
+  const removeAttachment = useCallback((clientId: string) => {
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.clientId === clientId);
+      if (target?.status === "uploading") target.abort.abort();
+      return prev.filter((a) => a.clientId !== clientId);
+    });
+  }, []);
+
+  const onOpenFilePicker = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const onFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        handleFiles(files);
+      }
+      // Reset so the same file can be re-picked later.
+      e.target.value = "";
+    },
+    [handleFiles],
+  );
+
+  const send = useCallback(async () => {
     const body = value.trim();
-    if (!body || sending || disabled) return;
-    const snapshot = value;
+    const hasReadyAtt = readyAttachments.length > 0;
+    const wouldSend = body.length > 0 || hasReadyAtt;
+    if (!wouldSend || sending || disabled || hasUploading) return;
+
+    const valueSnapshot = value;
+    const attSnapshot = attachments;
     setSending(true);
     setError(null);
     setErrorCode(null);
+    setMediaSummary(null);
     setValue("");
+    setAttachments([]);
+
     try {
+      const payload: Record<string, unknown> = {};
+      if (hasReadyAtt) {
+        payload.attachments = readyAttachments.map((a) => ({
+          path: a.path,
+          mime_type: a.mime_type,
+          filename: a.filename,
+          size: a.size,
+        }));
+        if (body) payload.body_text = body;
+      } else {
+        payload.body_text = body;
+      }
+
       const res = await fetch(`/api/admin/inbox/${conversationId}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ body_text: body }),
+        body: JSON.stringify(payload),
       });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+
       if (!res.ok) {
-        const detail = typeof payload.detail === "string"
-          ? (payload.detail as string)
-          : typeof payload.error === "string"
-            ? (payload.error as string)
+        const detail = typeof data.detail === "string"
+          ? (data.detail as string)
+          : typeof data.error === "string"
+            ? (data.error as string)
             : `Send failed (${res.status})`;
         setError(detail);
-        setValue(snapshot);
+        setValue(valueSnapshot);
+        setAttachments(attSnapshot);
         return;
       }
-      const softError = typeof payload.error === "string" ? (payload.error as string) : null;
-      const code = typeof payload.error_code === "string" ? (payload.error_code as string) : null;
-      if (softError) {
-        setError(softError);
-        if (code === "outside_window") {
-          setErrorCode("outside_window");
-          // Keep the draft so the admin can turn it into a template body.
-          setValue(snapshot);
-          if (canUseTemplates) setMode("template");
-        } else if (code === "provider") {
-          setErrorCode("provider");
+
+      // Media response has {kind: 'media', total, sent, failed, results}.
+      if (data.kind === "media") {
+        const total = Number(data.total ?? 0);
+        const sent = Number(data.sent ?? 0);
+        const failed = Number(data.failed ?? 0);
+        if (failed > 0 && sent === 0) {
+          const first = Array.isArray(data.results)
+            ? ((data.results as Array<{ error?: string }>)[0]?.error ?? null)
+            : null;
+          setError(first ?? "All attachments failed to send.");
+        } else if (failed > 0) {
+          setMediaSummary({ sent, failed, total });
+        }
+      } else {
+        const softError = typeof data.error === "string" ? (data.error as string) : null;
+        const code = typeof data.error_code === "string" ? (data.error_code as string) : null;
+        if (softError) {
+          setError(softError);
+          if (code === "outside_window") {
+            setErrorCode("outside_window");
+            setValue(valueSnapshot);
+            if (canUseTemplates) setMode("template");
+          } else if (code === "provider") {
+            setErrorCode("provider");
+          }
         }
       }
       startTransition(() => router.refresh());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
-      setValue(snapshot);
+      setValue(valueSnapshot);
+      setAttachments(attSnapshot);
     } finally {
       setSending(false);
     }
-  }, [canUseTemplates, conversationId, disabled, router, sending, value]);
+  }, [
+    attachments,
+    canUseTemplates,
+    conversationId,
+    disabled,
+    hasUploading,
+    readyAttachments,
+    router,
+    sending,
+    value,
+  ]);
 
   const busy = sending || isPending;
 
@@ -146,7 +386,7 @@ export function MessageComposer({
           value={value}
           setValue={setValue}
           busy={busy}
-          onSend={sendText}
+          onSend={send}
           textareaRef={textareaRef}
           canUseTemplates={canUseTemplates}
           onOpenTemplates={() => {
@@ -154,6 +394,12 @@ export function MessageComposer({
             setError(null);
             setErrorCode(null);
           }}
+          canAttach={canAttach}
+          onOpenFilePicker={onOpenFilePicker}
+          attachments={attachments}
+          removeAttachment={removeAttachment}
+          hasUploading={hasUploading}
+          readyCount={readyAttachments.length}
           errorBanner={
             error ? (
               <ErrorBanner
@@ -167,10 +413,24 @@ export function MessageComposer({
                     : undefined
                 }
               />
+            ) : mediaSummary ? (
+              <PartialMediaBanner summary={mediaSummary} />
             ) : null
           }
         />
       )}
+      {/* Hidden file input — always mounted so the ref is available even
+          while the template panel is visible (not needed today but cheap). */}
+      {canAttach ? (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPT_ATTR}
+          multiple
+          hidden
+          onChange={onFileInputChange}
+        />
+      ) : null}
     </div>
   );
 }
@@ -188,6 +448,12 @@ function TextPanel({
   textareaRef,
   canUseTemplates,
   onOpenTemplates,
+  canAttach,
+  onOpenFilePicker,
+  attachments,
+  removeAttachment,
+  hasUploading,
+  readyCount,
   errorBanner,
 }: {
   channel: string;
@@ -198,8 +464,15 @@ function TextPanel({
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   canUseTemplates: boolean;
   onOpenTemplates: () => void;
+  canAttach: boolean;
+  onOpenFilePicker: () => void;
+  attachments: PendingAttachment[];
+  removeAttachment: (id: string) => void;
+  hasUploading: boolean;
+  readyCount: number;
   errorBanner: React.ReactNode;
 }) {
+  const canSend = !busy && !hasUploading && (value.trim().length > 0 || readyCount > 0);
   return (
     <div className="flex items-start gap-3">
       <div
@@ -224,7 +497,11 @@ function TextPanel({
               onSend();
             }
           }}
-          placeholder={`Reply via ${channelLabel(channel)}… (Shift+Enter for newline)`}
+          placeholder={
+            attachments.length > 0
+              ? "Caption (optional — sent on the first attachment)"
+              : `Reply via ${channelLabel(channel)}… (Shift+Enter for newline)`
+          }
           rows={2}
           disabled={busy}
           className="block w-full resize-none bg-[var(--paper)] border border-[var(--paper-shadow)]
@@ -236,9 +513,44 @@ function TextPanel({
                      transition-[border-color,box-shadow] duration-[var(--dur-fast)]
                      disabled:opacity-60"
         />
+
+        {attachments.length > 0 ? (
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {attachments.map((a) => (
+              <li key={a.clientId}>
+                <AttachmentChip
+                  attachment={a}
+                  onRemove={() => removeAttachment(a.clientId)}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
         {errorBanner}
+
         <div className="mt-2 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {canAttach ? (
+              <button
+                type="button"
+                onClick={onOpenFilePicker}
+                disabled={busy}
+                title="Attach files (images, PDF, audio)"
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-pill)]
+                           border border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-soft)]
+                           text-[11px] tracking-[0.1em] uppercase
+                           hover:border-[var(--cinnabar)]/30 hover:text-[var(--ink)]
+                           focus-visible:shadow-[var(--shadow-focus)]
+                           disabled:opacity-40 disabled:cursor-not-allowed
+                           transition-[border-color,color] duration-[var(--dur-fast)]"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M8.5 5.5l-4 4a1.8 1.8 0 0 1-2.5-2.5l5-5a3 3 0 0 1 4.2 4.2l-5 5" />
+                </svg>
+                Attach
+              </button>
+            ) : null}
             {canUseTemplates ? (
               <button
                 type="button"
@@ -258,16 +570,22 @@ function TextPanel({
                 </svg>
                 Templates
               </button>
-            ) : (
+            ) : null}
+            {!canAttach && !canUseTemplates ? (
               <span className="text-[10.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
-                AI drafts · attachments ship later
+                AI drafts ship later
               </span>
-            )}
+            ) : null}
+            {hasUploading ? (
+              <span className="text-[10.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
+                Uploading…
+              </span>
+            ) : null}
           </div>
           <button
             type="button"
             onClick={onSend}
-            disabled={busy || value.trim().length === 0}
+            disabled={!canSend}
             className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
                        border border-[var(--cinnabar)]/40 bg-[var(--cinnabar)] text-[var(--paper-warm)]
                        text-[12px] tracking-[0.04em] font-medium
@@ -283,6 +601,90 @@ function TextPanel({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Attachment chip
+// -----------------------------------------------------------------------------
+
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: PendingAttachment;
+  onRemove: () => void;
+}) {
+  const sizeKb = Math.max(1, Math.round(attachment.size / 1024));
+  const sizeLabel = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
+  const isFailed = attachment.status === "failed";
+  const isUploading = attachment.status === "uploading";
+
+  const iconColor = isFailed
+    ? "text-[var(--cinnabar-deep)]"
+    : isUploading
+      ? "text-[var(--ink-faint)]"
+      : "text-[var(--cinnabar)]";
+
+  return (
+    <div
+      className={`inline-flex items-center gap-2 max-w-[260px] pl-2.5 pr-1.5 h-8 rounded-[var(--radius-pill)]
+                  border text-[11.5px]
+                  ${
+                    isFailed
+                      ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                      : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)]"
+                  }`}
+      title={attachment.error ?? `${attachment.filename} · ${sizeLabel}`}
+    >
+      <span className={`flex-none ${iconColor}`} aria-hidden="true">
+        {isUploading ? (
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" className="animate-spin">
+            <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.4" />
+            <path d="M9.5 5.5A4 4 0 0 0 5.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        ) : isFailed ? (
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="5.5" cy="5.5" r="4.2" />
+            <path d="M3.5 3.5l4 4M7.5 3.5l-4 4" />
+          </svg>
+        ) : (
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 1.5h4l2.5 2.5v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z" />
+            <path d="M6.5 1.5v2.5H9" />
+          </svg>
+        )}
+      </span>
+      <span className="truncate">{attachment.filename}</span>
+      <span className="flex-none text-[var(--ink-faint)] tabular-nums">{sizeLabel}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${attachment.filename}`}
+        className="flex-none ml-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full
+                   text-[var(--ink-mute)] hover:text-[var(--cinnabar-deep)] hover:bg-[var(--paper-deep)]
+                   transition-colors duration-[var(--dur-fast)]"
+      >
+        <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M2 2l5 5M7 2l-5 5" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Partial-failure banner (some attachments sent, some didn't).
+// -----------------------------------------------------------------------------
+
+function PartialMediaBanner({ summary }: { summary: MediaSummary }) {
+  return (
+    <div className="mt-2 rounded-[var(--radius-md)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] px-3 py-2 text-[12px] text-[var(--ink)]">
+      Sent {summary.sent} of {summary.total}.{" "}
+      {summary.failed > 0
+        ? `${summary.failed} failed — check the thread for the red dot and retry if needed.`
+        : null}
     </div>
   );
 }
@@ -320,7 +722,6 @@ function TemplatePanel({
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
 
-  // Load the registry once when the panel mounts.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -347,7 +748,6 @@ function TemplatePanel({
     };
   }, []);
 
-  // Ensure the selected template supports the chosen language; snap back if not.
   useEffect(() => {
     if (!selected) return;
     if (!selected.languages.includes(language)) {
@@ -355,7 +755,6 @@ function TemplatePanel({
     }
   }, [selected, language]);
 
-  // When admin picks a template, seed `name` from participant if not set yet.
   useEffect(() => {
     if (!selected) return;
     setParams((prev) => {
@@ -411,7 +810,6 @@ function TemplatePanel({
 
   return (
     <div>
-      {/* Header strip */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-start gap-3 min-w-0">
           <div
@@ -486,10 +884,6 @@ function TemplatePanel({
   );
 }
 
-// -----------------------------------------------------------------------------
-// Template list
-// -----------------------------------------------------------------------------
-
 function TemplateList({
   templates,
   onSelect,
@@ -538,10 +932,6 @@ function TemplateList({
     </ul>
   );
 }
-
-// -----------------------------------------------------------------------------
-// Template form: language toggle + param fields + preview + send
-// -----------------------------------------------------------------------------
 
 function TemplateForm({
   template,
@@ -724,10 +1114,6 @@ function LanguageToggle({
   );
 }
 
-// -----------------------------------------------------------------------------
-// Shared error banner
-// -----------------------------------------------------------------------------
-
 function ErrorBanner({
   text,
   code,
@@ -771,12 +1157,6 @@ function ErrorBanner({
   );
 }
 
-// -----------------------------------------------------------------------------
-// Client-side preview renderer. Kept minimal + local so the preview updates
-// instantly as the admin types — we don't round-trip to the server for it.
-// Must stay aligned with the `render` functions in the server registry.
-// -----------------------------------------------------------------------------
-
 function renderPreview(
   templateName: string,
   language: TemplateLanguage,
@@ -802,7 +1182,6 @@ function renderPreview(
         ? `${n("name")}，关于您的 GMC 报名「${n("event_title")}」— 很遗憾无法确认本次席位。`
         : `Dear ${n("name")}, regarding your GMC registration for ${n("event_title")} — we're unable to confirm a seat this time.`;
     default:
-      // Fallback — concatenate params so the admin still sees what will be sent.
       return Object.values(params).filter((v) => v.trim()).join(" · ");
   }
 }

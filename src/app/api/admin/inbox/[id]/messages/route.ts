@@ -12,10 +12,12 @@ export const runtime = "nodejs";
 // Body (one of):
 //   { body_text: string }
 //   { template: { name, language_code: "en_US"|"zh_CN", params: { [k]: string } } }
+//   { attachments: [{ path, mime_type, filename, size? }], body_text?: string }
 //
-// Sends an outbound text OR WhatsApp template on the conversation's channel.
-// If the conversation is unassigned, the first send auto-assigns it to the
-// admin — closes a small ops gap where replies should claim the thread.
+// Sends an outbound message on the conversation's channel. Templates +
+// attachments are WhatsApp-only. Attachments ship as one message each (WhatsApp
+// allows one media per message); body_text rides along as the caption on the
+// first attachment.
 
 const TextBody = z.object({
   body_text: z.string().trim().min(1).max(4000),
@@ -29,7 +31,19 @@ const TemplateBody = z.object({
   }),
 });
 
-const Body = z.union([TextBody, TemplateBody]);
+const AttachmentSchema = z.object({
+  path: z.string().trim().min(1).max(512),
+  mime_type: z.string().trim().min(1).max(128),
+  filename: z.string().trim().min(1).max(256),
+  size: z.number().int().nonnegative().optional(),
+});
+
+const MediaBody = z.object({
+  attachments: z.array(AttachmentSchema).min(1).max(10),
+  body_text: z.string().trim().max(1024).optional(),
+});
+
+const Body = z.union([MediaBody, TemplateBody, TextBody]);
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -70,9 +84,6 @@ export async function POST(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  // Template send is WhatsApp-only — reject early with a clear 400 rather
-  // than letting send.ts throw. LINE has its own richer flows we'll handle
-  // when we actually wire LINE push templates.
   if ("template" in parsed && conv.channel !== "whatsapp") {
     return NextResponse.json(
       {
@@ -81,6 +92,31 @@ export async function POST(req: Request, { params }: RouteCtx) {
       },
       { status: 400 },
     );
+  }
+  if ("attachments" in parsed && conv.channel !== "whatsapp") {
+    return NextResponse.json(
+      {
+        error: "unsupported_channel",
+        detail: "Attachment send is only supported on WhatsApp threads.",
+      },
+      { status: 400 },
+    );
+  }
+  // Scope attachment paths to this conversation so a compromised admin UI
+  // can't post a path that belongs to another thread's outbound folder.
+  if ("attachments" in parsed) {
+    const expectedPrefix = `${conv.channel}/${conversationId}/outbound/`;
+    for (const a of parsed.attachments) {
+      if (!a.path.startsWith(expectedPrefix)) {
+        return NextResponse.json(
+          {
+            error: "invalid_attachment_path",
+            detail: `Attachment path must live under ${expectedPrefix}`,
+          },
+          { status: 400 },
+        );
+      }
+    }
   }
 
   if (!conv.assigned_to) {
@@ -102,23 +138,33 @@ export async function POST(req: Request, { params }: RouteCtx) {
   }
 
   try {
-    const result = await sendOutboundMessage(
-      "template" in parsed
-        ? {
-            kind: "template",
-            conversationId,
-            senderAdminId: admin.id,
-            templateName: parsed.template.name,
-            languageCode: parsed.template.language_code,
-            params: parsed.template.params,
-          }
-        : {
-            kind: "text",
-            conversationId,
-            senderAdminId: admin.id,
-            bodyText: parsed.body_text,
-          },
-    );
+    if ("attachments" in parsed) {
+      const result = await sendOutboundMessage({
+        kind: "media",
+        conversationId,
+        senderAdminId: admin.id,
+        bodyText: parsed.body_text,
+        attachments: parsed.attachments,
+      });
+      return NextResponse.json({ ok: true, ...result });
+    }
+    if ("template" in parsed) {
+      const result = await sendOutboundMessage({
+        kind: "template",
+        conversationId,
+        senderAdminId: admin.id,
+        templateName: parsed.template.name,
+        languageCode: parsed.template.language_code,
+        params: parsed.template.params,
+      });
+      return NextResponse.json({ ok: true, ...result });
+    }
+    const result = await sendOutboundMessage({
+      kind: "text",
+      conversationId,
+      senderAdminId: admin.id,
+      bodyText: parsed.body_text,
+    });
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "send_failed";

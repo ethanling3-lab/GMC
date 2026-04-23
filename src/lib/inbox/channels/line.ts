@@ -204,27 +204,16 @@ async function sendMessage(payload: SendMessageInput): Promise<SendResult> {
     return { mocked: true };
   }
 
-  // LINE doesn't accept templates the same way WhatsApp does — we send text +
-  // optional image messages. Payload.template is ignored here.
+  // LINE doesn't accept templates or attachments the same way WhatsApp does —
+  // Wave 2a ships text-only. Media + quick-reply support lands later alongside
+  // LINE rich-message templates.
   const messages: Array<Record<string, unknown>> = [];
   if (payload.body_text) {
     messages.push({ type: "text", text: payload.body_text });
   }
-  for (const att of payload.attachments ?? []) {
-    if (att.mime_type.startsWith("image/")) {
-      messages.push({
-        type: "image",
-        originalContentUrl: att.url,
-        previewImageUrl: att.url,
-      });
-    } else {
-      // Non-image attachments: fall through — LINE requires uploaded content.
-      messages.push({ type: "text", text: `[attachment] ${att.filename ?? att.url}` });
-    }
-  }
 
   if (messages.length === 0) {
-    return { mocked: false, error: "line send requires body_text or attachments" };
+    return { mocked: false, error: "line send requires body_text" };
   }
 
   try {
