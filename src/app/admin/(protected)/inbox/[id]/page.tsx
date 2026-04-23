@@ -14,6 +14,8 @@ import {
 } from "@/lib/inbox/format";
 import { ChannelGlyph } from "@/components/admin/inbox/ChannelGlyph";
 import { MessageBubble } from "@/components/admin/inbox/MessageBubble";
+import { MessageComposer } from "@/components/admin/inbox/MessageComposer";
+import { MarkReadOnMount } from "@/components/admin/inbox/MarkReadOnMount";
 import { ParticipantCard } from "@/components/admin/inbox/ParticipantCard";
 
 export const metadata: Metadata = { title: "Conversation" };
@@ -41,6 +43,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
 
   return (
     <div>
+      <MarkReadOnMount conversationId={conversation.id} />
       {/* Breadcrumb */}
       <div className="mb-5">
         <Link
@@ -131,14 +134,16 @@ export default async function InboxThreadPage({ params }: PageProps) {
             )}
           </div>
 
-          {/* Composer placeholder — Wave 2 lands the reply box. */}
-          <div className="border-t border-[var(--paper-shadow)] bg-[var(--paper)]/60 px-5 py-4 text-[11.5px] tracking-[0.16em] uppercase text-[var(--ink-faint)] flex items-center gap-2">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-              <circle cx="6" cy="6" r="4.5" />
-              <path d="M6 4v2.5L7.5 7" />
-            </svg>
-            Reply composer + AI drafts ship in Wave 2
-          </div>
+          <MessageComposer
+            conversationId={conversation.id}
+            channel={conversation.channel}
+            disabled={conversation.status === "closed"}
+            disabledReason={
+              conversation.status === "closed"
+                ? "Thread is closed — reopen before replying"
+                : undefined
+            }
+          />
         </section>
 
         {/* Participant rail */}
