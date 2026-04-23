@@ -151,7 +151,7 @@ async function sendSingle(args: {
     if (channel !== "whatsapp") {
       throw new Error(`send: template send is WhatsApp-only (channel=${channel})`);
     }
-    const def = findTemplate(input.templateName);
+    const def = await findTemplate(input.templateName);
     if (!def) {
       throw new Error(`send: unknown template '${input.templateName}'`);
     }

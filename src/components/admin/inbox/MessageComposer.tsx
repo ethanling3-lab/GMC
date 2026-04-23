@@ -11,9 +11,10 @@ import {
 import { useRouter } from "next/navigation";
 import { channelLabel } from "@/lib/inbox/format";
 import { ChannelGlyph } from "./ChannelGlyph";
-import type {
-  TemplateLanguage,
-  TemplateSummary,
+import {
+  renderTemplateBody,
+  type TemplateLanguage,
+  type TemplateSummary,
 } from "@/lib/inbox/whatsapp-templates-types";
 
 // Reply composer. Three modes:
@@ -714,39 +715,46 @@ function TemplatePanel({
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<TemplateSummary | null>(null);
   const [language, setLanguage] = useState<TemplateLanguage>(defaultLanguage);
-  const [params, setParams] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
-    if (participantName) init.name = participantName;
-    return init;
-  });
+  const [params, setParams] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadTemplates = useCallback(async (refresh = false) => {
+    try {
+      if (refresh) setRefreshing(true);
+      const url = refresh
+        ? "/api/admin/inbox/templates?refresh=1"
+        : "/api/admin/inbox/templates";
+      const res = await fetch(url, { cache: "no-store" });
+      const body = (await res.json().catch(() => ({}))) as {
+        templates?: TemplateSummary[];
+        detail?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        setLoadErr(body.detail ?? body.error ?? `Load failed (${res.status})`);
+        return;
+      }
+      setLoadErr(null);
+      setTemplates(body.templates ?? []);
+    } catch (err) {
+      setLoadErr(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch("/api/admin/inbox/templates", { cache: "no-store" });
-        const body = (await res.json().catch(() => ({}))) as {
-          templates?: TemplateSummary[];
-          detail?: string;
-          error?: string;
-        };
-        if (cancelled) return;
-        if (!res.ok) {
-          setLoadErr(body.detail ?? body.error ?? `Load failed (${res.status})`);
-          return;
-        }
-        setTemplates(body.templates ?? []);
-      } catch (err) {
-        if (cancelled) return;
-        setLoadErr(err instanceof Error ? err.message : "Network error");
-      }
+      if (cancelled) return;
+      await loadTemplates();
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadTemplates]);
 
   useEffect(() => {
     if (!selected) return;
@@ -755,18 +763,24 @@ function TemplatePanel({
     }
   }, [selected, language]);
 
+  // Prefill the "Participant name" slot when available. Our six known
+  // templates map variable_1 → participant name via the override labels;
+  // detect by inspecting the label rather than hardcoding template names.
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || !participantName) return;
+    const nameSlot = selected.params.find((p) =>
+      p.label_en.toLowerCase().includes("participant name"),
+    );
+    if (!nameSlot) return;
     setParams((prev) => {
-      const next = { ...prev };
-      if (!next.name && participantName) next.name = participantName;
-      return next;
+      if ((prev[nameSlot.key] ?? "").trim()) return prev;
+      return { ...prev, [nameSlot.key]: participantName };
     });
   }, [selected, participantName]);
 
   const preview = useMemo(() => {
     if (!selected) return "";
-    return renderPreview(selected.name, language, params);
+    return renderTemplateBody(selected.body_by_language[language], params);
   }, [selected, language, params]);
 
   async function handleSend() {
@@ -845,8 +859,16 @@ function TemplatePanel({
       </div>
 
       {loadErr ? (
-        <div className="rounded-[var(--radius-md)] border border-[var(--cinnabar)]/30 bg-[var(--cinnabar-wash)] px-3 py-2 text-[12px] text-[var(--cinnabar-deep)]">
-          {loadErr}
+        <div className="rounded-[var(--radius-md)] border border-[var(--cinnabar)]/30 bg-[var(--cinnabar-wash)] px-3 py-2 text-[12px] text-[var(--cinnabar-deep)] flex items-start justify-between gap-3">
+          <span className="min-w-0 break-words">{loadErr}</span>
+          <button
+            type="button"
+            onClick={() => loadTemplates(true)}
+            disabled={refreshing}
+            className="flex-none text-[10.5px] tracking-[0.14em] uppercase underline underline-offset-2 hover:no-underline disabled:opacity-40"
+          >
+            {refreshing ? "Retrying…" : "Retry"}
+          </button>
         </div>
       ) : !templates ? (
         <div className="text-[12px] text-[var(--ink-faint)] tracking-[0.08em] uppercase py-2">
@@ -878,6 +900,8 @@ function TemplatePanel({
               t.languages.includes(defaultLanguage) ? defaultLanguage : t.languages[0],
             );
           }}
+          onRefresh={() => loadTemplates(true)}
+          refreshing={refreshing}
         />
       )}
     </div>
@@ -887,20 +911,48 @@ function TemplatePanel({
 function TemplateList({
   templates,
   onSelect,
+  onRefresh,
+  refreshing,
 }: {
   templates: TemplateSummary[];
   onSelect: (t: TemplateSummary) => void;
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
   if (templates.length === 0) {
     return (
-      <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)] px-4 py-5 text-[12.5px] text-[var(--ink-mute)]">
-        No templates are registered yet. Submit templates in Meta Business Manager, then add them to <code className="font-mono text-[11.5px]">src/lib/inbox/whatsapp-templates.ts</code>.
+      <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)] px-4 py-5 text-[12.5px] text-[var(--ink-mute)] flex items-start justify-between gap-3">
+        <span>
+          No approved templates found. Submit + approve templates in Meta Business Manager, then hit Refresh.
+        </span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="flex-none text-[10.5px] tracking-[0.14em] uppercase underline underline-offset-2 hover:no-underline disabled:opacity-40"
+        >
+          {refreshing ? "Syncing…" : "Refresh"}
+        </button>
       </div>
     );
   }
 
   return (
-    <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[240px] overflow-y-auto pr-1">
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
+          {templates.length} approved · synced from Meta
+        </span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="text-[10.5px] tracking-[0.14em] uppercase text-[var(--ink-mute)] hover:text-[var(--ink)] disabled:opacity-40 transition-colors duration-[var(--dur-fast)]"
+        >
+          {refreshing ? "Syncing…" : "Refresh"}
+        </button>
+      </div>
+      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[240px] overflow-y-auto pr-1">
       {templates.map((t) => (
         <li key={t.name}>
           <button
@@ -929,7 +981,8 @@ function TemplateList({
           </button>
         </li>
       ))}
-    </ul>
+      </ul>
+    </div>
   );
 }
 
@@ -1157,31 +1210,3 @@ function ErrorBanner({
   );
 }
 
-function renderPreview(
-  templateName: string,
-  language: TemplateLanguage,
-  params: Record<string, string>,
-): string {
-  const n = (k: string) => (params[k] ?? "").trim();
-  const isZh = language === "zh_CN";
-
-  switch (templateName) {
-    case "gmc_enrollment_approved":
-      return isZh
-        ? `${n("name")}，您的 GMC 报名「${n("event_title")}」已获批准。应付金额：${n("amount")}。付款链接：${n("payment_url")}`
-        : `Dear ${n("name")}, your GMC registration for ${n("event_title")} is approved. Amount due: ${n("amount")}. Complete payment: ${n("payment_url")}`;
-    case "gmc_payment_received":
-      return isZh
-        ? `${n("name")}，已收到您的付款「${n("event_title")}」。金额：${n("amount")}。`
-        : `${n("name")}, we've received your payment for ${n("event_title")}. Amount: ${n("amount")}.`;
-    case "gmc_enrollment_rejected_no_seats":
-    case "gmc_enrollment_rejected_duplicate":
-    case "gmc_enrollment_rejected_unsuitable":
-    case "gmc_enrollment_rejected_other":
-      return isZh
-        ? `${n("name")}，关于您的 GMC 报名「${n("event_title")}」— 很遗憾无法确认本次席位。`
-        : `Dear ${n("name")}, regarding your GMC registration for ${n("event_title")} — we're unable to confirm a seat this time.`;
-    default:
-      return Object.values(params).filter((v) => v.trim()).join(" · ");
-  }
-}

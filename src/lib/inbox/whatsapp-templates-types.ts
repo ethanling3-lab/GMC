@@ -25,7 +25,25 @@ export type TemplateSummary = {
   description_cn: string;
   languages: readonly TemplateLanguage[];
   params: readonly TemplateParamSpec[];
+  /**
+   * Raw Meta body text, keyed by language. Contains positional {{1}}, {{2}}
+   * placeholders — the composer substitutes params[`variable_N`] client-side
+   * so previews update as the admin types.
+   */
+  body_by_language: Readonly<Partial<Record<TemplateLanguage, string>>>;
 };
+
+/** Substitute {{1}}, {{2}} placeholders with variable_1, variable_2, ... values. */
+export function renderTemplateBody(
+  body: string | null | undefined,
+  params: Record<string, string>,
+): string {
+  if (!body) return "";
+  return body.replace(/\{\{(\d+)\}\}/g, (_, n) => {
+    const v = params[`variable_${n}`];
+    return (v ?? "").trim();
+  });
+}
 
 // Meta error codes that indicate "pick a template" — used by send.ts to
 // classify 24-hour-window failures so the composer can prompt the admin.
