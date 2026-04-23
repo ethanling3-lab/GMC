@@ -9,15 +9,27 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // POST /api/admin/inbox/[id]/messages
-// Body: { body_text: string }
+// Body (one of):
+//   { body_text: string }
+//   { template: { name, language_code: "en_US"|"zh_CN", params: { [k]: string } } }
 //
-// Sends an outbound text message on the conversation's channel. If the
-// conversation is unassigned, the first send auto-assigns it to the admin —
-// closes a small ops gap where replies should claim the thread.
+// Sends an outbound text OR WhatsApp template on the conversation's channel.
+// If the conversation is unassigned, the first send auto-assigns it to the
+// admin — closes a small ops gap where replies should claim the thread.
 
-const Body = z.object({
+const TextBody = z.object({
   body_text: z.string().trim().min(1).max(4000),
 });
+
+const TemplateBody = z.object({
+  template: z.object({
+    name: z.string().trim().min(1).max(128),
+    language_code: z.enum(["en_US", "zh_CN"]),
+    params: z.record(z.string(), z.string().max(1024)).default({}),
+  }),
+});
+
+const Body = z.union([TextBody, TemplateBody]);
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -36,9 +48,9 @@ export async function POST(req: Request, { params }: RouteCtx) {
 
   const { id: conversationId } = await params;
 
-  let body: z.infer<typeof Body>;
+  let parsed: z.infer<typeof Body>;
   try {
-    body = Body.parse(await req.json());
+    parsed = Body.parse(await req.json());
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Invalid payload";
     return NextResponse.json({ error: "validation_error", detail: msg }, { status: 400 });
@@ -46,12 +58,9 @@ export async function POST(req: Request, { params }: RouteCtx) {
 
   const service = createSupabaseServiceClient();
 
-  // Verify the conversation exists — the RLS for UPDATE on conversations
-  // would block a non-privileged admin anyway, but we want to 404 rather
-  // than 403 when the id is bogus.
   const { data: conv, error: convErr } = await service
     .from("conversations")
-    .select("id, assigned_to")
+    .select("id, assigned_to, channel")
     .eq("id", conversationId)
     .maybeSingle();
   if (convErr) {
@@ -61,8 +70,19 @@ export async function POST(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  // Auto-assign on first reply. A separate step so the audit log captures it
-  // as its own event, and so the assignment lands even if the send errors.
+  // Template send is WhatsApp-only — reject early with a clear 400 rather
+  // than letting send.ts throw. LINE has its own richer flows we'll handle
+  // when we actually wire LINE push templates.
+  if ("template" in parsed && conv.channel !== "whatsapp") {
+    return NextResponse.json(
+      {
+        error: "unsupported_channel",
+        detail: "Template send is only supported on WhatsApp threads.",
+      },
+      { status: 400 },
+    );
+  }
+
   if (!conv.assigned_to) {
     const { error: assignErr } = await service
       .from("conversations")
@@ -82,11 +102,23 @@ export async function POST(req: Request, { params }: RouteCtx) {
   }
 
   try {
-    const result = await sendOutboundMessage({
-      conversationId,
-      senderAdminId: admin.id,
-      bodyText: body.body_text,
-    });
+    const result = await sendOutboundMessage(
+      "template" in parsed
+        ? {
+            kind: "template",
+            conversationId,
+            senderAdminId: admin.id,
+            templateName: parsed.template.name,
+            languageCode: parsed.template.language_code,
+            params: parsed.template.params,
+          }
+        : {
+            kind: "text",
+            conversationId,
+            senderAdminId: admin.id,
+            bodyText: parsed.body_text,
+          },
+    );
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "send_failed";

@@ -12,7 +12,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const admin = await requireAdmin();
-  if (admin.role !== "super_admin" && admin.role !== "regional_lead") {
+  if (
+    admin.role !== "super_admin" &&
+    admin.role !== "regional_lead" &&
+    admin.role !== "customer_service"
+  ) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
@@ -21,6 +25,9 @@ export async function GET(req: Request) {
   if (q.length < 2) {
     return NextResponse.json({ rows: [] });
   }
+  // Allow callers (e.g. the lead-merge picker) to hide leads from results
+  // without having to filter client-side over a possibly-capped page.
+  const excludeStatus = url.searchParams.get("exclude_status")?.trim() ?? "";
 
   const supabase = await createSupabaseServerClient();
   const needle = `%${q.replace(/[%_]/g, "\\$&")}%`;
@@ -40,6 +47,9 @@ export async function GET(req: Request) {
     .is("archived_at", null)
     .order("created_at", { ascending: false })
     .limit(12);
+  if (excludeStatus) {
+    query = query.neq("status", excludeStatus);
+  }
   query = applyRoleScope(query, admin.role, admin.id, admin.region);
 
   const { data, error } = await query;

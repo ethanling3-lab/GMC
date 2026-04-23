@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ConversationListRow, EnrollmentSummary } from "@/lib/inbox/inbox-query";
 import { participantDisplay } from "@/lib/inbox/format";
+import { MergeLeadButton } from "./MergeLeadButton";
 
 // Right-rail card for the thread view. Shows:
 //   - Participant identity (name, region_id, status chip, email, phone)
@@ -56,8 +57,11 @@ export function ParticipantCard({
           </span>
         </div>
         {isLead ? (
-          <div className="mt-2 inline-flex items-center gap-1.5 h-[20px] px-2 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.2em] uppercase text-[var(--ink)]">
-            Lead · needs linking
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center h-[20px] px-2 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.2em] uppercase text-[var(--ink)]">
+              Lead
+            </span>
+            <MergeLeadButton leadId={participant.id} leadDisplay={displayName} />
           </div>
         ) : null}
 

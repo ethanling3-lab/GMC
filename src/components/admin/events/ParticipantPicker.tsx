@@ -21,15 +21,26 @@ type Props = {
   /** Optional initial query so the picker pre-loads results. */
   initialQ?: string;
   disabled?: boolean;
+  /** Extra query params appended to the search URL (e.g. exclude_status=lead). */
+  extraSearchParams?: Record<string, string>;
 };
 
-export function ParticipantPicker({ value, onPick, initialQ = "", disabled }: Props) {
+export function ParticipantPicker({
+  value,
+  onPick,
+  initialQ = "",
+  disabled,
+  extraSearchParams,
+}: Props) {
   const [q, setQ] = useState(initialQ);
   const [rows, setRows] = useState<ParticipantHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Stable dep for the effect below — parents can pass a fresh object literal
+  // every render without restarting the debounce timer.
+  const extraParamsKey = extraSearchParams ? JSON.stringify(extraSearchParams) : "";
 
   // Debounced fetch.
   useEffect(() => {
@@ -48,8 +59,14 @@ export function ParticipantPicker({ value, onPick, initialQ = "", disabled }: Pr
       setLoading(true);
       setError(null);
       try {
+        const sp = new URLSearchParams({ q: trimmed });
+        if (extraSearchParams) {
+          for (const [k, v] of Object.entries(extraSearchParams)) {
+            if (v) sp.set(k, v);
+          }
+        }
         const res = await fetch(
-          `/api/admin/participants/search?q=${encodeURIComponent(trimmed)}`,
+          `/api/admin/participants/search?${sp.toString()}`,
           { signal: ctrl.signal },
         );
         const payload = await res.json();
@@ -67,7 +84,8 @@ export function ParticipantPicker({ value, onPick, initialQ = "", disabled }: Pr
       }
     }, 220);
     return () => clearTimeout(t);
-  }, [q, value]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, value, extraParamsKey]);
 
   if (value) {
     return (

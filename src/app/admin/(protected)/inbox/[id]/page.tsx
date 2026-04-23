@@ -153,6 +153,12 @@ export default async function InboxThreadPage({ params }: PageProps) {
                 ? "Thread is closed — reopen before replying"
                 : undefined
             }
+            participantName={
+              (p?.name_en ?? p?.name_cn ?? "").trim() || undefined
+            }
+            defaultTemplateLanguage={
+              p?.language === "zh" ? "zh_CN" : "en_US"
+            }
           />
         </section>
 
