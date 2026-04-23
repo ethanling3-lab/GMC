@@ -6,7 +6,8 @@ export type ParticipantStatus =
   | "info_verified"
   | "cs_enriched"
   | "active"
-  | "inactive";
+  | "inactive"
+  | "lead";
 
 export type MotivationTag =
   | "clean"
@@ -33,6 +34,7 @@ const STATUS_VALUES: ParticipantStatus[] = [
   "cs_enriched",
   "active",
   "inactive",
+  "lead",
 ];
 
 const MOTIVATION_VALUES: MotivationTag[] = [
@@ -134,6 +136,14 @@ export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any
 
   if (filters.region) q = q.eq("region", filters.region);
   if (filters.status) q = q.eq("status", filters.status);
+  else {
+    // Hide inbox-created leads from the student master by default. Leads are
+    // pre-participants (autocreated from first WhatsApp/LINE inbound) and
+    // don't belong in the roster until an admin links them to a real
+    // participant. Admins can still reach them via an explicit `?status=lead`
+    // filter on the URL.
+    q = q.not("status", "eq", "lead");
+  }
   if (filters.motivation) q = q.eq("motivation_tag", filters.motivation);
 
   // Archived scope — default excludes archived.

@@ -6,6 +6,7 @@ export const STATUS_LABEL: Record<ParticipantStatus, { en: string; zh: string }>
   cs_enriched: { en: "CS Enriched", zh: "资料完善" },
   active: { en: "Active", zh: "活跃" },
   inactive: { en: "Inactive", zh: "停用" },
+  lead: { en: "Lead", zh: "潜在" },
 };
 
 const TONE: Record<
@@ -41,6 +42,12 @@ const TONE: Record<
     bg: "bg-[var(--paper)]",
     ring: "border-[var(--paper-shadow)]",
     text: "text-[var(--ink-mute)]",
+  },
+  lead: {
+    dot: "bg-[var(--gold)]",
+    bg: "bg-[var(--gold-soft)]",
+    ring: "border-[var(--gold)]/40",
+    text: "text-[var(--ink)]",
   },
 };
 

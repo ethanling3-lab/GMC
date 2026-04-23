@@ -39,6 +39,7 @@ const STATUS_LABEL: Record<ParticipantStatus, string> = {
   cs_enriched: "CS Enriched",
   active: "Active",
   inactive: "Inactive",
+  lead: "Lead",
 };
 
 const STATUS_ZH: Record<ParticipantStatus, string> = {
@@ -47,6 +48,7 @@ const STATUS_ZH: Record<ParticipantStatus, string> = {
   cs_enriched: "资料完善",
   active: "活跃",
   inactive: "停用",
+  lead: "潜在",
 };
 
 const STATUS_TONE: Record<
@@ -83,8 +85,17 @@ const STATUS_TONE: Record<
     ring: "border-[var(--paper-shadow)]",
     text: "text-[var(--ink-mute)]",
   },
+  lead: {
+    dot: "bg-[var(--gold)]",
+    bg: "bg-[var(--gold-soft)]",
+    ring: "border-[var(--gold)]/40",
+    text: "text-[var(--ink)]",
+  },
 };
 
+// Bulk-action menu shows only statuses an admin can manually pick. `lead` is
+// system-created from the inbox ingest and should only transition out via
+// explicit "Merge with existing participant" flow — not a bulk reassign.
 const ALL_STATUSES: ParticipantStatus[] = [
   "new",
   "info_verified",
