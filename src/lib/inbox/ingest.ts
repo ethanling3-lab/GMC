@@ -4,6 +4,7 @@ import { writeAuditLog } from "@/lib/audit";
 import { resolveIdentity } from "./identity";
 import { getAdapter, type ChannelKey } from "./channels";
 import type { ParsedInboundMessage, ParsedWebhookResult } from "./channels/adapter";
+import { runTier1Reply } from "./ai/tier1";
 
 // Channel-agnostic inbound pipeline. Call from each webhook route after
 // signature verification. Idempotent: the same webhook payload can be
@@ -200,6 +201,41 @@ async function processInboundMessage(
       attachment_count: storedAttachments.length,
     },
   });
+
+  // 7. If AI is enabled on this conversation and the message is plain text
+  //    (no attachments — Tier 1 doesn't handle media), fire the Tier 1
+  //    responder. Runs inline — Meta's webhook timeout is generous enough
+  //    for Claude to return within it. If AI calls handoff_to_human, the
+  //    function will flip ai_enabled off itself.
+  if (storedAttachments.length === 0 && msg.body_text && msg.body_text.trim()) {
+    const { data: conv } = await service
+      .from("conversations")
+      .select("ai_enabled, participant:participants(language)")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (conv?.ai_enabled) {
+      const participantLang = (
+        (conv as { participant?: { language?: string | null } | null }).participant?.language ?? null
+      ) as string | null;
+      try {
+        await runTier1Reply({
+          conversationId,
+          messageId: messageInsert.data.id as string,
+          participantLanguage:
+            participantLang === "zh" ? "zh" : participantLang === "en" ? "en" : null,
+          inboundText: msg.body_text,
+        });
+      } catch (err) {
+        // Failure inside Tier 1 already handoffs the conversation; here we
+        // just swallow so the webhook still returns 200 and Meta doesn't
+        // retry-bomb a message we've already persisted.
+        console.warn(
+          "[tier1] run failed, conversation already handed off:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  }
 
   return "inserted";
 }

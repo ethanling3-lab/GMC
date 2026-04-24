@@ -18,6 +18,7 @@ import { MessageComposer } from "@/components/admin/inbox/MessageComposer";
 import { MarkReadOnMount } from "@/components/admin/inbox/MarkReadOnMount";
 import { ScrollAnchor } from "@/components/admin/inbox/ScrollAnchor";
 import { ParticipantCard } from "@/components/admin/inbox/ParticipantCard";
+import { AiAssistantToggle } from "@/components/admin/inbox/AiAssistantToggle";
 
 export const metadata: Metadata = { title: "Conversation" };
 export const dynamic = "force-dynamic";
@@ -100,7 +101,12 @@ export default async function InboxThreadPage({ params }: PageProps) {
               ) : null}
             </div>
           </div>
-          <div className="flex items-stretch gap-3">
+          <div className="flex items-stretch gap-3 flex-wrap">
+            <AiAssistantToggle
+              conversationId={conversation.id}
+              initialEnabled={Boolean(conversation.ai_enabled)}
+              channel={conversation.channel}
+            />
             <span
               className={`inline-flex items-center h-8 px-3 rounded-[var(--radius-pill)] border text-[10.5px] tracking-[0.18em] uppercase ${toneClasses(statusTone)}`}
             >

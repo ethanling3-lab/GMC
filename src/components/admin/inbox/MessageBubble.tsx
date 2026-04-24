@@ -50,7 +50,7 @@ export function MessageBubble({
       ) : (
         <li className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
           <div className={`max-w-[72%] min-w-[120px] ${isOutbound ? "items-end" : "items-start"} flex flex-col`}>
-            {!isOutbound && m.sender_type === "ai_agent" ? (
+            {m.sender_type === "ai_agent" ? (
               <span className="mb-1 text-[9.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
                 AI agent
               </span>
