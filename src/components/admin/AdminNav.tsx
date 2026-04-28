@@ -28,7 +28,7 @@ const PRIMARY: NavItem[] = [
 ];
 
 const UPCOMING: NavItem[] = [
-  { href: "/admin/transfer-lists", label: "Transfer lists", labelZh: "接送列表", icon: "transfer", soon: true },
+  { href: "/admin/transfer-lists", label: "Transfer lists", labelZh: "接送列表", icon: "transfer" },
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -226,7 +226,7 @@ export function AdminNav({ collapsed = false }: { collapsed?: boolean }) {
       <div>
         {!collapsed ? (
           <div className="px-4 pb-2 text-[9px] tracking-[0.28em] uppercase text-[var(--ink-faint)]">
-            Roadmap
+            Logistics
           </div>
         ) : (
           <div
@@ -237,7 +237,11 @@ export function AdminNav({ collapsed = false }: { collapsed?: boolean }) {
         <ul className="space-y-0.5">
           {UPCOMING.map((item) => (
             <li key={item.href}>
-              <Item item={item} active={false} collapsed={collapsed} />
+              <Item
+                item={item}
+                active={isActive(pathname, item.href)}
+                collapsed={collapsed}
+              />
             </li>
           ))}
         </ul>

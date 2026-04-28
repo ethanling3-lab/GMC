@@ -49,7 +49,9 @@ export type AuditAction =
   | "inbox.flight_info_extracted"
   | "inbox.flight_info_confirmed"
   | "transfer_list.generated"
-  | "transfer_list.finalized";
+  | "transfer_list.finalized"
+  | "transfer_list.deleted"
+  | "transfer_list.exported";
 
 export type WriteAuditLog = {
   actor_id: string | null;

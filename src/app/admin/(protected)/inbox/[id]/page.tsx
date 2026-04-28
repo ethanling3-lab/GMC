@@ -19,6 +19,8 @@ import { MarkReadOnMount } from "@/components/admin/inbox/MarkReadOnMount";
 import { ScrollAnchor } from "@/components/admin/inbox/ScrollAnchor";
 import { ParticipantCard } from "@/components/admin/inbox/ParticipantCard";
 import { AiAssistantToggle } from "@/components/admin/inbox/AiAssistantToggle";
+import { FlightInfoPanel } from "@/components/admin/inbox/FlightInfoPanel";
+import { loadFlightInfoForParticipant } from "@/lib/inbox/flight-info-query";
 
 export const metadata: Metadata = { title: "Conversation" };
 export const dynamic = "force-dynamic";
@@ -36,6 +38,9 @@ export default async function InboxThreadPage({ params }: PageProps) {
   if (!detail) notFound();
 
   const { conversation, messages, enrollments } = detail;
+  const flightRows = conversation.participant_id
+    ? await loadFlightInfoForParticipant(supabase, conversation.participant_id)
+    : [];
   const p = conversation.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
@@ -175,6 +180,10 @@ export default async function InboxThreadPage({ params }: PageProps) {
             enrollments={enrollments}
             conversationStatus={conversation.status}
             assignedAdmin={conversation.assigned_admin}
+          />
+          <FlightInfoPanel
+            conversationId={conversation.id}
+            rows={flightRows}
           />
           <div className="text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-faint)]">
             Opened {timestampFull(messages[0]?.created_at ?? conversation.last_message_at)}
