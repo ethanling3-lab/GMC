@@ -21,6 +21,7 @@ import { ParticipantCard } from "@/components/admin/inbox/ParticipantCard";
 import { AiAssistantToggle } from "@/components/admin/inbox/AiAssistantToggle";
 import { FlightInfoPanel } from "@/components/admin/inbox/FlightInfoPanel";
 import { loadFlightInfoForParticipant } from "@/lib/inbox/flight-info-query";
+import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Conversation" };
 export const dynamic = "force-dynamic";
@@ -50,6 +51,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
 
   return (
     <div>
+      <CrumbLabel segment={conversation.id} label={displayName} />
       <MarkReadOnMount conversationId={conversation.id} />
       {/* Breadcrumb */}
       <div className="mb-5">

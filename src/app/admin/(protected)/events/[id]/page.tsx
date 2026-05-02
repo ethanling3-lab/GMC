@@ -6,6 +6,7 @@ import {
   EventEditor,
   type EventFull,
 } from "@/components/admin/events/EventEditor";
+import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Edit event" };
 export const dynamic = "force-dynamic";
@@ -58,12 +59,20 @@ export default async function EventDetailPage({ params }: PageProps) {
     .select("id", { count: "exact", head: true })
     .eq("event_id", event.id);
 
+  const crumbLabel =
+    event.title_en || event.title_cn
+      ? `${event.title_en ?? ""}${event.title_en && event.title_cn ? " · " : ""}${event.title_cn ?? ""}`
+      : event.slug;
+
   return (
-    <EventEditor
-      event={event}
-      canEdit={canEdit}
-      canDelete={canDelete}
-      enrollmentCount={enrollmentCount ?? 0}
-    />
+    <>
+      <CrumbLabel segment={event.id} label={crumbLabel} />
+      <EventEditor
+        event={event}
+        canEdit={canEdit}
+        canDelete={canDelete}
+        enrollmentCount={enrollmentCount ?? 0}
+      />
+    </>
   );
 }

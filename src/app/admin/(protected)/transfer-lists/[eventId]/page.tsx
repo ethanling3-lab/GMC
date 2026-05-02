@@ -20,6 +20,7 @@ import {
   type EnrolmentOption,
 } from "@/components/admin/transfer/AddFlightDialog";
 import { AddManualRowDialog } from "@/components/admin/transfer/AddManualRowDialog";
+import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Transfer list" };
 export const dynamic = "force-dynamic";
@@ -100,6 +101,7 @@ export default async function TransferListDetailPage({
 
   return (
     <div>
+      <CrumbLabel segment={ev.id} label={title} />
       <div className="flex flex-col gap-3">
         <Link
           href="/admin/transfer-lists"

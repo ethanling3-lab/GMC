@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useBreadcrumbLabels } from "./BreadcrumbContext";
 
 const CRUMB_LABELS: Record<string, string> = {
   admin: "Workspace",
@@ -22,7 +23,8 @@ const CRUMB_LABELS: Record<string, string> = {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function humanize(seg: string): string {
+function humanize(seg: string, override?: string): string {
+  if (override) return override;
   if (CRUMB_LABELS[seg]) return CRUMB_LABELS[seg];
   // Short region-ID shape (MY001, SG42) → uppercase as-is.
   if (/^[a-z]{2,3}-?\d+$/i.test(seg)) return seg.toUpperCase();
@@ -40,6 +42,7 @@ function isUuid(seg: string): boolean {
 
 function useCrumbs(
   pathname: string,
+  overrides: Record<string, string>,
 ): { href: string; label: string; mono?: boolean }[] {
   return useMemo(() => {
     const parts = pathname.split("/").filter(Boolean);
@@ -47,19 +50,23 @@ function useCrumbs(
     let acc = "";
     for (const p of parts) {
       acc += `/${p}`;
+      const override = overrides[p];
       crumbs.push({
         href: acc,
-        label: humanize(p),
-        mono: isUuid(p),
+        label: humanize(p, override),
+        // If we have a friendly override, drop the mono treatment — it's no
+        // longer a raw id.
+        mono: !override && isUuid(p),
       });
     }
     return crumbs;
-  }, [pathname]);
+  }, [pathname, overrides]);
 }
 
 export function TopBar() {
   const pathname = usePathname() ?? "/admin";
-  const crumbs = useCrumbs(pathname);
+  const labelOverrides = useBreadcrumbLabels();
+  const crumbs = useCrumbs(pathname, labelOverrides);
   const [lang, setLang] = useState<"en" | "zh">("en");
   const [now, setNow] = useState<Date | null>(null);
 

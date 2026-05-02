@@ -19,6 +19,7 @@ import {
 } from "@/components/admin/participants/detail/AssignmentEditor";
 import { StatusEditor } from "@/components/admin/participants/detail/StatusEditor";
 import { ActionsCard } from "@/components/admin/participants/detail/ActionsCard";
+import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Participant" };
 export const dynamic = "force-dynamic";
@@ -162,8 +163,14 @@ export default async function ParticipantDetailPage({ params }: Props) {
 
   const archived = Boolean(p.archived_at);
 
+  const crumbLabel =
+    p.region_id && (p.name_en || p.name_cn)
+      ? `${p.region_id} · ${p.name_en ?? p.name_cn}`
+      : p.name_en || p.name_cn || p.region_id || p.id.slice(0, 8);
+
   return (
     <div className="relative">
+      <CrumbLabel segment={p.id} label={crumbLabel} />
       {/* Archived banner */}
       {archived ? (
         <div className="mb-5 rounded-[var(--radius-md)] border border-[var(--ink-faint)]/30 bg-[var(--paper-deep)] px-4 py-3 flex items-center gap-3">

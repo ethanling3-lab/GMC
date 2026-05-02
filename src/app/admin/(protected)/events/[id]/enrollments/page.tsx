@@ -12,6 +12,7 @@ import {
 import { EnrollmentsToolbar } from "@/components/admin/events/EnrollmentsToolbar";
 import { STATUS_LABEL as EVENT_STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
 import { checkCapacity } from "@/lib/event-capacity";
+import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Enrollments" };
 export const dynamic = "force-dynamic";
@@ -266,6 +267,7 @@ export default async function EventEnrollmentsPage({
 
   return (
     <div>
+      <CrumbLabel segment={event.id} label={title} />
       {/* Breadcrumb */}
       <div className="mb-5">
         <Link
