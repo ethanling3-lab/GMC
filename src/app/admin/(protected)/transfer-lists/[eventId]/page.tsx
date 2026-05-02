@@ -20,6 +20,8 @@ import {
   type EnrolmentOption,
 } from "@/components/admin/transfer/AddFlightDialog";
 import { AddManualRowDialog } from "@/components/admin/transfer/AddManualRowDialog";
+import { EditFlightDialog } from "@/components/admin/transfer/EditFlightDialog";
+import { EditManualPassengerDialog } from "@/components/admin/transfer/EditManualPassengerDialog";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Transfer list" };
@@ -381,7 +383,8 @@ function DirectionPanel({
                 <Th className="w-[160px]">
                   {dir === "arrival" ? "Drop-off" : "Pickup"}
                 </Th>
-                <Th>Flights / Passengers</Th>
+                <Th className="w-[260px]">Passengers</Th>
+                <Th>Flight</Th>
                 <Th className="w-[200px]">Remark</Th>
                 {canEditRows && state.list ? (
                   <Th className="w-[36px] text-center" aria-label="Edit">·</Th>
@@ -396,6 +399,8 @@ function DirectionPanel({
                   dir={dir}
                   listId={state.list?.id ?? ""}
                   canEdit={canEditRows && Boolean(state.list)}
+                  mainVenueName={mainVenueName}
+                  designatedHotels={designatedHotels}
                 />
               ))}
             </tbody>
@@ -433,11 +438,15 @@ function RowGroup({
   dir,
   listId,
   canEdit,
+  mainVenueName,
+  designatedHotels,
 }: {
   row: TransferDetailRow;
   dir: "arrival" | "departure";
   listId: string;
   canEdit: boolean;
+  mainVenueName: string | null;
+  designatedHotels: Record<string, string>;
 }) {
   const isManual = row.flights.length === 0 && row.manual_passengers.length > 0;
   const paxCount = row.flights.length + row.manual_passengers.length;
@@ -446,6 +455,20 @@ function RowGroup({
     : isManual
       ? "bg-[var(--gold-soft)]/30"
       : "even:bg-[var(--paper-deep)]/40";
+
+  // Build aligned line pairs: each entry yields one line in the Passengers
+  // cell and one in the Flight cell, so the eye can track passenger ↔ flight
+  // row by row across the split.
+  const lines: Array<
+    | { kind: "real"; flight: TransferRowFlight }
+    | { kind: "manual"; pax: ManualPassenger; index: number }
+  > = row.flights.length > 0
+    ? row.flights.map((f) => ({ kind: "real" as const, flight: f }))
+    : row.manual_passengers.map((p, i) => ({
+        kind: "manual" as const,
+        pax: p,
+        index: i,
+      }));
 
   return (
     <tr className={`group ${tintCls} hover:bg-[var(--paper-deep)]/70 transition-colors`}>
@@ -490,24 +513,75 @@ function RowGroup({
         {row.destination ?? "—"}
       </Td>
       <Td>
-        {row.flights.length > 0 ? (
-          <ul className="flex flex-col gap-0.5">
-            {row.flights.map((f) => (
-              <li key={f.id} className="leading-[1.3]">
-                <PassengerLine flight={f} />
-              </li>
-            ))}
-          </ul>
-        ) : row.manual_passengers.length > 0 ? (
-          <ul className="flex flex-col gap-0.5">
-            {row.manual_passengers.map((p, i) => (
-              <li key={i} className="leading-[1.3]">
-                <ManualPassengerLine pax={p} />
-              </li>
-            ))}
-          </ul>
-        ) : (
+        {lines.length === 0 ? (
           <span className="text-[var(--ink-faint)]">—</span>
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {lines.map((ln, i) => (
+              <li
+                key={ln.kind === "real" ? ln.flight.id : `m${ln.index}`}
+                className="min-h-[20px] leading-[1.3] flex items-center gap-1.5"
+              >
+                {ln.kind === "real" ? (
+                  <PassengerLine flight={ln.flight} />
+                ) : (
+                  <>
+                    <ManualPassengerLine pax={ln.pax} />
+                    {canEdit ? (
+                      <EditManualPassengerDialog
+                        listId={listId}
+                        rowId={row.id}
+                        index={ln.index}
+                        passengers={row.manual_passengers}
+                      />
+                    ) : null}
+                  </>
+                )}
+                {i === lines.length - 1 ? null : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Td>
+      <Td>
+        {lines.length === 0 ? (
+          <span className="text-[var(--ink-faint)]">—</span>
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {lines.map((ln) => (
+              <li
+                key={ln.kind === "real" ? `f${ln.flight.id}` : `mf${ln.index}`}
+                className="min-h-[20px] leading-[1.3] flex items-center gap-1.5"
+              >
+                {ln.kind === "real" ? (
+                  <>
+                    <FlightLine flight={ln.flight} />
+                    {canEdit ? (
+                      <EditFlightDialog
+                        initial={{
+                          enrollment_id: ln.flight.enrollment_id,
+                          direction: dir,
+                          participant_label: participantLabel(ln.flight),
+                          flight_number: ln.flight.flight_number,
+                          airline: ln.flight.airline,
+                          origin_airport: ln.flight.origin_airport,
+                          destination_airport: ln.flight.destination_airport,
+                          scheduled_at: ln.flight.scheduled_at,
+                          terminal: ln.flight.terminal,
+                          hotel_key: ln.flight.hotel_key,
+                          is_vip: ln.flight.is_vip,
+                        }}
+                        mainVenueName={mainVenueName}
+                        designatedHotels={designatedHotels}
+                      />
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="text-[var(--ink-faint)]">—</span>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </Td>
       <Td className="text-[var(--ink-mute)] leading-[1.5] max-w-[200px]">
@@ -538,20 +612,25 @@ function PassengerLine({ flight }: { flight: TransferRowFlight }) {
   const p = flight.participant;
   const id = p?.region_id ?? "—";
   const name = p?.name_en || p?.name_cn || p?.id?.slice(0, 8) || "—";
-  const fn = flight.flight_number ?? "????";
-  const o = flight.origin_airport ?? "?";
-  const d = flight.destination_airport ?? "?";
-  const t = flight.scheduled_at ? formatHHMM(flight.scheduled_at) : "????";
   return (
     <div className="flex items-baseline gap-2 flex-wrap">
       <span className="font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
         {id}
       </span>
       <span className="text-[11.5px] text-[var(--ink)]">{name}</span>
-      <span className="text-[10.5px] tabular-nums text-[var(--ink-mute)]">
-        {fn} {o}→{d} {t}
-      </span>
     </div>
+  );
+}
+
+function FlightLine({ flight }: { flight: TransferRowFlight }) {
+  const fn = flight.flight_number ?? "????";
+  const o = flight.origin_airport ?? "?";
+  const d = flight.destination_airport ?? "?";
+  const t = flight.scheduled_at ? formatHHMM(flight.scheduled_at) : "????";
+  return (
+    <span className="text-[10.5px] tabular-nums text-[var(--ink-mute)]">
+      {fn} {o}→{d} {t}
+    </span>
   );
 }
 
@@ -571,6 +650,12 @@ function ManualPassengerLine({ pax }: { pax: ManualPassenger }) {
       ) : null}
     </div>
   );
+}
+
+function participantLabel(flight: TransferRowFlight): string {
+  const p = flight.participant;
+  const name = p?.name_en || p?.name_cn || "—";
+  return p?.region_id ? `${name} · ${p.region_id}` : name;
 }
 
 function formatDate(d: string): string {

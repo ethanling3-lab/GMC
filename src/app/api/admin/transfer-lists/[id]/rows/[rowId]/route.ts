@@ -18,6 +18,12 @@ export const runtime = "nodejs";
 
 type RouteCtx = { params: Promise<{ id: string; rowId: string }> };
 
+const ManualPassenger = z.object({
+  name: z.string().trim().min(1).max(128),
+  region_id: z.string().trim().max(16).nullable().optional(),
+  note: z.string().trim().max(256).nullable().optional(),
+});
+
 const Body = z
   .object({
     vehicle_type: z.string().trim().min(1).max(64).optional(),
@@ -33,6 +39,7 @@ const Body = z
     destination: z.string().trim().max(256).optional(),
     remark: z.string().trim().max(512).nullable().optional(),
     vip: z.boolean().optional(),
+    manual_passengers: z.array(ManualPassenger).max(64).optional(),
   })
   .refine(
     (v) => Object.keys(v).length > 0,
@@ -63,7 +70,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const { data: existing, error: loadErr } = await service
     .from("transfer_list_rows")
     .select(
-      "id, transfer_list_id, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, admin_edited",
+      "id, transfer_list_id, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, admin_edited, manual_passengers",
     )
     .eq("id", rowId)
     .maybeSingle();
@@ -87,13 +94,20 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   if ("destination" in body) update.destination = body.destination;
   if ("remark" in body) update.remark = body.remark;
   if ("vip" in body) update.vip = body.vip;
+  if ("manual_passengers" in body) {
+    update.manual_passengers = body.manual_passengers?.map((p) => ({
+      name: p.name,
+      ...(p.region_id ? { region_id: p.region_id } : {}),
+      ...(p.note ? { note: p.note } : {}),
+    }));
+  }
 
   const { data: updated, error: updErr } = await service
     .from("transfer_list_rows")
     .update(update)
     .eq("id", rowId)
     .select(
-      "id, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, admin_edited",
+      "id, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, admin_edited, manual_passengers",
     )
     .single();
   if (updErr || !updated) {
@@ -115,6 +129,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       destination: existing.destination,
       remark: existing.remark,
       vip: existing.vip,
+      manual_passengers: existing.manual_passengers,
     },
     after: {
       vehicle_type: updated.vehicle_type,
@@ -123,6 +138,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       destination: updated.destination,
       remark: updated.remark,
       vip: updated.vip,
+      manual_passengers: updated.manual_passengers,
     },
     metadata: { transfer_list_id: listId },
   });

@@ -197,6 +197,7 @@ export type TransferDetailRow = {
 
 export type TransferRowFlight = {
   id: string;
+  enrollment_id: string;
   flight_number: string | null;
   airline: string | null;
   origin_airport: string | null;
@@ -288,12 +289,13 @@ export async function loadTransferDetail(
       const { data: f } = await supabase
         .from("flight_info")
         .select(
-          "id, flight_number, airline, origin_airport, destination_airport, scheduled_at, terminal, hotel_key, is_vip, enrollment:enrollments!inner(participant:participants!inner(id, region_id, name_cn, name_en, region))",
+          "id, enrollment_id, flight_number, airline, origin_airport, destination_airport, scheduled_at, terminal, hotel_key, is_vip, enrollment:enrollments!inner(participant:participants!inner(id, region_id, name_cn, name_en, region))",
         )
         .in("id", allFlightIds)
         .returns<
           Array<{
             id: string;
+            enrollment_id: string;
             flight_number: string | null;
             airline: string | null;
             origin_airport: string | null;
@@ -315,6 +317,7 @@ export async function loadTransferDetail(
         >();
       flights = (f ?? []).map((row) => ({
         id: row.id,
+        enrollment_id: row.enrollment_id,
         flight_number: row.flight_number,
         airline: row.airline,
         origin_airport: row.origin_airport,
