@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
@@ -128,7 +129,8 @@ export function RowEditDialog({
         </svg>
       </button>
 
-      {!open ? null : (
+      {open && typeof document !== "undefined"
+        ? createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
           role="dialog"
@@ -245,8 +247,10 @@ export function RowEditDialog({
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }
