@@ -53,7 +53,8 @@ export type AuditAction =
   | "transfer_list.deleted"
   | "transfer_list.exported"
   | "transfer_list.row_edited"
-  | "transfer_list.regenerated_force";
+  | "transfer_list.regenerated_force"
+  | "transfer_list.row_added_manual";
 
 export type WriteAuditLog = {
   actor_id: string | null;

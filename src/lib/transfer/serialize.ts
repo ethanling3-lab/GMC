@@ -52,7 +52,34 @@ export function serializeArrivals(dir: TransferDetailDirection): string[][] {
   let serial = 0;
   for (const r of dir.rows) {
     if (r.flights.length === 0) {
-      // Group with no flights — render a placeholder row so it's still visible
+      // No flights joined — manual row OR algorithm row with no flight info.
+      // Manual rows: emit one row per manual passenger.
+      // Empty rows: emit a single placeholder so it's still visible.
+      if (r.manual_passengers.length > 0) {
+        for (let i = 0; i < r.manual_passengers.length; i++) {
+          serial += 1;
+          const p = r.manual_passengers[i];
+          const isFirst = i === 0;
+          rows.push([
+            String(serial),
+            r.landing_or_takeoff_at ? formatDay(r.landing_or_takeoff_at) : "",
+            isFirst ? formatHHMM(r.landing_or_takeoff_at) : "",
+            r.terminal ?? "",
+            "",
+            p.name,
+            p.region_id ?? "",
+            "—",
+            isFirst ? r.vehicle_type ?? "" : "",
+            isFirst ? r.destination ?? "" : "",
+            "",
+            isFirst ? r.remark ?? "" : (p.note ?? ""),
+            "",
+            "",
+            "",
+          ]);
+        }
+        continue;
+      }
       serial += 1;
       rows.push([
         String(serial),
@@ -104,6 +131,31 @@ export function serializeDepartures(dir: TransferDetailDirection): string[][] {
   let serial = 0;
   for (const r of dir.rows) {
     if (r.flights.length === 0) {
+      if (r.manual_passengers.length > 0) {
+        for (let i = 0; i < r.manual_passengers.length; i++) {
+          serial += 1;
+          const p = r.manual_passengers[i];
+          const isFirst = i === 0;
+          rows.push([
+            String(serial),
+            r.landing_or_takeoff_at ? formatDay(r.landing_or_takeoff_at) : "",
+            "",
+            p.name,
+            p.region_id ?? "",
+            isFirst ? r.destination ?? "" : "",
+            "—",
+            "",
+            isFirst ? formatHHMM(r.landing_or_takeoff_at) : "",
+            r.terminal ?? "",
+            isFirst ? r.vehicle_type ?? "" : "",
+            "",
+            "",
+            isFirst ? r.remark ?? "" : (p.note ?? ""),
+            "",
+          ]);
+        }
+        continue;
+      }
       serial += 1;
       rows.push([
         String(serial),

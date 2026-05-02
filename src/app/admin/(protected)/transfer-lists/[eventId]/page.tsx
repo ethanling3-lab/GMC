@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
   loadTransferDetail,
+  type ManualPassenger,
   type TransferDetailDirection,
   type TransferDetailRow,
   type TransferRowFlight,
@@ -14,6 +15,11 @@ import { StatusToggle } from "@/components/admin/transfer/StatusToggle";
 import { DeleteButton } from "@/components/admin/transfer/DeleteButton";
 import { ExportButton } from "@/components/admin/transfer/ExportButton";
 import { RowEditDialog } from "@/components/admin/transfer/RowEditDialog";
+import {
+  AddFlightDialog,
+  type EnrolmentOption,
+} from "@/components/admin/transfer/AddFlightDialog";
+import { AddManualRowDialog } from "@/components/admin/transfer/AddManualRowDialog";
 
 export const metadata: Metadata = { title: "Transfer list" };
 export const dynamic = "force-dynamic";
@@ -58,6 +64,39 @@ export default async function TransferListDetailPage({
     (ev as unknown as { designated_hotels?: Record<string, string> })
       .designated_hotels ?? {},
   );
+
+  // Enrolment options for AddFlightDialog. Cheap select; only the rendering-
+  // relevant fields are fetched. Filter to active statuses so admin doesn't
+  // see cancelled rows in the picker.
+  type EnrolRow = {
+    id: string;
+    participant: {
+      region_id: string | null;
+      name_en: string | null;
+      name_cn: string | null;
+    } | null;
+  };
+  const { data: enrolRows } = await supabase
+    .from("enrollments")
+    .select("id, participant:participants!inner(region_id, name_en, name_cn)")
+    .eq("event_id", eventId)
+    .in("status", ["approved", "paid"])
+    .returns<EnrolRow[]>();
+  const enrolments: EnrolmentOption[] = (enrolRows ?? []).map((e) => {
+    const name =
+      e.participant?.name_en ||
+      e.participant?.name_cn ||
+      e.id.slice(0, 8);
+    const region = e.participant?.region_id;
+    return {
+      enrollment_id: e.id,
+      participant_label: region ? `${name} · ${region}` : name,
+      region_id: region ?? null,
+    };
+  });
+  const designatedHotels =
+    (ev as unknown as { designated_hotels?: Record<string, string> })
+      .designated_hotels ?? {};
 
   return (
     <div>
@@ -153,11 +192,15 @@ export default async function TransferListDetailPage({
 
       <DirectionPanel
         eventId={ev.id}
+        eventSlug={ev.slug}
         eventHasSheet={Boolean(ev.transfer_sheet_id)}
         dir={dir}
         state={active}
         readOnly={isReadOnly}
         canEditRows={!isReadOnly}
+        enrolments={enrolments}
+        mainVenueName={ev.main_venue_hotel_name}
+        designatedHotels={designatedHotels}
       />
     </div>
   );
@@ -223,21 +266,32 @@ function TabLink({
 
 function DirectionPanel({
   eventId,
+  eventSlug,
   eventHasSheet,
   dir,
   state,
   readOnly,
   canEditRows,
+  enrolments,
+  mainVenueName,
+  designatedHotels,
 }: {
   eventId: string;
+  eventSlug: string;
   eventHasSheet: boolean;
   dir: "arrival" | "departure";
   state: TransferDetailDirection;
   readOnly: boolean;
   canEditRows: boolean;
+  enrolments: EnrolmentOption[];
+  mainVenueName: string | null;
+  designatedHotels: Record<string, string>;
 }) {
   const totalPax = state.rows.reduce(
-    (acc, r) => acc + (r.flight_info_ids?.length ?? 0),
+    (acc, r) =>
+      acc +
+      (r.flight_info_ids?.length ?? 0) +
+      (r.manual_passengers?.length ?? 0),
     0,
   );
 
@@ -269,10 +323,26 @@ function DirectionPanel({
               hasFlights={state.rows.length > 0 || !state.list}
               variant="primary"
             />
+            <AddFlightDialog
+              enrolments={enrolments}
+              mainVenueName={mainVenueName}
+              designatedHotels={designatedHotels}
+            />
             {state.list ? (
               <>
+                <AddManualRowDialog listId={state.list.id} direction={dir} />
                 <StatusToggle listId={state.list.id} status={state.list.status} />
                 <ExportButton listId={state.list.id} hasSheet={eventHasSheet} />
+                <a
+                  href={`/api/admin/transfer-lists/event/${eventId}/export.xlsx`}
+                  download
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11px] tracking-[0.1em] uppercase text-[var(--ink-soft)] hover:text-[var(--ink)] hover:border-[var(--cinnabar)]/30 transition-colors"
+                  style={{ color: "var(--ink-soft)" }}
+                  title={`Download ${eventSlug}-transfers.xlsx`}
+                >
+                  <span aria-hidden="true">↓</span>
+                  .xlsx
+                </a>
                 <DeleteButton listId={state.list.id} />
               </>
             ) : null}
@@ -296,23 +366,23 @@ function DirectionPanel({
           The list is empty — no confirmed flights for this direction.
         </p>
       ) : (
-        <div className="mt-6 overflow-x-auto">
-          <table className="w-full border-collapse text-[12.5px]">
-            <thead>
-              <tr className="text-left text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
-                <th className="pb-3 pr-3 font-normal">#</th>
-                <th className="pb-3 pr-3 font-normal">
+        <div className="mt-6 overflow-x-auto rounded-[var(--radius-md)] border border-[var(--paper-shadow)]">
+          <table className="w-full border-collapse text-[11.5px] bg-[var(--paper)]">
+            <thead className="sticky top-0 z-10 bg-[var(--paper-deep)]">
+              <tr className="text-left text-[9.5px] tracking-[0.2em] uppercase text-[var(--ink-mute)]">
+                <Th className="w-[42px] text-center">#</Th>
+                <Th className="w-[110px]">
                   {dir === "arrival" ? "Landing" : "Hotel dep."}
-                </th>
-                <th className="pb-3 pr-3 font-normal">Vehicle</th>
-                <th className="pb-3 pr-3 font-normal text-right">Pax</th>
-                <th className="pb-3 pr-3 font-normal">
+                </Th>
+                <Th className="w-[180px]">Vehicle</Th>
+                <Th className="w-[40px] text-right">Pax</Th>
+                <Th className="w-[160px]">
                   {dir === "arrival" ? "Drop-off" : "Pickup"}
-                </th>
-                <th className="pb-3 pr-3 font-normal">Flights</th>
-                <th className="pb-3 pr-3 font-normal">Remark</th>
+                </Th>
+                <Th>Flights / Passengers</Th>
+                <Th className="w-[200px]">Remark</Th>
                 {canEditRows && state.list ? (
-                  <th className="pb-3 pr-3 font-normal" aria-label="Edit" />
+                  <Th className="w-[36px] text-center" aria-label="Edit">·</Th>
                 ) : null}
               </tr>
             </thead>
@@ -334,6 +404,28 @@ function DirectionPanel({
   );
 }
 
+function Th({ children, className, ...rest }: React.ThHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <th
+      {...rest}
+      className={`px-2 py-2 font-normal border-b border-r border-[var(--paper-shadow)] last:border-r-0 align-middle ${className ?? ""}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, className, ...rest }: React.TdHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <td
+      {...rest}
+      className={`px-2 py-1.5 border-b border-r border-[var(--paper-shadow)] last:border-r-0 align-top ${className ?? ""}`}
+    >
+      {children}
+    </td>
+  );
+}
+
 function RowGroup({
   row,
   dir,
@@ -345,57 +437,82 @@ function RowGroup({
   listId: string;
   canEdit: boolean;
 }) {
+  const isManual = row.flights.length === 0 && row.manual_passengers.length > 0;
+  const paxCount = row.flights.length + row.manual_passengers.length;
+  const tintCls = row.vip
+    ? "bg-[var(--cinnabar-wash)]/40"
+    : isManual
+      ? "bg-[var(--gold-soft)]/30"
+      : "even:bg-[var(--paper-deep)]/40";
+
   return (
-    <tr className={`border-t border-[var(--paper-shadow)] align-top ${row.vip ? "bg-[var(--cinnabar-wash)]/40" : ""}`}>
-      <td className="py-3 pr-3 tabular-nums text-[var(--ink-mute)] align-top">
-        <div className="flex items-center gap-1.5">
+    <tr className={`group ${tintCls} hover:bg-[var(--paper-deep)]/70 transition-colors`}>
+      <Td className="text-center tabular-nums text-[var(--ink-mute)]">
+        <div className="inline-flex flex-col items-center gap-0.5">
           <span>{row.group_no}</span>
           {row.admin_edited ? (
             <span
-              title="Manually edited — regenerate will skip this row unless forced"
-              className="inline-flex items-center h-[16px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[8.5px] tracking-[0.16em] uppercase text-[var(--ink-soft)]"
+              title="Manually edited — regenerate skips this row unless forced"
+              className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[8px] tracking-[0.14em] uppercase text-[var(--ink-soft)]"
             >
               edited
             </span>
           ) : null}
         </div>
-      </td>
-      <td className="py-3 pr-3 tabular-nums text-[var(--ink)] align-top whitespace-nowrap">
+      </Td>
+      <Td className="tabular-nums text-[var(--ink)] whitespace-nowrap">
         {row.landing_or_takeoff_at ? formatTimeBlock(row.landing_or_takeoff_at) : "—"}
         {row.terminal ? (
-          <div className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)] mt-0.5">
+          <div className="text-[9px] tracking-[0.18em] uppercase text-[var(--ink-faint)] mt-0.5">
             {row.terminal}
           </div>
         ) : null}
-      </td>
-      <td className="py-3 pr-3 align-top">
-        <div className="text-[var(--ink)]">{row.vehicle_type ?? "—"}</div>
+      </Td>
+      <Td>
+        <div className="text-[var(--ink)] leading-[1.3]">{row.vehicle_type ?? "—"}</div>
         {row.vip ? (
-          <div className="mt-1 inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/30 bg-[var(--paper)] text-[9.5px] tracking-[0.18em] uppercase text-[var(--cinnabar-deep)]">
+          <span className="mt-1 inline-flex items-center h-[15px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/30 bg-[var(--paper)] text-[8.5px] tracking-[0.18em] uppercase text-[var(--cinnabar-deep)]">
             VIP
-          </div>
+          </span>
         ) : null}
-      </td>
-      <td className="py-3 pr-3 text-right tabular-nums align-top text-[var(--ink-soft)]">
-        {row.flights.length}
-      </td>
-      <td className="py-3 pr-3 align-top text-[var(--ink-soft)] leading-[1.4]">
+        {isManual ? (
+          <span className="mt-1 inline-flex items-center h-[15px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--paper)] text-[8.5px] tracking-[0.18em] uppercase text-[var(--ink-soft)]">
+            manual
+          </span>
+        ) : null}
+      </Td>
+      <Td className="text-right tabular-nums text-[var(--ink-soft)]">
+        {paxCount}
+      </Td>
+      <Td className="text-[var(--ink-soft)] leading-[1.4]">
         {row.destination ?? "—"}
-      </td>
-      <td className="py-3 pr-3 align-top">
-        <ul className="flex flex-col gap-1.5">
-          {row.flights.map((f) => (
-            <li key={f.id} className="leading-[1.35]">
-              <PassengerLine flight={f} dir={dir} />
-            </li>
-          ))}
-        </ul>
-      </td>
-      <td className="py-3 pr-3 align-top text-[var(--ink-mute)] leading-[1.5] max-w-[28ch]">
+      </Td>
+      <Td>
+        {row.flights.length > 0 ? (
+          <ul className="flex flex-col gap-0.5">
+            {row.flights.map((f) => (
+              <li key={f.id} className="leading-[1.3]">
+                <PassengerLine flight={f} />
+              </li>
+            ))}
+          </ul>
+        ) : row.manual_passengers.length > 0 ? (
+          <ul className="flex flex-col gap-0.5">
+            {row.manual_passengers.map((p, i) => (
+              <li key={i} className="leading-[1.3]">
+                <ManualPassengerLine pax={p} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="text-[var(--ink-faint)]">—</span>
+        )}
+      </Td>
+      <Td className="text-[var(--ink-mute)] leading-[1.5] max-w-[200px]">
         {row.remark ?? ""}
-      </td>
+      </Td>
       {canEdit ? (
-        <td className="py-3 pr-3 align-top">
+        <Td className="text-center">
           <RowEditDialog
             listId={listId}
             direction={dir}
@@ -409,49 +526,49 @@ function RowGroup({
               vip: row.vip,
             }}
           />
-        </td>
+        </Td>
       ) : null}
     </tr>
   );
 }
 
-function PassengerLine({
-  flight,
-  dir,
-}: {
-  flight: TransferRowFlight;
-  dir: "arrival" | "departure";
-}) {
+function PassengerLine({ flight }: { flight: TransferRowFlight }) {
   const p = flight.participant;
   const id = p?.region_id ?? "—";
   const name = p?.name_en || p?.name_cn || p?.id?.slice(0, 8) || "—";
-  const flightLine = formatFlightShort(flight);
+  const fn = flight.flight_number ?? "????";
+  const o = flight.origin_airport ?? "?";
+  const d = flight.destination_airport ?? "?";
+  const t = flight.scheduled_at ? formatHHMM(flight.scheduled_at) : "????";
   return (
-    <div>
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="font-mono text-[10.5px] text-[var(--cinnabar-deep)] tabular-nums">
-          {id}
-        </span>
-        <span className="text-[12.5px] text-[var(--ink)]">{name}</span>
-        {p?.region ? (
-          <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
-            {p.region}
-          </span>
-        ) : null}
-      </div>
-      <div className="text-[11px] tabular-nums text-[var(--ink-mute)]">
-        {flightLine}
-      </div>
+    <div className="flex items-baseline gap-2 flex-wrap">
+      <span className="font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
+        {id}
+      </span>
+      <span className="text-[11.5px] text-[var(--ink)]">{name}</span>
+      <span className="text-[10.5px] tabular-nums text-[var(--ink-mute)]">
+        {fn} {o}→{d} {t}
+      </span>
     </div>
   );
 }
 
-function formatFlightShort(f: TransferRowFlight): string {
-  const fn = f.flight_number ?? "????";
-  const o = f.origin_airport ?? "?";
-  const d = f.destination_airport ?? "?";
-  const t = f.scheduled_at ? formatTimeBlock(f.scheduled_at).split(" ")[1] : "????";
-  return `${fn} · ${o}→${d} · ${t}`;
+function ManualPassengerLine({ pax }: { pax: ManualPassenger }) {
+  return (
+    <div className="flex items-baseline gap-2 flex-wrap">
+      {pax.region_id ? (
+        <span className="font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
+          {pax.region_id}
+        </span>
+      ) : null}
+      <span className="text-[11.5px] text-[var(--ink)]">{pax.name}</span>
+      {pax.note ? (
+        <span className="text-[10px] text-[var(--ink-faint)] italic">
+          {pax.note}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function formatDate(d: string): string {
@@ -472,8 +589,6 @@ function formatDateTime(iso: string): string {
   });
 }
 
-// Returns "14 Apr · 0915" using UTC components (the local-clock-face values
-// the admin entered round-trip through scheduled_at — see lib/transfer/time.ts).
 function formatTimeBlock(iso: string): string {
   const d = new Date(iso);
   const day = d.toLocaleDateString("en-GB", {
@@ -481,7 +596,10 @@ function formatTimeBlock(iso: string): string {
     month: "short",
     timeZone: "UTC",
   });
-  const h = String(d.getUTCHours()).padStart(2, "0");
-  const m = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${day} · ${h}${m}`;
+  return `${day} · ${formatHHMM(iso)}`;
+}
+
+function formatHHMM(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getUTCHours()).padStart(2, "0")}${String(d.getUTCMinutes()).padStart(2, "0")}`;
 }

@@ -174,6 +174,12 @@ export type TransferDetailDirection = {
   rows: TransferDetailRow[];
 };
 
+export type ManualPassenger = {
+  name: string;
+  region_id?: string | null;
+  note?: string | null;
+};
+
 export type TransferDetailRow = {
   id: string;
   group_no: number;
@@ -186,6 +192,7 @@ export type TransferDetailRow = {
   admin_edited: boolean;
   flight_info_ids: string[];
   flights: TransferRowFlight[];
+  manual_passengers: ManualPassenger[];
 };
 
 export type TransferRowFlight = {
@@ -262,11 +269,12 @@ export async function loadTransferDetail(
       vip: boolean;
       admin_edited: boolean;
       flight_info_ids: string[];
+      manual_passengers: ManualPassenger[] | null;
     };
     const { data: rows } = await supabase
       .from("transfer_list_rows")
       .select(
-        "id, group_no, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, admin_edited, flight_info_ids",
+        "id, group_no, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, admin_edited, flight_info_ids, manual_passengers",
       )
       .eq("transfer_list_id", aggDir.list_id)
       .order("group_no", { ascending: true })
@@ -324,6 +332,7 @@ export async function loadTransferDetail(
       list: list ?? null,
       rows: (rows ?? []).map((r) => ({
         ...r,
+        manual_passengers: r.manual_passengers ?? [],
         flights: (r.flight_info_ids ?? [])
           .map((fid: string) => flights.find((fl) => fl.id === fid))
           .filter((x): x is TransferRowFlight => Boolean(x)),

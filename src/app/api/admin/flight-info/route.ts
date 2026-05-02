@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
   upsertFlightInfo,
@@ -10,20 +9,13 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// Manage a participant's flight_info from inside the inbox thread.
+// Context-free flight_info upsert/delete. The inbox panel hits the
+// `/api/admin/inbox/[id]/flight-info` route with a conversation context;
+// the transfer-list "Add flight" dialog hits THIS route directly because
+// it doesn't have a conversation handle. Both delegate to the same
+// `lib/inbox/flight-info-write.ts` helper.
 //
-// POST   /api/admin/inbox/[id]/flight-info
-//   Body: { enrollment_id, direction, ...fields, confirm?: boolean }
-//   Upserts on (enrollment_id, direction) — see flight-info-write.ts.
-//
-// DELETE /api/admin/inbox/[id]/flight-info?enrollment_id=...&direction=...
-//
-// Conversation id in the URL is used to validate thread access (RLS) and
-// flow into the audit metadata. The actual write logic lives in the
-// shared helper so the transfer-list dialog can reuse it without a
-// conversation context.
-
-type RouteCtx = { params: Promise<{ id: string }> };
+// Role gate matches the inbox endpoint: super, regional_lead, customer_service.
 
 const isoOrEmpty = z
   .string()
@@ -57,13 +49,11 @@ function rolesAllowed(role: string): boolean {
   );
 }
 
-export async function POST(req: Request, { params }: RouteCtx) {
+export async function POST(req: Request) {
   const admin = await requireAdmin();
   if (!rolesAllowed(admin.role)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-
-  const { id: conversationId } = await params;
 
   let body: z.infer<typeof PostBody>;
   try {
@@ -71,21 +61,6 @@ export async function POST(req: Request, { params }: RouteCtx) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Invalid payload";
     return NextResponse.json({ error: "validation_error", detail: msg }, { status: 400 });
-  }
-
-  // Validate the conversation exists (RLS would also gate this) so the URL
-  // segment isn't a free-for-all routing footgun.
-  const service = createSupabaseServiceClient();
-  const { data: conv, error: convErr } = await service
-    .from("conversations")
-    .select("id")
-    .eq("id", conversationId)
-    .maybeSingle();
-  if (convErr) {
-    return NextResponse.json({ error: convErr.message }, { status: 500 });
-  }
-  if (!conv) {
-    return NextResponse.json({ error: "thread_not_found" }, { status: 404 });
   }
 
   const result = await upsertFlightInfo({
@@ -103,8 +78,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
     },
     confirm: Boolean(body.confirm),
     actor_id: admin.id,
-    conversation_id: conversationId,
-    via: "inbox_panel",
+    via: "transfer_list_dialog",
   });
 
   if (!result.ok) {
@@ -121,13 +95,12 @@ export async function POST(req: Request, { params }: RouteCtx) {
   });
 }
 
-export async function DELETE(req: Request, { params }: RouteCtx) {
+export async function DELETE(req: Request) {
   const admin = await requireAdmin();
   if (!rolesAllowed(admin.role)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const { id: conversationId } = await params;
   const url = new URL(req.url);
   const enrollment_id = url.searchParams.get("enrollment_id");
   const direction = url.searchParams.get("direction");
@@ -142,8 +115,7 @@ export async function DELETE(req: Request, { params }: RouteCtx) {
     enrollment_id,
     direction,
     actor_id: admin.id,
-    conversation_id: conversationId,
-    via: "inbox_panel",
+    via: "transfer_list_dialog",
   });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 500 });
