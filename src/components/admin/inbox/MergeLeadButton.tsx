@@ -6,6 +6,7 @@ import {
   ParticipantPicker,
   type ParticipantHit,
 } from "@/components/admin/events/ParticipantPicker";
+import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Button + modal for merging an inbox-auto-created lead into an existing
 // participant. Lives in its own file so the server-rendered ParticipantCard
@@ -35,15 +36,7 @@ export function MergeLeadButton({
     }
   }, [open]);
 
-  // Lock page scroll while the modal is open.
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  useBodyScrollLock(open);
 
   // Close on Escape.
   useEffect(() => {

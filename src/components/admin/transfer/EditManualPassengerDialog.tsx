@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Pencil-triggered edit for a single entry inside a row's manual_passengers
 // JSONB array. Loads the full array, swaps the targeted index, PATCHes the
@@ -45,14 +46,7 @@ export function EditManualPassengerDialog({
     }
   }, [open, initial.name, initial.region_id, initial.note]);
 
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;

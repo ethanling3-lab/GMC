@@ -235,9 +235,61 @@ export async function loadTransferDetail(
   if (!events || events.length === 0) return null;
   const ev = events[0];
 
-  const overview = await loadTransferListsOverview(supabase);
-  const aggregated = overview.find((e) => e.id === eventId);
-  if (!aggregated) return null;
+  // Fetch only this event's transfer_lists. Earlier this called
+  // loadTransferListsOverview() which scans every event in the org just to
+  // find one row — measurably slow on prod-sized data.
+  const { data: eventLists } = await supabase
+    .from("transfer_lists")
+    .select("id, direction, status, generated_at")
+    .eq("event_id", eventId)
+    .returns<
+      Array<{
+        id: string;
+        direction: "arrival" | "departure";
+        status: "draft" | "final";
+        generated_at: string;
+      }>
+    >();
+
+  const arrivalListId =
+    eventLists?.find((l) => l.direction === "arrival")?.id ?? null;
+  const departureListId =
+    eventLists?.find((l) => l.direction === "departure")?.id ?? null;
+
+  // Build the EventRow shape the page expects. flight_count / *_confirmed
+  // and total_groups / total_pax are only used on the overview page, not
+  // here — defaulted to 0 to satisfy the type.
+  const aggregated: TransferEventRow = {
+    ...ev,
+    arrival: {
+      list_id: arrivalListId,
+      status:
+        (eventLists?.find((l) => l.direction === "arrival")?.status as
+          | "draft"
+          | "final"
+          | null) ?? null,
+      generated_at:
+        eventLists?.find((l) => l.direction === "arrival")?.generated_at ?? null,
+      total_groups: 0,
+      total_pax: 0,
+      flight_count: 0,
+      flight_count_confirmed: 0,
+    },
+    departure: {
+      list_id: departureListId,
+      status:
+        (eventLists?.find((l) => l.direction === "departure")?.status as
+          | "draft"
+          | "final"
+          | null) ?? null,
+      generated_at:
+        eventLists?.find((l) => l.direction === "departure")?.generated_at ?? null,
+      total_groups: 0,
+      total_pax: 0,
+      flight_count: 0,
+      flight_count_confirmed: 0,
+    },
+  };
 
   const directions: ("arrival" | "departure")[] = ["arrival", "departure"];
   const out: Record<string, TransferDetailDirection> = {};

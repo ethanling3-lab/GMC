@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Per-row admin override modal. Submits PATCH /api/admin/transfer-lists/[id]/rows/[rowId]
 // and flips `admin_edited` true server-side. The row keeps its admin tweaks
@@ -63,14 +64,7 @@ export function RowEditDialog({
     }
   }, [open, row]);
 
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
+  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;

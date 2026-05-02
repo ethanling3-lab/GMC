@@ -904,9 +904,12 @@ function Field({
 }
 
 // Editor for the designated_hotels JSONB map. Renders as a list of
-// (key, name) pairs with add/remove. Local state holds rows so admin
-// can edit a key in-place without losing the row when intermediate
-// values are duplicates; the parent only sees a clean object on commit.
+// (key, name) pairs with add/remove. Local row state is the source of
+// truth — parent only receives the cleaned object via onChange, and the
+// parent never feeds us back rebuilt rows. That avoids the empty-row
+// vanish bug: a fresh `{key:"", name:""}` row that gets filtered out
+// of the committed object would otherwise be wiped on the next parent
+// re-render if we re-derived rows from `value`.
 function DesignatedHotelsEditor({
   value,
   onChange,
@@ -917,33 +920,15 @@ function DesignatedHotelsEditor({
   disabled: boolean;
 }) {
   type Row = { rowId: string; key: string; name: string };
-  const initialRows = useRef<Row[] | null>(null);
-  if (initialRows.current === null) {
-    initialRows.current = Object.entries(value ?? {}).map(([k, n], i) => ({
+  const [rows, setRows] = useState<Row[]>(() =>
+    Object.entries(value ?? {}).map(([k, n], i) => ({
       rowId: `r${i}`,
       key: k,
       name: n,
-    }));
-  }
-  const [rows, setRows] = useState<Row[]>(initialRows.current);
+    })),
+  );
 
-  // Sync from parent if value changes externally (e.g. server refresh).
-  useEffect(() => {
-    const fromParent = Object.entries(value ?? {}).map(([k, n], i) => ({
-      rowId: `r${i}`,
-      key: k,
-      name: n,
-    }));
-    const sameLen = fromParent.length === rows.length;
-    const sameContent =
-      sameLen &&
-      fromParent.every((r, i) => r.key === rows[i].key && r.name === rows[i].name);
-    if (!sameContent) setRows(fromParent);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  function commit(next: Row[]) {
-    setRows(next);
+  function emit(next: Row[]) {
     const obj: Record<string, string> = {};
     for (const r of next) {
       const k = r.key.trim();
@@ -958,20 +943,23 @@ function DesignatedHotelsEditor({
   function updateRow(idx: number, patch: Partial<Row>) {
     const next = rows.slice();
     next[idx] = { ...next[idx], ...patch };
-    commit(next);
+    setRows(next);
+    emit(next);
   }
 
   function removeRow(idx: number) {
     const next = rows.slice();
     next.splice(idx, 1);
-    commit(next);
+    setRows(next);
+    emit(next);
   }
 
   function addRow() {
-    commit([
-      ...rows,
+    setRows((prev) => [
+      ...prev,
       { rowId: `r${Date.now()}`, key: "", name: "" },
     ]);
+    // Don't emit here — empty rows contribute nothing until admin types.
   }
 
   return (
