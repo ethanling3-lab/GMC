@@ -22,6 +22,7 @@ import {
 import { AddManualRowDialog } from "@/components/admin/transfer/AddManualRowDialog";
 import { EditFlightDialog } from "@/components/admin/transfer/EditFlightDialog";
 import { EditManualPassengerDialog } from "@/components/admin/transfer/EditManualPassengerDialog";
+import { DeleteFlightButton } from "@/components/admin/transfer/DeleteFlightButton";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Transfer list" };
@@ -557,23 +558,33 @@ function RowGroup({
                   <>
                     <FlightLine flight={ln.flight} />
                     {canEdit ? (
-                      <EditFlightDialog
-                        initial={{
-                          enrollment_id: ln.flight.enrollment_id,
-                          direction: dir,
-                          participant_label: participantLabel(ln.flight),
-                          flight_number: ln.flight.flight_number,
-                          airline: ln.flight.airline,
-                          origin_airport: ln.flight.origin_airport,
-                          destination_airport: ln.flight.destination_airport,
-                          scheduled_at: ln.flight.scheduled_at,
-                          terminal: ln.flight.terminal,
-                          hotel_key: ln.flight.hotel_key,
-                          is_vip: ln.flight.is_vip,
-                        }}
-                        mainVenueName={mainVenueName}
-                        designatedHotels={designatedHotels}
-                      />
+                      <>
+                        <EditFlightDialog
+                          initial={{
+                            enrollment_id: ln.flight.enrollment_id,
+                            direction: dir,
+                            participant_label: participantLabel(ln.flight),
+                            flight_number: ln.flight.flight_number,
+                            airline: ln.flight.airline,
+                            origin_airport: ln.flight.origin_airport,
+                            destination_airport: ln.flight.destination_airport,
+                            scheduled_at: ln.flight.scheduled_at,
+                            terminal: ln.flight.terminal,
+                            hotel_key: ln.flight.hotel_key,
+                            is_vip: ln.flight.is_vip,
+                          }}
+                          mainVenueName={mainVenueName}
+                          designatedHotels={designatedHotels}
+                        />
+                        <DeleteFlightButton
+                          initial={{
+                            enrollment_id: ln.flight.enrollment_id,
+                            direction: dir,
+                            participant_label: participantLabel(ln.flight),
+                            flight_summary: flightSummary(ln.flight),
+                          }}
+                        />
+                      </>
                     ) : null}
                   </>
                 ) : (
@@ -656,6 +667,14 @@ function participantLabel(flight: TransferRowFlight): string {
   const p = flight.participant;
   const name = p?.name_en || p?.name_cn || "—";
   return p?.region_id ? `${name} · ${p.region_id}` : name;
+}
+
+function flightSummary(flight: TransferRowFlight): string {
+  const fn = flight.flight_number ?? "????";
+  const o = flight.origin_airport ?? "?";
+  const d = flight.destination_airport ?? "?";
+  const t = flight.scheduled_at ? formatHHMM(flight.scheduled_at) : "????";
+  return `${fn} ${o}→${d} ${t}`;
 }
 
 function formatDate(d: string): string {
