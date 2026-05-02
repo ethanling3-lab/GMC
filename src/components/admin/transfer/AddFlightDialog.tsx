@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 // Add a flight for an enrolled participant directly from the transfer-list
@@ -8,11 +8,22 @@ import { useRouter } from "next/navigation";
 // any approved/paid enrolment for the event without going through an inbox
 // thread. Fires POST /api/admin/flight-info with confirm:true so the row
 // lands ready to feed the next Generate.
+//
+// The picker is a typeahead: admin types name / region_id / phone fragment,
+// results sort with no-flight-yet first (for the chosen direction), then
+// already-has-flight at the bottom (dimmed + badge). Picking an enrolment
+// that already has a flight means the new save will OVERWRITE that flight
+// (upsert key is enrollment_id+direction), so the badge doubles as a
+// "you're about to overwrite" cue.
 
 export type EnrolmentOption = {
   enrollment_id: string;
   participant_label: string;       // e.g. "Lim Sheng Chi · MY100"
+  name_en: string | null;
+  name_cn: string | null;
   region_id: string | null;
+  has_arrival_flight: boolean;
+  has_departure_flight: boolean;
 };
 
 export function AddFlightDialog({
@@ -30,6 +41,7 @@ export function AddFlightDialog({
   const [error, setError] = useState<string | null>(null);
 
   const [enrolment, setEnrolment] = useState("");
+  const [query, setQuery] = useState("");
   const [direction, setDirection] = useState<"arrival" | "departure">("arrival");
   const [flightNumber, setFlightNumber] = useState("");
   const [airline, setAirline] = useState("");
@@ -40,10 +52,12 @@ export function AddFlightDialog({
   const [terminal, setTerminal] = useState("");
   const [hotelKey, setHotelKey] = useState("main_venue");
   const [vip, setVip] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) {
       setEnrolment("");
+      setQuery("");
       setDirection("arrival");
       setFlightNumber("");
       setAirline("");
@@ -56,8 +70,37 @@ export function AddFlightDialog({
       setVip(false);
       setError(null);
       setBusy(false);
+    } else {
+      // Autofocus the search box when the dialog opens.
+      requestAnimationFrame(() => searchRef.current?.focus());
     }
   }, [open]);
+
+  const selectedEnrolment = enrolments.find(
+    (e) => e.enrollment_id === enrolment,
+  );
+
+  const filteredEnrolments = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = enrolments.filter((e) => {
+      if (!q) return true;
+      return (
+        (e.name_en ?? "").toLowerCase().includes(q) ||
+        (e.name_cn ?? "").toLowerCase().includes(q) ||
+        (e.region_id ?? "").toLowerCase().includes(q)
+      );
+    });
+    // Sort: no-flight-yet for the chosen direction first, then those who
+    // already have a flight (dimmed). Within each bucket, alphabetical.
+    return filtered.slice().sort((a, b) => {
+      const aHas = direction === "arrival" ? a.has_arrival_flight : a.has_departure_flight;
+      const bHas = direction === "arrival" ? b.has_arrival_flight : b.has_departure_flight;
+      if (aHas !== bHas) return aHas ? 1 : -1;
+      const an = (a.name_en || a.name_cn || "").toLowerCase();
+      const bn = (b.name_en || b.name_cn || "").toLowerCase();
+      return an.localeCompare(bn);
+    });
+  }, [enrolments, query, direction]);
 
   useEffect(() => {
     if (!open) return;
@@ -177,18 +220,87 @@ export function AddFlightDialog({
             </div>
             <div className="px-6 py-5 flex flex-col gap-3">
               <Field label="Participant">
-                <select
-                  value={enrolment}
-                  onChange={(e) => setEnrolment(e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">— pick one —</option>
-                  {enrolments.map((e) => (
-                    <option key={e.enrollment_id} value={e.enrollment_id}>
-                      {e.participant_label}
-                    </option>
-                  ))}
-                </select>
+                {selectedEnrolment ? (
+                  <div className="flex items-center justify-between gap-2 h-9 px-3 rounded-[var(--radius-md)] border border-[var(--cinnabar)]/30 bg-[var(--cinnabar-wash)]/30">
+                    <span className="text-[12.5px] text-[var(--ink)] truncate">
+                      {selectedEnrolment.participant_label}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEnrolment("");
+                        setQuery("");
+                        requestAnimationFrame(() => searchRef.current?.focus());
+                      }}
+                      className="inline-flex items-center justify-center w-5 h-5 rounded-[var(--radius-sm)] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] hover:bg-[var(--paper)]/60 transition-colors"
+                      aria-label="Clear selection"
+                      title="Clear selection"
+                    >
+                      <span aria-hidden="true" className="text-[12px] leading-none">✕</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <input
+                      ref={searchRef}
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search name or region ID…"
+                      className={inputClass}
+                    />
+                    <div className="mt-1 max-h-[180px] overflow-y-auto rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)]">
+                      {filteredEnrolments.length === 0 ? (
+                        <div className="px-3 py-4 text-[11.5px] text-[var(--ink-mute)] leading-[1.5]">
+                          No matches.{" "}
+                          <span className="text-[var(--ink-faint)]">
+                            Not enrolled? Close this dialog and use{" "}
+                            <strong className="text-[var(--ink-soft)]">+ Add manual row</strong>{" "}
+                            instead.
+                          </span>
+                        </div>
+                      ) : (
+                        <ul>
+                          {filteredEnrolments.map((opt) => {
+                            const has =
+                              direction === "arrival"
+                                ? opt.has_arrival_flight
+                                : opt.has_departure_flight;
+                            return (
+                              <li key={opt.enrollment_id}>
+                                <button
+                                  type="button"
+                                  onClick={() => setEnrolment(opt.enrollment_id)}
+                                  className="w-full text-left px-3 py-1.5 flex items-center justify-between gap-3 hover:bg-[var(--paper-deep)]/60 focus:bg-[var(--paper-deep)]/60 focus:outline-none transition-colors"
+                                >
+                                  <span
+                                    className={`flex items-center gap-2 truncate ${has ? "text-[var(--ink-mute)]" : "text-[var(--ink)]"}`}
+                                  >
+                                    {opt.region_id ? (
+                                      <span className="font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
+                                        {opt.region_id}
+                                      </span>
+                                    ) : null}
+                                    <span className="text-[12px] truncate">
+                                      {opt.name_en || opt.name_cn || "—"}
+                                    </span>
+                                  </span>
+                                  {has ? (
+                                    <span
+                                      title="Already has a flight for this direction — saving will overwrite"
+                                      className="inline-flex items-center h-[16px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[8.5px] tracking-[0.16em] uppercase text-[var(--ink-soft)] whitespace-nowrap"
+                                    >
+                                      has flight
+                                    </span>
+                                  ) : null}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
               </Field>
               <Field label="Direction">
                 <div className="flex items-center gap-3">

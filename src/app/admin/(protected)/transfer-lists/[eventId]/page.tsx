@@ -71,7 +71,8 @@ export default async function TransferListDetailPage({
 
   // Enrolment options for AddFlightDialog. Cheap select; only the rendering-
   // relevant fields are fetched. Filter to active statuses so admin doesn't
-  // see cancelled rows in the picker.
+  // see cancelled rows in the picker. Joined with flight_info so the picker
+  // can flag enrolments that already have an arrival/departure flight.
   type EnrolRow = {
     id: string;
     participant: {
@@ -86,16 +87,40 @@ export default async function TransferListDetailPage({
     .eq("event_id", eventId)
     .in("status", ["approved", "paid"])
     .returns<EnrolRow[]>();
+  const enrollmentIds = (enrolRows ?? []).map((e) => e.id);
+  const flightFlags = new Map<
+    string,
+    { arrival: boolean; departure: boolean }
+  >();
+  if (enrollmentIds.length > 0) {
+    const { data: flightRows } = await supabase
+      .from("flight_info")
+      .select("enrollment_id, direction")
+      .in("enrollment_id", enrollmentIds)
+      .returns<Array<{ enrollment_id: string; direction: "arrival" | "departure" }>>();
+    for (const f of flightRows ?? []) {
+      const cur = flightFlags.get(f.enrollment_id) ?? {
+        arrival: false,
+        departure: false,
+      };
+      cur[f.direction] = true;
+      flightFlags.set(f.enrollment_id, cur);
+    }
+  }
   const enrolments: EnrolmentOption[] = (enrolRows ?? []).map((e) => {
-    const name =
-      e.participant?.name_en ||
-      e.participant?.name_cn ||
-      e.id.slice(0, 8);
+    const nameEn = e.participant?.name_en ?? null;
+    const nameCn = e.participant?.name_cn ?? null;
+    const name = nameEn || nameCn || e.id.slice(0, 8);
     const region = e.participant?.region_id;
+    const flags = flightFlags.get(e.id) ?? { arrival: false, departure: false };
     return {
       enrollment_id: e.id,
       participant_label: region ? `${name} · ${region}` : name,
+      name_en: nameEn,
+      name_cn: nameCn,
       region_id: region ?? null,
+      has_arrival_flight: flags.arrival,
+      has_departure_flight: flags.departure,
     };
   });
   const designatedHotels =
