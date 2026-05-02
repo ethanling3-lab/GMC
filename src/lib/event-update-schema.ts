@@ -70,6 +70,24 @@ export const EventUpdateSchema = z
     status: z.enum(["draft", "open", "closed", "archived"]).optional(),
     requires_approval: z.boolean().optional(),
 
+    // Transfer-list inputs (migration 018). Short hotel name used by the
+    // airport transfer generator + flight-info hotel dropdown. Designated
+    // hotels are a key→display-name map; values render in the dropdown.
+    main_venue_hotel_name: z.string().trim().max(200).nullable().optional(),
+    designated_hotels: z
+      .record(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(64)
+          .regex(/^[a-z0-9][a-z0-9_-]*$/, {
+            message: "Hotel key must be lowercase alphanumerics, _, -",
+          }),
+        z.string().trim().min(1).max(200),
+      )
+      .optional(),
+
     form_schema: FormSchema.optional(),
 
     bank_details: z

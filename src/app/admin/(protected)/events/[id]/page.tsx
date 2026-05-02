@@ -19,7 +19,7 @@ export default async function EventDetailPage({ params }: PageProps) {
 
   const supabase = await createSupabaseServerClient();
   const columnsWithSchema =
-    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, form_schema, bank_details, created_at, updated_at";
+    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, form_schema, bank_details, main_venue_hotel_name, designated_hotels, created_at, updated_at";
   const columnsLegacy =
     "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, created_at, updated_at";
 
@@ -33,7 +33,8 @@ export default async function EventDetailPage({ params }: PageProps) {
     if (primary.error) {
       const code = (primary.error as { code?: string }).code;
       if (code !== "42703") throw new Error(primary.error.message);
-      // Migration 008 not applied — fall back and default form_schema to {}.
+      // Migration 008/018 not applied — fall back to a column set that
+      // pre-dates both, then synthesize the missing fields with defaults.
       const fallback = await supabase
         .from("events")
         .select(columnsLegacy)
@@ -41,7 +42,13 @@ export default async function EventDetailPage({ params }: PageProps) {
         .maybeSingle();
       if (fallback.error) throw new Error(fallback.error.message);
       data = fallback.data
-        ? { ...fallback.data, form_schema: {}, bank_details: {} }
+        ? {
+            ...fallback.data,
+            form_schema: {},
+            bank_details: {},
+            main_venue_hotel_name: null,
+            designated_hotels: {},
+          }
         : null;
     } else {
       data = primary.data;
@@ -49,7 +56,17 @@ export default async function EventDetailPage({ params }: PageProps) {
   }
   if (!data) notFound();
 
-  const event = data as EventFull;
+  // Coerce designated_hotels to an object — column is nullable JSONB.
+  const raw = data as Record<string, unknown>;
+  const event = {
+    ...raw,
+    designated_hotels:
+      raw.designated_hotels &&
+      typeof raw.designated_hotels === "object" &&
+      !Array.isArray(raw.designated_hotels)
+        ? (raw.designated_hotels as Record<string, string>)
+        : {},
+  } as EventFull;
 
   const canEdit = admin.role === "super_admin";
   const canDelete = admin.role === "super_admin";

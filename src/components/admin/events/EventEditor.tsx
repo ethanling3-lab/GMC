@@ -46,6 +46,10 @@ export type EventFull = {
   requires_approval: boolean;
   form_schema: Record<string, unknown>;
   bank_details: { en?: string; zh?: string } | null;
+  // Transfer-list inputs — short hotel name for the airport generator +
+  // designated hotel map (key→display name) for the flight-info dropdown.
+  main_venue_hotel_name: string | null;
+  designated_hotels: Record<string, string>;
   created_at: string;
   updated_at: string;
 };
@@ -258,6 +262,8 @@ export function EventEditor({
         target_audience_filter: targetFilter,
         requires_approval: draft.requires_approval,
         bank_details: draft.bank_details ?? {},
+        main_venue_hotel_name: draft.main_venue_hotel_name,
+        designated_hotels: draft.designated_hotels ?? {},
       });
       setSuccess("Saved");
       router.refresh();
@@ -550,6 +556,36 @@ export function EventEditor({
               onChange={(e) => update("enrollment_closes_at", localInputToIso(e.target.value))}
               disabled={!canEdit}
               className={inputCls("font-mono text-[12.5px]")}
+            />
+          </Field>
+        </div>
+
+        <div className="mt-2 pt-5 border-t border-dashed border-[var(--paper-shadow)] grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field
+            label="Main venue hotel"
+            labelZh="主场地酒店"
+            hint="Short hotel name. Used by the airport transfer list (default drop-off + departure pickup) and the flight-info hotel dropdown. Distinct from the public Venue field above."
+          >
+            <input
+              type="text"
+              value={draft.main_venue_hotel_name ?? ""}
+              onChange={(e) =>
+                update("main_venue_hotel_name", e.target.value || null)
+              }
+              disabled={!canEdit}
+              placeholder="St. Giles"
+              className={inputCls()}
+            />
+          </Field>
+          <Field
+            label="Designated hotels"
+            labelZh="指定酒店"
+            hint="Extra hotels participants may stay at. Key is a slug (used internally on flight_info.hotel_key); name is what shows in the dropdown."
+          >
+            <DesignatedHotelsEditor
+              value={draft.designated_hotels}
+              onChange={(next) => update("designated_hotels", next)}
+              disabled={!canEdit}
             />
           </Field>
         </div>
@@ -864,6 +900,135 @@ function Field({
         </span>
       ) : null}
     </label>
+  );
+}
+
+// Editor for the designated_hotels JSONB map. Renders as a list of
+// (key, name) pairs with add/remove. Local state holds rows so admin
+// can edit a key in-place without losing the row when intermediate
+// values are duplicates; the parent only sees a clean object on commit.
+function DesignatedHotelsEditor({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+  disabled: boolean;
+}) {
+  type Row = { rowId: string; key: string; name: string };
+  const initialRows = useRef<Row[] | null>(null);
+  if (initialRows.current === null) {
+    initialRows.current = Object.entries(value ?? {}).map(([k, n], i) => ({
+      rowId: `r${i}`,
+      key: k,
+      name: n,
+    }));
+  }
+  const [rows, setRows] = useState<Row[]>(initialRows.current);
+
+  // Sync from parent if value changes externally (e.g. server refresh).
+  useEffect(() => {
+    const fromParent = Object.entries(value ?? {}).map(([k, n], i) => ({
+      rowId: `r${i}`,
+      key: k,
+      name: n,
+    }));
+    const sameLen = fromParent.length === rows.length;
+    const sameContent =
+      sameLen &&
+      fromParent.every((r, i) => r.key === rows[i].key && r.name === rows[i].name);
+    if (!sameContent) setRows(fromParent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  function commit(next: Row[]) {
+    setRows(next);
+    const obj: Record<string, string> = {};
+    for (const r of next) {
+      const k = r.key.trim();
+      const n = r.name.trim();
+      if (!k || !n) continue;
+      // Last write wins on duplicate keys — admin sees the conflict in the UI.
+      obj[k] = n;
+    }
+    onChange(obj);
+  }
+
+  function updateRow(idx: number, patch: Partial<Row>) {
+    const next = rows.slice();
+    next[idx] = { ...next[idx], ...patch };
+    commit(next);
+  }
+
+  function removeRow(idx: number) {
+    const next = rows.slice();
+    next.splice(idx, 1);
+    commit(next);
+  }
+
+  function addRow() {
+    commit([
+      ...rows,
+      { rowId: `r${Date.now()}`, key: "", name: "" },
+    ]);
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {rows.length === 0 ? (
+        <p className="text-[12px] text-[var(--ink-faint)] italic">
+          No designated hotels.
+        </p>
+      ) : null}
+      {rows.map((r, i) => {
+        const dupKey =
+          r.key.trim() !== "" &&
+          rows.findIndex((x) => x.key.trim() === r.key.trim()) !== i;
+        return (
+          <div key={r.rowId} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={r.key}
+              onChange={(e) => updateRow(i, { key: e.target.value.toLowerCase() })}
+              disabled={disabled}
+              placeholder="cititel"
+              className={`${inputCls("font-mono text-[12px] w-[160px]")} ${dupKey ? "border-[var(--cinnabar)]/40" : ""}`}
+              aria-invalid={dupKey || undefined}
+            />
+            <input
+              type="text"
+              value={r.name}
+              onChange={(e) => updateRow(i, { name: e.target.value })}
+              disabled={disabled}
+              placeholder="Cititel Penang"
+              className={inputCls("flex-1")}
+            />
+            {!disabled ? (
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                aria-label="Remove hotel"
+                title="Remove hotel"
+                className="inline-flex items-center justify-center w-9 h-9 rounded-[var(--radius-md)] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] hover:bg-[var(--paper-deep)]/60 transition-colors"
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+      {!disabled ? (
+        <button
+          type="button"
+          onClick={addRow}
+          className="self-start inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-pill)] border border-dashed border-[var(--paper-shadow)] text-[11.5px] tracking-[0.06em] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)] transition-colors"
+        >
+          <span aria-hidden="true">＋</span>
+          Add hotel
+        </button>
+      ) : null}
+    </div>
   );
 }
 
