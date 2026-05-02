@@ -13,6 +13,7 @@ import { GenerateButton } from "@/components/admin/transfer/GenerateButton";
 import { StatusToggle } from "@/components/admin/transfer/StatusToggle";
 import { DeleteButton } from "@/components/admin/transfer/DeleteButton";
 import { ExportButton } from "@/components/admin/transfer/ExportButton";
+import { RowEditDialog } from "@/components/admin/transfer/RowEditDialog";
 
 export const metadata: Metadata = { title: "Transfer list" };
 export const dynamic = "force-dynamic";
@@ -156,6 +157,7 @@ export default async function TransferListDetailPage({
         dir={dir}
         state={active}
         readOnly={isReadOnly}
+        canEditRows={!isReadOnly}
       />
     </div>
   );
@@ -225,12 +227,14 @@ function DirectionPanel({
   dir,
   state,
   readOnly,
+  canEditRows,
 }: {
   eventId: string;
   eventHasSheet: boolean;
   dir: "arrival" | "departure";
   state: TransferDetailDirection;
   readOnly: boolean;
+  canEditRows: boolean;
 }) {
   const totalPax = state.rows.reduce(
     (acc, r) => acc + (r.flight_info_ids?.length ?? 0),
@@ -307,11 +311,20 @@ function DirectionPanel({
                 </th>
                 <th className="pb-3 pr-3 font-normal">Flights</th>
                 <th className="pb-3 pr-3 font-normal">Remark</th>
+                {canEditRows && state.list ? (
+                  <th className="pb-3 pr-3 font-normal" aria-label="Edit" />
+                ) : null}
               </tr>
             </thead>
             <tbody>
               {state.rows.map((r) => (
-                <RowGroup key={r.id} row={r} dir={dir} />
+                <RowGroup
+                  key={r.id}
+                  row={r}
+                  dir={dir}
+                  listId={state.list?.id ?? ""}
+                  canEdit={canEditRows && Boolean(state.list)}
+                />
               ))}
             </tbody>
           </table>
@@ -321,11 +334,31 @@ function DirectionPanel({
   );
 }
 
-function RowGroup({ row, dir }: { row: TransferDetailRow; dir: "arrival" | "departure" }) {
+function RowGroup({
+  row,
+  dir,
+  listId,
+  canEdit,
+}: {
+  row: TransferDetailRow;
+  dir: "arrival" | "departure";
+  listId: string;
+  canEdit: boolean;
+}) {
   return (
     <tr className={`border-t border-[var(--paper-shadow)] align-top ${row.vip ? "bg-[var(--cinnabar-wash)]/40" : ""}`}>
       <td className="py-3 pr-3 tabular-nums text-[var(--ink-mute)] align-top">
-        {row.group_no}
+        <div className="flex items-center gap-1.5">
+          <span>{row.group_no}</span>
+          {row.admin_edited ? (
+            <span
+              title="Manually edited — regenerate will skip this row unless forced"
+              className="inline-flex items-center h-[16px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[8.5px] tracking-[0.16em] uppercase text-[var(--ink-soft)]"
+            >
+              edited
+            </span>
+          ) : null}
+        </div>
       </td>
       <td className="py-3 pr-3 tabular-nums text-[var(--ink)] align-top whitespace-nowrap">
         {row.landing_or_takeoff_at ? formatTimeBlock(row.landing_or_takeoff_at) : "—"}
@@ -361,6 +394,23 @@ function RowGroup({ row, dir }: { row: TransferDetailRow; dir: "arrival" | "depa
       <td className="py-3 pr-3 align-top text-[var(--ink-mute)] leading-[1.5] max-w-[28ch]">
         {row.remark ?? ""}
       </td>
+      {canEdit ? (
+        <td className="py-3 pr-3 align-top">
+          <RowEditDialog
+            listId={listId}
+            direction={dir}
+            row={{
+              id: row.id,
+              vehicle_type: row.vehicle_type,
+              landing_or_takeoff_at: row.landing_or_takeoff_at,
+              terminal: row.terminal,
+              destination: row.destination,
+              remark: row.remark,
+              vip: row.vip,
+            }}
+          />
+        </td>
+      ) : null}
     </tr>
   );
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
-import type { EventContext, FlightDirection, FlightRow } from "./types";
+import { parseRulesOverride, type EventContext, type FlightDirection, type FlightRow } from "./types";
 
 // Loads the inputs the generator needs for a single (event, direction) pair:
 //   * event row → arrival/departure days, main venue hotel, designated hotels
@@ -23,6 +23,7 @@ type EventDbRow = {
   city: string | null;
   main_venue_hotel_name: string | null;
   designated_hotels: Record<string, string> | null;
+  transfer_rules: Record<string, unknown> | null;
 };
 
 type FlightDbRow = {
@@ -59,7 +60,7 @@ export async function loadGeneratorInputs(
   const { data: ev, error: evErr } = await service
     .from("events")
     .select(
-      "id, arrival_day, departure_day, city, main_venue_hotel_name, designated_hotels",
+      "id, arrival_day, departure_day, city, main_venue_hotel_name, designated_hotels, transfer_rules",
     )
     .eq("id", eventId)
     .maybeSingle<EventDbRow>();
@@ -127,6 +128,7 @@ export async function loadGeneratorInputs(
     main_venue_hotel_name: ev.main_venue_hotel_name,
     designated_hotels: ev.designated_hotels ?? {},
     event_city: ev.city,
+    rules_override: parseRulesOverride(ev.transfer_rules),
   };
 
   return { context, flights };

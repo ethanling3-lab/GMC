@@ -32,7 +32,14 @@ export type GenerateResult = {
 };
 
 export function generateTransferList(input: GenerateInput): GenerateResult {
-  const rules: GeneratorRules = { ...DEFAULT_RULES, ...(input.rules ?? {}) };
+  // Merge order: defaults → per-event override → caller override.
+  // Caller (POST body) wins so a one-off generate can experiment without
+  // mutating the event row.
+  const rules: GeneratorRules = {
+    ...DEFAULT_RULES,
+    ...(input.context.rules_override ?? {}),
+    ...(input.rules ?? {}),
+  };
 
   const groups =
     input.direction === "arrival"

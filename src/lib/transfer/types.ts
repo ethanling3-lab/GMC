@@ -48,6 +48,9 @@ export type EventContext = {
   designated_hotels: Record<string, string>; // { '<hotel_id>': 'Cititel', ... }
   // City the event is in. Decides the city-name side of the flight info string.
   event_city: string | null;
+  // Per-event overrides parsed from events.transfer_rules. Empty object when
+  // the column is unset — caller merges into DEFAULT_RULES.
+  rules_override: Partial<GeneratorRules>;
 };
 
 // One vehicle group = one row in transfer_list_rows. The passengers array is
@@ -66,12 +69,14 @@ export type TransferGroup = {
 };
 
 // Engine knobs surfaced for `rules_snapshot` so we can re-derive what the
-// generator was told to do at the time it ran.
+// generator was told to do at the time it ran. All fields except the
+// vehicle_table_version are overrideable per-event via events.transfer_rules.
 export type GeneratorRules = {
   consolidation_window_minutes: number;       // 30
   departure_lead_hours: number;               // 3
   coach_cutoff_hour_local: number;            // 15 (≥15:00 = coach)
   coach_hotel_departure_local: string;        // '12:00'
+  coach_rule_enabled: boolean;                // false → flights ≥cutoff use 3-hour rule, no 12:00 coach
   vehicle_table_version: string;              // for telemetry / audit
 };
 
@@ -80,5 +85,41 @@ export const DEFAULT_RULES: GeneratorRules = {
   departure_lead_hours: 3,
   coach_cutoff_hour_local: 15,
   coach_hotel_departure_local: "12:00",
+  coach_rule_enabled: true,
   vehicle_table_version: "2026-04-28",
 };
+
+// Validates a per-event override JSONB against the GeneratorRules shape and
+// returns a clean Partial<GeneratorRules>. Unknown keys are dropped; invalid
+// types are skipped so a malformed events.transfer_rules row falls back to
+// defaults rather than blowing up the generator.
+export function parseRulesOverride(
+  raw: unknown,
+): Partial<GeneratorRules> {
+  if (!raw || typeof raw !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  const out: Partial<GeneratorRules> = {};
+  if (typeof r.consolidation_window_minutes === "number" && r.consolidation_window_minutes > 0) {
+    out.consolidation_window_minutes = Math.floor(r.consolidation_window_minutes);
+  }
+  if (typeof r.departure_lead_hours === "number" && r.departure_lead_hours >= 0) {
+    out.departure_lead_hours = r.departure_lead_hours;
+  }
+  if (
+    typeof r.coach_cutoff_hour_local === "number" &&
+    r.coach_cutoff_hour_local >= 0 &&
+    r.coach_cutoff_hour_local <= 23
+  ) {
+    out.coach_cutoff_hour_local = Math.floor(r.coach_cutoff_hour_local);
+  }
+  if (
+    typeof r.coach_hotel_departure_local === "string" &&
+    /^\d{1,2}:\d{2}$/.test(r.coach_hotel_departure_local)
+  ) {
+    out.coach_hotel_departure_local = r.coach_hotel_departure_local;
+  }
+  if (typeof r.coach_rule_enabled === "boolean") {
+    out.coach_rule_enabled = r.coach_rule_enabled;
+  }
+  return out;
+}

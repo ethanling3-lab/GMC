@@ -183,6 +183,7 @@ export type TransferDetailRow = {
   destination: string | null;
   remark: string | null;
   vip: boolean;
+  admin_edited: boolean;
   flight_info_ids: string[];
   flights: TransferRowFlight[];
 };
@@ -259,12 +260,13 @@ export async function loadTransferDetail(
       destination: string | null;
       remark: string | null;
       vip: boolean;
+      admin_edited: boolean;
       flight_info_ids: string[];
     };
     const { data: rows } = await supabase
       .from("transfer_list_rows")
       .select(
-        "id, group_no, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, flight_info_ids",
+        "id, group_no, vehicle_type, landing_or_takeoff_at, terminal, destination, remark, vip, admin_edited, flight_info_ids",
       )
       .eq("transfer_list_id", aggDir.list_id)
       .order("group_no", { ascending: true })

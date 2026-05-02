@@ -51,7 +51,9 @@ export type AuditAction =
   | "transfer_list.generated"
   | "transfer_list.finalized"
   | "transfer_list.deleted"
-  | "transfer_list.exported";
+  | "transfer_list.exported"
+  | "transfer_list.row_edited"
+  | "transfer_list.regenerated_force";
 
 export type WriteAuditLog = {
   actor_id: string | null;

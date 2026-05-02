@@ -10,12 +10,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // POST /api/admin/transfer-lists
-// Body: { event_id: uuid, direction: 'arrival' | 'departure' }
+// Body: { event_id: uuid, direction: 'arrival' | 'departure', rules?: Partial<GeneratorRules> }
+// Query: ?force=1 — regenerate even if some prior draft rows have admin_edited=true
 //
 // Generates (or regenerates) the draft transfer list for the given event +
 // direction. Re-running replaces the prior draft for the same pair — drafts
-// are disposable. A finalized list is left alone; admin must explicitly
-// revert to draft to regenerate.
+// are disposable, EXCEPT rows that admins manually edited (admin_edited=true)
+// require ?force=1 to wipe. A finalized list is always protected; admin
+// must revert to draft first.
 //
 // Role gate matches transfer_lists RLS write policy (migration 014):
 // super_admin or regional_lead.
@@ -23,6 +25,15 @@ export const runtime = "nodejs";
 const Body = z.object({
   event_id: z.string().uuid(),
   direction: z.enum(["arrival", "departure"]),
+  rules: z
+    .object({
+      consolidation_window_minutes: z.number().int().positive().optional(),
+      departure_lead_hours: z.number().nonnegative().optional(),
+      coach_cutoff_hour_local: z.number().int().min(0).max(23).optional(),
+      coach_hotel_departure_local: z.string().regex(/^\d{1,2}:\d{2}$/).optional(),
+      coach_rule_enabled: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export async function POST(req: Request) {
@@ -41,6 +52,8 @@ export async function POST(req: Request) {
     const msg = err instanceof Error ? err.message : "Invalid payload";
     return NextResponse.json({ error: "validation_error", detail: msg }, { status: 400 });
   }
+
+  const force = new URL(req.url).searchParams.get("force") === "1";
 
   const inputs = await loadGeneratorInputs(body.event_id, body.direction);
   if ("error" in inputs) {
@@ -74,6 +87,7 @@ export async function POST(req: Request) {
     direction: body.direction,
     flights: inputs.flights,
     context: inputs.context,
+    rules: body.rules,
   });
 
   const service = createSupabaseServiceClient();
@@ -101,14 +115,31 @@ export async function POST(req: Request) {
       { status: 409 },
     );
   }
+  let editedCount = 0;
   if (drafts.length > 0) {
+    const draftIds = drafts.map((d) => d.id);
+    const { count } = await service
+      .from("transfer_list_rows")
+      .select("id", { count: "exact", head: true })
+      .in("transfer_list_id", draftIds)
+      .eq("admin_edited", true);
+    editedCount = count ?? 0;
+
+    if (editedCount > 0 && !force) {
+      return NextResponse.json(
+        {
+          error: "edited_rows_present",
+          detail: `Prior draft has ${editedCount} admin-edited row${editedCount === 1 ? "" : "s"}. Re-run with ?force=1 to wipe.`,
+          edited_count: editedCount,
+        },
+        { status: 409 },
+      );
+    }
+
     const { error: delErr } = await service
       .from("transfer_lists")
       .delete()
-      .in(
-        "id",
-        drafts.map((d) => d.id),
-      );
+      .in("id", draftIds);
     if (delErr) {
       return NextResponse.json({ error: delErr.message }, { status: 500 });
     }
@@ -153,7 +184,10 @@ export async function POST(req: Request) {
 
   await writeAuditLog({
     actor_id: admin.id,
-    action: "transfer_list.generated",
+    action:
+      force && editedCount > 0
+        ? "transfer_list.regenerated_force"
+        : "transfer_list.generated",
     entity: "transfer_lists",
     entity_id: inserted.id,
     metadata: {
@@ -161,6 +195,7 @@ export async function POST(req: Request) {
       direction: body.direction,
       total_pax: result.total_pax,
       total_groups: result.total_groups,
+      forced_over_edits: force && editedCount > 0 ? editedCount : undefined,
     },
   });
 
