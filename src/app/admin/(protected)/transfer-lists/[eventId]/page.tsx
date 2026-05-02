@@ -384,8 +384,8 @@ function DirectionPanel({
                 <Th className="w-[160px]">
                   {dir === "arrival" ? "Drop-off" : "Pickup"}
                 </Th>
-                <Th className="w-[260px]">Passengers</Th>
-                <Th>Flight</Th>
+                <Th className="w-[220px]">Passengers</Th>
+                <Th className="min-w-[260px]">Flight</Th>
                 <Th className="w-[200px]">Remark</Th>
                 {canEditRows && state.list ? (
                   <Th className="w-[36px] text-center" aria-label="Edit">·</Th>
@@ -474,15 +474,14 @@ function RowGroup({
   return (
     <tr className={`group ${tintCls} hover:bg-[var(--paper-deep)]/70 transition-colors`}>
       <Td className="text-center tabular-nums text-[var(--ink-mute)]">
-        <div className="inline-flex flex-col items-center gap-0.5">
+        <div className="inline-flex items-center gap-1.5 justify-center">
           <span>{row.group_no}</span>
           {row.admin_edited ? (
             <span
               title="Manually edited — regenerate skips this row unless forced"
-              className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[8px] tracking-[0.14em] uppercase text-[var(--ink-soft)]"
-            >
-              edited
-            </span>
+              aria-label="Edited"
+              className="inline-block w-[6px] h-[6px] rounded-full bg-[var(--gold)]"
+            />
           ) : null}
         </div>
       </Td>
@@ -513,15 +512,15 @@ function RowGroup({
       <Td className="text-[var(--ink-soft)] leading-[1.4]">
         {row.destination ?? "—"}
       </Td>
-      <Td>
+      <Td className="py-1">
         {lines.length === 0 ? (
           <span className="text-[var(--ink-faint)]">—</span>
         ) : (
-          <ul className="flex flex-col gap-0.5">
-            {lines.map((ln, i) => (
+          <ul className="flex flex-col">
+            {lines.map((ln) => (
               <li
                 key={ln.kind === "real" ? ln.flight.id : `m${ln.index}`}
-                className="min-h-[20px] leading-[1.3] flex items-center gap-1.5"
+                className="line-row group/line h-[24px] flex items-center gap-1.5 whitespace-nowrap"
               >
                 {ln.kind === "real" ? (
                   <PassengerLine flight={ln.flight} />
@@ -529,36 +528,37 @@ function RowGroup({
                   <>
                     <ManualPassengerLine pax={ln.pax} />
                     {canEdit ? (
-                      <EditManualPassengerDialog
-                        listId={listId}
-                        rowId={row.id}
-                        index={ln.index}
-                        passengers={row.manual_passengers}
-                      />
+                      <span className="opacity-0 group-hover/line:opacity-100 transition-opacity">
+                        <EditManualPassengerDialog
+                          listId={listId}
+                          rowId={row.id}
+                          index={ln.index}
+                          passengers={row.manual_passengers}
+                        />
+                      </span>
                     ) : null}
                   </>
                 )}
-                {i === lines.length - 1 ? null : null}
               </li>
             ))}
           </ul>
         )}
       </Td>
-      <Td>
+      <Td className="py-1">
         {lines.length === 0 ? (
           <span className="text-[var(--ink-faint)]">—</span>
         ) : (
-          <ul className="flex flex-col gap-0.5">
+          <ul className="flex flex-col">
             {lines.map((ln) => (
               <li
                 key={ln.kind === "real" ? `f${ln.flight.id}` : `mf${ln.index}`}
-                className="min-h-[20px] leading-[1.3] flex items-center gap-1.5"
+                className="line-row group/line h-[24px] flex items-center gap-2 whitespace-nowrap"
               >
                 {ln.kind === "real" ? (
                   <>
                     <FlightLine flight={ln.flight} />
                     {canEdit ? (
-                      <>
+                      <span className="inline-flex items-center gap-0.5 opacity-0 group-hover/line:opacity-100 transition-opacity">
                         <EditFlightDialog
                           initial={{
                             enrollment_id: ln.flight.enrollment_id,
@@ -584,7 +584,7 @@ function RowGroup({
                             flight_summary: flightSummary(ln.flight),
                           }}
                         />
-                      </>
+                      </span>
                     ) : null}
                   </>
                 ) : (
