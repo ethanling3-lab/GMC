@@ -64,11 +64,21 @@ export function CrumbLabel({
   label: string;
 }) {
   const ctx = useContext(BreadcrumbCtx);
+  // Depend on the STABLE callback references (setLabel + clearLabel are
+  // useCallback with empty deps inside the provider), not the whole ctx
+  // object. The ctx value's identity changes every time `labels` changes,
+  // so depending on `ctx` here creates an infinite loop: setLabel changes
+  // labels → ctx identity changes → effect re-runs → cleanup clears →
+  // setup sets again → labels changes → ... The loop blocks React's
+  // navigation transitions from ever committing (page-level <Link> clicks
+  // appear to do nothing).
+  const setLabel = ctx?.setLabel;
+  const clearLabel = ctx?.clearLabel;
   useEffect(() => {
-    if (!ctx) return;
+    if (!setLabel || !clearLabel) return;
     if (!segment || !label) return;
-    ctx.setLabel(segment, label);
-    return () => ctx.clearLabel(segment);
-  }, [ctx, segment, label]);
+    setLabel(segment, label);
+    return () => clearLabel(segment);
+  }, [setLabel, clearLabel, segment, label]);
   return null;
 }
