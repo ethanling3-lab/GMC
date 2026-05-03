@@ -5,7 +5,9 @@ import { writeAuditLog } from "@/lib/audit";
 import { loadGroupingInputs } from "@/lib/grouping/load";
 import { balance } from "@/lib/grouping/balance";
 import { cushionRank } from "@/lib/grouping/cushion-rank";
+import { runLlmGrouping } from "@/lib/grouping/llm-grouping";
 import { persistGroupingResult } from "@/lib/grouping/persist";
+import type { GroupingResult } from "@/lib/grouping/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,14 +57,6 @@ export async function POST(_req: Request, { params }: RouteCtx) {
 
   const startedAt = Date.now();
 
-  const result =
-    inputs.event.seating_mode === "cushions"
-      ? cushionRank({
-          participants: inputs.participants,
-          cushions: inputs.cushions,
-        })
-      : balance(inputs.participants, inputs.event.config);
-
   // Cushion mode requires shapes to exist before generate is meaningful.
   if (
     inputs.event.seating_mode === "cushions"
@@ -76,6 +70,46 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       },
       { status: 409 },
     );
+  }
+
+  let result: GroupingResult;
+  let llmFailureReason: string | null = null;
+  let llmRetries = 0;
+  let llmTokens = {
+    in: 0,
+    out: 0,
+    cache_read: 0,
+    cache_create: 0,
+    latency_ms: 0,
+  };
+  let llmValidationErrors: string[] = [];
+
+  if (inputs.event.seating_mode === "cushions") {
+    result = cushionRank({
+      participants: inputs.participants,
+      cushions: inputs.cushions,
+    });
+  } else {
+    // Table mode — try LLM first, fall back to balance.ts if it fails.
+    const llm = await runLlmGrouping({
+      participants: inputs.participants,
+      config: inputs.event.config,
+    });
+    llmFailureReason = llm.failure_reason;
+    llmRetries = llm.retries;
+    llmValidationErrors = llm.validation_errors;
+    llmTokens = {
+      in: llm.tokens_in,
+      out: llm.tokens_out,
+      cache_read: llm.cache_read_tokens,
+      cache_create: llm.cache_creation_tokens,
+      latency_ms: llm.latency_ms,
+    };
+    if (llm.result) {
+      result = llm.result;
+    } else {
+      result = balance(inputs.participants, inputs.event.config);
+    }
   }
 
   // Validate the generated result has at least one assignment when there
@@ -113,6 +147,17 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       groups_inserted: persistResult.groups_inserted,
       assignments_inserted: persistResult.assignments_inserted,
       latency_ms: Date.now() - startedAt,
+      llm: {
+        attempted: inputs.event.seating_mode === "tables",
+        retries: llmRetries,
+        failure_reason: llmFailureReason,
+        validation_errors: llmValidationErrors,
+        tokens_in: llmTokens.in,
+        tokens_out: llmTokens.out,
+        cache_read: llmTokens.cache_read,
+        cache_create: llmTokens.cache_create,
+        latency_ms: llmTokens.latency_ms,
+      },
     },
     metadata: {
       seating_mode: inputs.event.seating_mode,
@@ -126,5 +171,6 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     assignments_inserted: persistResult.assignments_inserted,
     n: result.metadata.n,
     k: result.metadata.k,
+    llm_fallback_reason: llmFailureReason,
   });
 }
