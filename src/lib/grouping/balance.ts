@@ -104,19 +104,16 @@ export function balance(
     return (a.region_id ?? "").localeCompare(b.region_id ?? "");
   });
 
-  let cursor = 0;
+  // Least-loaded-first distribution: pick the group with fewest current
+  // members each round. This naturally balances around any pre-seeded
+  // pinned members so a group that started with 1 pinned ends up with
+  // the same final size as the others.
   for (const p of ranked) {
-    // Find next group with capacity.
-    let attempts = 0;
-    while (
-      attempts < k
-      && groups[cursor % k].members.length >= config.group_size_max
-    ) {
-      cursor += 1;
-      attempts += 1;
+    let target = groups[0];
+    for (const g of groups) {
+      if (g.members.length < target.members.length) target = g;
     }
-    groups[cursor % k].members.push(p);
-    cursor += 1;
+    target.members.push(p);
   }
 
   // Step 3 — constraint repair pass.
