@@ -156,16 +156,23 @@ create index if not exists event_floor_plan_shapes_group_idx
 create table if not exists event_seat_assignments (
   id uuid primary key default gen_random_uuid(),
   event_id uuid not null references events(id) on delete cascade,
-  shape_id uuid not null references event_floor_plan_shapes(id) on delete cascade,
-  seat_no int not null,
+  -- shape_id + seat_no are NULLABLE so table-mode generate can persist
+  -- draft membership before the layout exists. Auto-place (M6.6) backfills
+  -- both columns. Cushion mode populates them at generate time.
+  shape_id uuid references event_floor_plan_shapes(id) on delete cascade,
+  seat_no int,
   participant_id uuid not null references participants(id) on delete cascade,
   role group_member_role not null default 'participant',
   group_id uuid references event_groups(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint event_seat_assignments_shape_seat_key unique (shape_id, seat_no),
   constraint event_seat_assignments_event_participant_key unique (event_id, participant_id)
 );
+
+-- Partial unique: enforce one-person-per-seat only when both columns set.
+create unique index if not exists event_seat_assignments_shape_seat_key
+  on event_seat_assignments (shape_id, seat_no)
+  where shape_id is not null and seat_no is not null;
 
 drop trigger if exists event_seat_assignments_set_updated_at on event_seat_assignments;
 create trigger event_seat_assignments_set_updated_at
