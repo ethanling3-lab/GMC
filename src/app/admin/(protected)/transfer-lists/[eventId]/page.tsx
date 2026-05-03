@@ -553,7 +553,7 @@ function RowGroup({
                   <>
                     <ManualPassengerLine pax={ln.pax} />
                     {canEdit ? (
-                      <span className="opacity-0 group-hover/line:opacity-100 transition-opacity">
+                      <span className="opacity-40 hover:opacity-100 transition-opacity">
                         <EditManualPassengerDialog
                           listId={listId}
                           rowId={row.id}
@@ -583,7 +583,7 @@ function RowGroup({
                   <>
                     <FlightLine flight={ln.flight} />
                     {canEdit ? (
-                      <span className="inline-flex items-center gap-0.5 opacity-0 group-hover/line:opacity-100 transition-opacity">
+                      <span className="inline-flex items-center gap-0.5 opacity-40 hover:opacity-100 transition-opacity">
                         <EditFlightDialog
                           initial={{
                             enrollment_id: ln.flight.enrollment_id,

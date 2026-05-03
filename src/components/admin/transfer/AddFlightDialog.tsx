@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 // Add a flight for an enrolled participant directly from the transfer-list
@@ -181,8 +180,7 @@ export function AddFlightDialog({
         Add flight
       </button>
 
-      {open && typeof document !== "undefined"
-        ? createPortal(
+      {!open ? null : (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
           role="dialog"
@@ -428,10 +426,8 @@ export function AddFlightDialog({
               </button>
             </div>
           </div>
-        </div>,
-            document.body,
-          )
-        : null}
+        </div>
+      )}
     </>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 // Add a fully manual row to a transfer list — vehicle assignment that
@@ -147,8 +146,7 @@ export function AddManualRowDialog({
         Add manual row
       </button>
 
-      {open && typeof document !== "undefined"
-        ? createPortal(
+      {!open ? null : (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
           role="dialog"
@@ -325,10 +323,8 @@ export function AddManualRowDialog({
               </button>
             </div>
           </div>
-        </div>,
-            document.body,
-          )
-        : null}
+        </div>
+      )}
     </>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
   ParticipantPicker,
@@ -93,8 +92,7 @@ export function MergeLeadButton({
         Merge lead
       </button>
 
-      {open && typeof document !== "undefined"
-        ? createPortal(
+      {open ? (
         <div
           role="dialog"
           aria-modal="true"
@@ -179,10 +177,8 @@ export function MergeLeadButton({
               </button>
             </div>
           </div>
-        </div>,
-            document.body,
-          )
-        : null}
+        </div>
+      ) : null}
     </>
   );
 }
