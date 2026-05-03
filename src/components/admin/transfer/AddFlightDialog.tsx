@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Add a flight for an enrolled participant directly from the transfer-list
 // detail page. Mirrors the FlightInfoPanel slot form, but lets admin pick
@@ -103,8 +102,6 @@ export function AddFlightDialog({
       return an.localeCompare(bn);
     });
   }, [enrolments, query, direction]);
-
-  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;

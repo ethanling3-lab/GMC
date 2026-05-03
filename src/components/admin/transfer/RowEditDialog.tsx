@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Per-row admin override modal. Submits PATCH /api/admin/transfer-lists/[id]/rows/[rowId]
 // and flips `admin_edited` true server-side. The row keeps its admin tweaks
@@ -64,8 +63,6 @@ export function RowEditDialog({
       setBusy(false);
     }
   }, [open, row]);
-
-  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;

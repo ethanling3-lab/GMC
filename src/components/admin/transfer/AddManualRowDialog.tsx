@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Add a fully manual row to a transfer list — vehicle assignment that
 // isn't tied to any participant or flight_info. Use cases:
@@ -54,8 +53,6 @@ export function AddManualRowDialog({
       setBusy(false);
     }
   }, [open]);
-
-  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;

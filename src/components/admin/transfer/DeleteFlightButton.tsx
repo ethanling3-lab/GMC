@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Per-flight-line delete affordance on the transfer-list detail page.
 // Opens a modal that requires TWO explicit clicks: the primary button arms
@@ -35,8 +34,6 @@ export function DeleteFlightButton({ initial }: { initial: DeleteFlightInitial }
       setError(null);
     }
   }, [open]);
-
-  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;

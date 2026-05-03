@@ -7,7 +7,6 @@ import {
   ParticipantPicker,
   type ParticipantHit,
 } from "@/components/admin/events/ParticipantPicker";
-import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Button + modal for merging an inbox-auto-created lead into an existing
 // participant. Lives in its own file so the server-rendered ParticipantCard
@@ -36,8 +35,6 @@ export function MergeLeadButton({
       setSending(false);
     }
   }, [open]);
-
-  useBodyScrollLock(open);
 
   // Close on Escape.
   useEffect(() => {

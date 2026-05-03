@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 // Pencil-triggered edit for a single flight_info row, opened from the
 // transfer-list detail page. Locks participant + direction (those are the
@@ -64,8 +63,6 @@ export function EditFlightDialog({
       setBusy(false);
     }
   }, [open, initial]);
-
-  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;

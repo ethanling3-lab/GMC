@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import type { AdminContext } from "@/lib/admin-guard";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -17,6 +18,7 @@ export function AdminShell({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     try {
@@ -27,6 +29,23 @@ export function AdminShell({
     }
     setHydrated(true);
   }, []);
+
+  // Defensive cleanup on every route change. With React 19 transitions +
+  // portaled dialog modals (createPortal to document.body), there's a small
+  // window where a dialog component can unmount but its portal child stays
+  // attached to body — leaving an invisible fixed-inset backdrop that
+  // intercepts every click on the new page (sidebar nav becomes dead).
+  // Also resets body overflow in case any dialog left it locked. Safe even
+  // when no orphans exist; legitimate active modals on the NEW page mount
+  // after this effect runs because pathname changes before child renders
+  // commit.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.style.overflow = "";
+    document
+      .querySelectorAll('body > [role="dialog"]')
+      .forEach((el) => el.remove());
+  }, [pathname]);
 
   function toggle() {
     setCollapsed((prev) => {
