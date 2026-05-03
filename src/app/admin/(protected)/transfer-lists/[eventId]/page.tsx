@@ -23,6 +23,12 @@ import { AddManualRowDialog } from "@/components/admin/transfer/AddManualRowDial
 import { EditFlightDialog } from "@/components/admin/transfer/EditFlightDialog";
 import { EditManualPassengerDialog } from "@/components/admin/transfer/EditManualPassengerDialog";
 import { DeleteFlightButton } from "@/components/admin/transfer/DeleteFlightButton";
+import { PendingFlightsPanel } from "@/components/admin/transfer/PendingFlightsPanel";
+import { loadFlightSubmissionStatus } from "@/lib/transfer/flight-status";
+import {
+  DEFAULT_RULES,
+  parseRulesOverride,
+} from "@/lib/transfer/types";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Transfer list" };
@@ -52,14 +58,46 @@ export default async function TransferListDetailPage({
   const dir: "arrival" | "departure" = sp.dir === "departure" ? "departure" : "arrival";
 
   const supabase = await createSupabaseServerClient();
-  const detail = await loadTransferDetail(supabase, eventId);
+  const [detail, submissionStatus] = await Promise.all([
+    loadTransferDetail(supabase, eventId),
+    loadFlightSubmissionStatus(supabase, eventId),
+  ]);
   if (!detail) notFound();
+
+  // Look up the most recent inbox conversation per participant so the
+  // "Chase" link in PendingFlightsPanel jumps straight into the thread.
+  const participantIds = submissionStatus.enrolments
+    .map((e) => e.participant_id)
+    .filter((id): id is string => Boolean(id));
+  const inboxByParticipant: Record<string, string> = {};
+  if (participantIds.length > 0) {
+    const { data: convs } = await supabase
+      .from("conversations")
+      .select("id, participant_id, last_message_at")
+      .in("participant_id", participantIds)
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .returns<
+        Array<{ id: string; participant_id: string; last_message_at: string | null }>
+      >();
+    for (const c of convs ?? []) {
+      if (!inboxByParticipant[c.participant_id]) {
+        inboxByParticipant[c.participant_id] = c.id;
+      }
+    }
+  }
 
   const ev = detail.event;
   const title =
     ev.title_en || ev.title_cn
       ? `${ev.title_en ?? ""}${ev.title_en && ev.title_cn ? " · " : ""}${ev.title_cn ?? ""}`
       : ev.slug;
+
+  // Effective rules for the GenerateButton confirm dialog: defaults merged
+  // with the event's per-event overrides (events.transfer_rules JSONB).
+  const eventRulesOverride = parseRulesOverride(
+    (ev as unknown as { transfer_rules?: unknown }).transfer_rules,
+  );
+  const effectiveRules = { ...DEFAULT_RULES, ...eventRulesOverride };
 
   const active = dir === "arrival" ? detail.arrival : detail.departure;
   const isReadOnly =
@@ -203,6 +241,13 @@ export default async function TransferListDetailPage({
         </div>
       ) : null}
 
+      <div className="mt-6">
+        <PendingFlightsPanel
+          status={submissionStatus}
+          inboxByParticipant={inboxByParticipant}
+        />
+      </div>
+
       <div className="mt-8 flex items-center gap-1 border-b border-[var(--paper-shadow)]">
         <TabLink
           href={`/admin/transfer-lists/${ev.id}?dir=arrival`}
@@ -231,6 +276,12 @@ export default async function TransferListDetailPage({
         enrolments={enrolments}
         mainVenueName={ev.main_venue_hotel_name}
         designatedHotels={designatedHotels}
+        effectiveRules={effectiveRules}
+        confirmedFlightCount={
+          dir === "arrival"
+            ? submissionStatus.arrival.confirmed
+            : submissionStatus.departure.confirmed
+        }
       />
     </div>
   );
@@ -305,6 +356,8 @@ function DirectionPanel({
   enrolments,
   mainVenueName,
   designatedHotels,
+  effectiveRules,
+  confirmedFlightCount,
 }: {
   eventId: string;
   eventSlug: string;
@@ -316,6 +369,14 @@ function DirectionPanel({
   enrolments: EnrolmentOption[];
   mainVenueName: string | null;
   designatedHotels: Record<string, string>;
+  effectiveRules: {
+    consolidation_window_minutes: number;
+    departure_lead_hours: number;
+    coach_cutoff_hour_local: number;
+    coach_hotel_departure_local: string;
+    coach_rule_enabled: boolean;
+  };
+  confirmedFlightCount: number;
 }) {
   const totalPax = state.rows.reduce(
     (acc, r) =>
@@ -350,8 +411,10 @@ function DirectionPanel({
               eventId={eventId}
               direction={dir}
               hasExisting={Boolean(state.list)}
-              hasFlights={state.rows.length > 0 || !state.list}
+              hasFlights={confirmedFlightCount > 0}
               variant="primary"
+              effectiveRules={effectiveRules}
+              confirmedFlightCount={confirmedFlightCount}
             />
             <AddFlightDialog
               enrolments={enrolments}

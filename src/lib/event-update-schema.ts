@@ -88,6 +88,23 @@ export const EventUpdateSchema = z
       )
       .optional(),
 
+    // Per-event override of the transfer-list generator rules (migration 019).
+    // Empty `{}` = use defaults. See lib/transfer/types.ts → DEFAULT_RULES.
+    transfer_rules: z
+      .object({
+        consolidation_window_minutes: z.number().int().positive().max(720).optional(),
+        departure_lead_hours: z.number().nonnegative().max(24).optional(),
+        coach_cutoff_hour_local: z.number().int().min(0).max(23).optional(),
+        coach_hotel_departure_local: z
+          .string()
+          .regex(/^\d{1,2}:\d{2}$/, {
+            message: "Coach time must be HH:MM (24-hour clock)",
+          })
+          .optional(),
+        coach_rule_enabled: z.boolean().optional(),
+      })
+      .optional(),
+
     form_schema: FormSchema.optional(),
 
     bank_details: z

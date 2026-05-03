@@ -19,7 +19,7 @@ export default async function EventDetailPage({ params }: PageProps) {
 
   const supabase = await createSupabaseServerClient();
   const columnsWithSchema =
-    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, form_schema, bank_details, main_venue_hotel_name, designated_hotels, created_at, updated_at";
+    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, form_schema, bank_details, main_venue_hotel_name, designated_hotels, transfer_rules, created_at, updated_at";
   const columnsLegacy =
     "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, created_at, updated_at";
 
@@ -48,6 +48,7 @@ export default async function EventDetailPage({ params }: PageProps) {
             bank_details: {},
             main_venue_hotel_name: null,
             designated_hotels: {},
+            transfer_rules: {},
           }
         : null;
     } else {
@@ -56,7 +57,7 @@ export default async function EventDetailPage({ params }: PageProps) {
   }
   if (!data) notFound();
 
-  // Coerce designated_hotels to an object — column is nullable JSONB.
+  // Coerce JSONB columns to plain objects — both default to {} when null.
   const raw = data as Record<string, unknown>;
   const event = {
     ...raw,
@@ -65,6 +66,12 @@ export default async function EventDetailPage({ params }: PageProps) {
       typeof raw.designated_hotels === "object" &&
       !Array.isArray(raw.designated_hotels)
         ? (raw.designated_hotels as Record<string, string>)
+        : {},
+    transfer_rules:
+      raw.transfer_rules &&
+      typeof raw.transfer_rules === "object" &&
+      !Array.isArray(raw.transfer_rules)
+        ? (raw.transfer_rules as Record<string, unknown>)
         : {},
   } as EventFull;
 

@@ -50,9 +50,28 @@ export type EventFull = {
   // designated hotel map (key→display name) for the flight-info dropdown.
   main_venue_hotel_name: string | null;
   designated_hotels: Record<string, string>;
+  // Per-event override of the generator rules. Empty {} = use defaults
+  // (lib/transfer/types.ts → DEFAULT_RULES).
+  transfer_rules: TransferRulesDraft;
   created_at: string;
   updated_at: string;
 };
+
+export type TransferRulesDraft = {
+  consolidation_window_minutes?: number;
+  departure_lead_hours?: number;
+  coach_cutoff_hour_local?: number;
+  coach_hotel_departure_local?: string;
+  coach_rule_enabled?: boolean;
+};
+
+const RULE_DEFAULTS = {
+  consolidation_window_minutes: 30,
+  departure_lead_hours: 3,
+  coach_cutoff_hour_local: 15,
+  coach_hotel_departure_local: "12:00",
+  coach_rule_enabled: true,
+} as const;
 
 const TYPES: EventType[] = [
   "retreat",
@@ -264,6 +283,7 @@ export function EventEditor({
         bank_details: draft.bank_details ?? {},
         main_venue_hotel_name: draft.main_venue_hotel_name,
         designated_hotels: draft.designated_hotels ?? {},
+        transfer_rules: draft.transfer_rules ?? {},
       });
       setSuccess("Saved");
       router.refresh();
@@ -588,6 +608,23 @@ export function EventEditor({
               disabled={!canEdit}
             />
           </Field>
+        </div>
+
+        <div className="mt-2 pt-5 border-t border-dashed border-[var(--paper-shadow)]">
+          <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
+            <span className="w-4 h-px bg-current" />
+            Transfer rules · 接送规则
+          </div>
+          <p className="mt-2 text-[12px] leading-[1.6] text-[var(--ink-soft)] max-w-[62ch]">
+            Per-event overrides for the airport-transfer generator. Leave a
+            field blank to use the default. The generator merges defaults →
+            event override → caller override at run time.
+          </p>
+          <TransferRulesEditor
+            value={draft.transfer_rules ?? {}}
+            onChange={(next) => update("transfer_rules", next)}
+            disabled={!canEdit}
+          />
         </div>
       </Section>
 
@@ -1015,6 +1052,158 @@ function DesignatedHotelsEditor({
           <span aria-hidden="true">＋</span>
           Add hotel
         </button>
+      ) : null}
+    </div>
+  );
+}
+
+// Editor for events.transfer_rules JSONB. All fields optional — empty input
+// removes the override and the generator falls back to its default. The hint
+// next to each label shows the active default so admin knows what they're
+// overriding.
+function TransferRulesEditor({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: TransferRulesDraft;
+  onChange: (next: TransferRulesDraft) => void;
+  disabled: boolean;
+}) {
+  function patch<K extends keyof TransferRulesDraft>(
+    key: K,
+    next: TransferRulesDraft[K] | undefined,
+  ) {
+    const out: TransferRulesDraft = { ...value };
+    if (next === undefined || next === null || next === ("" as never)) {
+      delete out[key];
+    } else {
+      out[key] = next;
+    }
+    onChange(out);
+  }
+
+  const coachEnabled = value.coach_rule_enabled ?? RULE_DEFAULTS.coach_rule_enabled;
+
+  return (
+    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-5">
+      <Field
+        label="Consolidation window"
+        labelZh="合并窗口 (分钟)"
+        hint={`Default: ${RULE_DEFAULTS.consolidation_window_minutes} min. Flights landing/taking off within this window combine into one vehicle.`}
+      >
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            max={720}
+            step={1}
+            value={value.consolidation_window_minutes ?? ""}
+            onChange={(e) =>
+              patch(
+                "consolidation_window_minutes",
+                e.target.value === "" ? undefined : Number(e.target.value),
+              )
+            }
+            disabled={disabled}
+            placeholder={String(RULE_DEFAULTS.consolidation_window_minutes)}
+            className={inputCls("tabular-nums w-[120px]")}
+          />
+          <span className="text-[12px] text-[var(--ink-mute)]">minutes</span>
+        </div>
+      </Field>
+
+      <Field
+        label="Departure lead time"
+        labelZh="提前出发"
+        hint={`Default: ${RULE_DEFAULTS.departure_lead_hours} hours before flight time. The generator subtracts this to compute the hotel-departure pickup.`}
+      >
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={24}
+            step={0.5}
+            value={value.departure_lead_hours ?? ""}
+            onChange={(e) =>
+              patch(
+                "departure_lead_hours",
+                e.target.value === "" ? undefined : Number(e.target.value),
+              )
+            }
+            disabled={disabled}
+            placeholder={String(RULE_DEFAULTS.departure_lead_hours)}
+            className={inputCls("tabular-nums w-[120px]")}
+          />
+          <span className="text-[12px] text-[var(--ink-mute)]">hours</span>
+        </div>
+      </Field>
+
+      <div className="md:col-span-2 mt-1 pt-4 border-t border-dashed border-[var(--paper-shadow)]">
+        <Field
+          label="Departure-day coach rule"
+          labelZh="送机日大巴规则"
+          hint="When ON, late flights on departure day share a single coach pickup. When OFF, they fall back to the regular 30-min + lead-time consolidation."
+        >
+          <label className="inline-flex items-center gap-2 cursor-pointer text-[13px] text-[var(--ink)]">
+            <input
+              type="checkbox"
+              checked={coachEnabled}
+              onChange={(e) => patch("coach_rule_enabled", e.target.checked)}
+              disabled={disabled}
+              className="accent-[var(--cinnabar)]"
+            />
+            {coachEnabled
+              ? "Enabled — late flights share a 12:00 coach"
+              : "Disabled — every flight uses the lead-time rule"}
+          </label>
+        </Field>
+      </div>
+
+      {coachEnabled ? (
+        <>
+          <Field
+            label="Coach cutoff hour"
+            labelZh="大巴时段起点 (24h)"
+            hint={`Default: ${RULE_DEFAULTS.coach_cutoff_hour_local}:00. Flights at or after this hour on departure day join the coach.`}
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={23}
+                step={1}
+                value={value.coach_cutoff_hour_local ?? ""}
+                onChange={(e) =>
+                  patch(
+                    "coach_cutoff_hour_local",
+                    e.target.value === "" ? undefined : Number(e.target.value),
+                  )
+                }
+                disabled={disabled}
+                placeholder={String(RULE_DEFAULTS.coach_cutoff_hour_local)}
+                className={inputCls("tabular-nums w-[120px]")}
+              />
+              <span className="text-[12px] text-[var(--ink-mute)]">:00 local</span>
+            </div>
+          </Field>
+
+          <Field
+            label="Coach pickup time"
+            labelZh="大巴出发时间"
+            hint={`Default: ${RULE_DEFAULTS.coach_hotel_departure_local}. Hotel departure time for the shared coach.`}
+          >
+            <input
+              type="text"
+              value={value.coach_hotel_departure_local ?? ""}
+              onChange={(e) => patch("coach_hotel_departure_local", e.target.value)}
+              disabled={disabled}
+              placeholder={RULE_DEFAULTS.coach_hotel_departure_local}
+              pattern="\\d{1,2}:\\d{2}"
+              className={inputCls("font-mono tabular-nums w-[120px]")}
+            />
+          </Field>
+        </>
       ) : null}
     </div>
   );

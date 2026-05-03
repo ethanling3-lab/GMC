@@ -85,6 +85,7 @@ export default async function TransferListsIndexPage() {
                 <tr className="text-left text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
                   <th className="pb-3 font-normal">Event</th>
                   <th className="pb-3 font-normal">Travel days</th>
+                  <th className="pb-3 font-normal">Enrolled</th>
                   <th className="pb-3 font-normal">Arrivals · 接机</th>
                   <th className="pb-3 font-normal">Departures · 送机</th>
                   <th className="pb-3 font-normal text-right">Sheet</th>
@@ -142,10 +143,15 @@ function EventRow({ row }: { row: TransferEventRow }) {
         </div>
       </td>
       <td className="py-3 pr-4">
-        <DirectionPill state={row.arrival} />
+        <span className="font-display text-[16px] tabular-nums text-[var(--ink)]">
+          {row.total_enrolled}
+        </span>
       </td>
       <td className="py-3 pr-4">
-        <DirectionPill state={row.departure} />
+        <DirectionPill state={row.arrival} totalEnrolled={row.total_enrolled} />
+      </td>
+      <td className="py-3 pr-4">
+        <DirectionPill state={row.departure} totalEnrolled={row.total_enrolled} />
       </td>
       <td className="py-3 text-right">
         {row.transfer_sheet_url ? (
@@ -169,19 +175,35 @@ function EventRow({ row }: { row: TransferEventRow }) {
   );
 }
 
-function DirectionPill({ state }: { state: TransferDirectionState }) {
+function DirectionPill({
+  state,
+  totalEnrolled,
+}: {
+  state: TransferDirectionState;
+  totalEnrolled?: number;
+}) {
+  // Always render the X/Y confirmed ratio against the enrolled denominator
+  // when available — that's the most useful single number for "should I
+  // chase someone or generate the list?"
+  const ratio = totalEnrolled
+    ? `${state.flight_count_confirmed}/${totalEnrolled}`
+    : `${state.flight_count_confirmed}/${state.flight_count || "0"}`;
+  const gap = totalEnrolled
+    ? Math.max(0, totalEnrolled - state.flight_count_confirmed)
+    : 0;
+
   if (!state.list_id) {
     if (state.flight_count_confirmed === 0 && state.flight_count === 0) {
       return (
-        <span className="text-[11px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
-          No flights
+        <span className="inline-flex items-center gap-1.5 text-[11px] tracking-[0.14em] uppercase text-[var(--ink-faint)] tabular-nums">
+          {totalEnrolled ? `0/${totalEnrolled}` : "No flights"}
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1.5 text-[11px] tracking-[0.12em] uppercase text-[var(--ink-mute)]">
+      <span className="inline-flex items-center gap-1.5 text-[11px] tracking-[0.12em] uppercase text-[var(--ink-mute)] tabular-nums">
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--gold)]" aria-hidden="true" />
-        {state.flight_count_confirmed}/{state.flight_count} ready
+        {ratio} ready
       </span>
     );
   }
@@ -190,12 +212,19 @@ function DirectionPill({ state }: { state: TransferDirectionState }) {
       ? "border-[#5b9a5d]/30 bg-[#5b9a5d]/8 text-[#3a6b3b]"
       : "border-[var(--cinnabar)]/25 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]";
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 px-2 h-[22px] rounded-[var(--radius-pill)] border ${tone} text-[10.5px] tracking-[0.14em] uppercase tabular-nums`}
-    >
-      <span className="font-medium">{state.status}</span>
-      <span className="text-[var(--ink-faint)]">·</span>
-      <span>{state.total_pax} pax</span>
+    <span className="inline-flex items-center gap-2">
+      <span
+        className={`inline-flex items-center gap-1.5 px-2 h-[22px] rounded-[var(--radius-pill)] border ${tone} text-[10.5px] tracking-[0.14em] uppercase tabular-nums`}
+      >
+        <span className="font-medium">{state.status}</span>
+        <span className="text-[var(--ink-faint)]">·</span>
+        <span>{state.total_pax} pax</span>
+      </span>
+      {gap > 0 ? (
+        <span className="text-[10.5px] tracking-[0.12em] uppercase text-[var(--gold)] tabular-nums">
+          {gap} pending
+        </span>
+      ) : null}
     </span>
   );
 }

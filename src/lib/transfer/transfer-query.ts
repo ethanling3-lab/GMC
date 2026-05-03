@@ -20,6 +20,8 @@ export type TransferEventRow = {
   transfer_sheet_id: string | null;
   transfer_sheet_url: string | null;
   transfer_synced_at: string | null;
+  // Total approved/paid enrolments — denominator for "X/Y confirmed" pills.
+  total_enrolled: number;
   arrival: TransferDirectionState;
   departure: TransferDirectionState;
 };
@@ -121,6 +123,19 @@ export async function loadTransferListsOverview(
     flightTotals.set(key, cur);
   }
 
+  // Approved/paid enrolment counts per event — drives the "X enrolled"
+  // chip and the denominator on the per-direction confirmed-flight ratio.
+  const { data: enrolRows } = await supabase
+    .from("enrollments")
+    .select("event_id")
+    .in("event_id", eventIds)
+    .in("status", ["approved", "paid"])
+    .returns<Array<{ event_id: string }>>();
+  const enrolByEvent = new Map<string, number>();
+  for (const r of enrolRows ?? []) {
+    enrolByEvent.set(r.event_id, (enrolByEvent.get(r.event_id) ?? 0) + 1);
+  }
+
   return events.map((e) => {
     const arrivalList = (lists ?? []).find(
       (l) => l.event_id === e.id && l.direction === "arrival",
@@ -132,6 +147,7 @@ export async function loadTransferListsOverview(
     const df = flightTotals.get(`${e.id}:departure`) ?? { total: 0, confirmed: 0 };
     return {
       ...e,
+      total_enrolled: enrolByEvent.get(e.id) ?? 0,
       arrival: {
         list_id: arrivalList?.id ?? null,
         status: (arrivalList?.status as "draft" | "final" | null) ?? null,
@@ -261,6 +277,7 @@ export async function loadTransferDetail(
   // here — defaulted to 0 to satisfy the type.
   const aggregated: TransferEventRow = {
     ...ev,
+    total_enrolled: 0,
     arrival: {
       list_id: arrivalListId,
       status:
