@@ -23,6 +23,10 @@ import { AddManualRowDialog } from "@/components/admin/transfer/AddManualRowDial
 import { EditFlightDialog } from "@/components/admin/transfer/EditFlightDialog";
 import { EditManualPassengerDialog } from "@/components/admin/transfer/EditManualPassengerDialog";
 import { DeleteFlightButton } from "@/components/admin/transfer/DeleteFlightButton";
+import {
+  MovePassengerDialog,
+  type MoveTargetOption,
+} from "@/components/admin/transfer/MovePassengerDialog";
 import { PendingFlightsPanel } from "@/components/admin/transfer/PendingFlightsPanel";
 import { loadFlightSubmissionStatus } from "@/lib/transfer/flight-status";
 import {
@@ -386,6 +390,23 @@ function DirectionPanel({
     0,
   );
 
+  // Universe of move-passenger targets for this direction. Each row in the
+  // table both contributes one entry here AND consumes the full list (minus
+  // itself) when its per-line MovePassengerDialog mounts. Derive once.
+  const moveTargets: MoveTargetOption[] = state.rows.map((r) => ({
+    row_id: r.id,
+    group_no: r.group_no,
+    vehicle_type: r.vehicle_type,
+    landing_or_takeoff_at: r.landing_or_takeoff_at,
+    destination: r.destination,
+    pax_count:
+      (r.flight_info_ids?.length ?? 0) + (r.manual_passengers?.length ?? 0),
+    vip: r.vip,
+    is_manual:
+      (r.flight_info_ids?.length ?? 0) === 0 &&
+      (r.manual_passengers?.length ?? 0) > 0,
+  }));
+
   return (
     <section className="mt-6 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] p-6 shadow-[var(--shadow-paper-1)]">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -490,6 +511,7 @@ function DirectionPanel({
                   canEdit={canEditRows && Boolean(state.list)}
                   mainVenueName={mainVenueName}
                   designatedHotels={designatedHotels}
+                  moveTargets={moveTargets}
                 />
               ))}
             </tbody>
@@ -529,6 +551,7 @@ function RowGroup({
   canEdit,
   mainVenueName,
   designatedHotels,
+  moveTargets,
 }: {
   row: TransferDetailRow;
   dir: "arrival" | "departure";
@@ -536,7 +559,17 @@ function RowGroup({
   canEdit: boolean;
   mainVenueName: string | null;
   designatedHotels: Record<string, string>;
+  moveTargets: MoveTargetOption[];
 }) {
+  // Compact label of THIS row, used as the "currently on:" sub-line in the
+  // move dialog so admin can verify they're moving from the right place.
+  const sourceLabel = (() => {
+    const time = row.landing_or_takeoff_at
+      ? formatTimeBlock(row.landing_or_takeoff_at)
+      : "—";
+    const veh = row.vehicle_type ?? "—";
+    return `#${row.group_no} · ${veh} · ${time}`;
+  })();
   const isManual = row.flights.length === 0 && row.manual_passengers.length > 0;
   const paxCount = row.flights.length + row.manual_passengers.length;
   const tintCls = row.vip
@@ -616,12 +649,24 @@ function RowGroup({
                   <>
                     <ManualPassengerLine pax={ln.pax} />
                     {canEdit ? (
-                      <span className="opacity-40 hover:opacity-100 transition-opacity">
+                      <span className="inline-flex items-center gap-0.5 opacity-40 hover:opacity-100 transition-opacity">
                         <EditManualPassengerDialog
                           listId={listId}
                           rowId={row.id}
                           index={ln.index}
                           passengers={row.manual_passengers}
+                        />
+                        <MovePassengerDialog
+                          listId={listId}
+                          sourceRowId={row.id}
+                          sourceLabel={sourceLabel}
+                          direction={dir}
+                          subject={{
+                            kind: "manual",
+                            manual_index: ln.index,
+                            label: manualPassengerLabel(ln.pax),
+                          }}
+                          targets={moveTargets}
                         />
                       </span>
                     ) : null}
@@ -663,6 +708,18 @@ function RowGroup({
                           }}
                           mainVenueName={mainVenueName}
                           designatedHotels={designatedHotels}
+                        />
+                        <MovePassengerDialog
+                          listId={listId}
+                          sourceRowId={row.id}
+                          sourceLabel={sourceLabel}
+                          direction={dir}
+                          subject={{
+                            kind: "real",
+                            flight_info_id: ln.flight.id,
+                            label: `${participantLabel(ln.flight)} · ${flightSummary(ln.flight)}`,
+                          }}
+                          targets={moveTargets}
                         />
                         <DeleteFlightButton
                           initial={{
@@ -755,6 +812,10 @@ function participantLabel(flight: TransferRowFlight): string {
   const p = flight.participant;
   const name = p?.name_en || p?.name_cn || "—";
   return p?.region_id ? `${name} · ${p.region_id}` : name;
+}
+
+function manualPassengerLabel(pax: ManualPassenger): string {
+  return pax.region_id ? `${pax.name} · ${pax.region_id}` : pax.name;
 }
 
 function flightSummary(flight: TransferRowFlight): string {
