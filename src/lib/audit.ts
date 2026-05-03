@@ -55,7 +55,24 @@ export type AuditAction =
   | "transfer_list.row_edited"
   | "transfer_list.regenerated_force"
   | "transfer_list.row_added_manual"
-  | "transfer_list.passenger_moved";
+  | "transfer_list.passenger_moved"
+  | "groups.generated"
+  | "groups.regenerated"
+  | "groups.member_moved"
+  | "groups.role_changed"
+  | "groups.rationale_edited"
+  | "groups.exported_ppt"
+  | "groups.exported_pdf"
+  | "groups.exported_png"
+  | "floor_plan.shape_added"
+  | "floor_plan.shape_moved"
+  | "floor_plan.shape_deleted"
+  | "floor_plan.image_uploaded"
+  | "floor_plan.auto_detected"
+  | "floor_plan.shape_accepted"
+  | "floor_plan.shape_rejected"
+  | "seating.auto_placed"
+  | "seating.swapped";
 
 export type WriteAuditLog = {
   actor_id: string | null;
