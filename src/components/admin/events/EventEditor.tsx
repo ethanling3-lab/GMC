@@ -386,6 +386,27 @@ export function EventEditor({
               </span>
             </Link>
 
+            {/* Groups link — M6 grouping + seating editor entry point */}
+            <Link
+              href={`/admin/events/${event.id}/groups`}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12.5px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="5" cy="6" r="2" />
+                <circle cx="11" cy="6" r="2" />
+                <path d="M2 13a3 3 0 0 1 6 0M8 13a3 3 0 0 1 6 0" />
+              </svg>
+              Groups
+              <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
+                小组
+              </span>
+            </Link>
+
             {/* Status picker */}
             <div ref={statusMenuRef} className="relative">
             <button
