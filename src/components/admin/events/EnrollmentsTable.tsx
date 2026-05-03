@@ -74,6 +74,9 @@ export type EnrollmentRow = {
   /** Set when the participant uploaded a transfer slip on /pay/[token]. Optional so pre-011 schemas still work. */
   transfer_slip_url?: string | null;
   transfer_slip_uploaded_at?: string | null;
+  /** M6 grouping pin — admin-set hint that this person should land in group N
+   * when the LLM/balance algorithm runs. Optional so pre-021 schemas still work. */
+  pinned_group_no?: number | null;
 };
 
 type Props = {
@@ -522,6 +525,48 @@ export function EnrollmentsTable({
     }
   }
 
+  // Pin-to-group editor — uses window.prompt for v1 simplicity. The richer
+  // GroupBuilder UI in M6.3 lets admin set this from the group cards.
+  async function editPin(id: string, current: number | null | undefined) {
+    if (!canEdit) return;
+    const raw = window.prompt(
+      "Pin participant to group # (blank or 0 to clear):",
+      current != null ? String(current) : "",
+    );
+    if (raw === null) return;
+    const trimmed = raw.trim();
+    let next: number | null;
+    if (trimmed === "" || trimmed === "0") {
+      next = null;
+    } else {
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 999) {
+        setError("Pin must be a positive integer ≤ 999, or blank to clear.");
+        return;
+      }
+      next = Math.floor(parsed);
+    }
+    if ((current ?? null) === next) return;
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned_group_no: next }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error ?? `Couldn't update pin (${res.status})`);
+      }
+      router.refresh();
+      setToast({
+        message: next == null ? "Pin cleared" : `Pinned to group ${next}`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Pin update failed");
+    }
+  }
+
   const count = selected.size;
 
   return (
@@ -745,6 +790,25 @@ export function EnrollmentsTable({
                             <span className="font-mono">
                               {p.region_id ?? "—"}
                             </span>
+                            {canEdit ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  editPin(r.id, r.pinned_group_no ?? null);
+                                }}
+                                title="Pin to group # for next grouping run"
+                                className={`inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border text-[10px] tracking-[0.04em] transition-colors duration-[var(--dur-fast)] ${
+                                  r.pinned_group_no
+                                    ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)] hover:border-[var(--cinnabar)]/60"
+                                    : "border-[var(--paper-shadow)] bg-[var(--paper)] !text-[var(--ink-faint)] hover:!text-[var(--cinnabar-deep)] hover:border-[var(--cinnabar)]/30"
+                                }`}
+                              >
+                                {r.pinned_group_no
+                                  ? `Pin · #${r.pinned_group_no}`
+                                  : "Pin"}
+                              </button>
+                            ) : null}
                             {p.email ? (
                               <>
                                 <span aria-hidden="true">·</span>

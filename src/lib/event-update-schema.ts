@@ -105,6 +105,14 @@ export const EventUpdateSchema = z
       })
       .optional(),
 
+    // M6 grouping policy (migration 021). seating_mode locks the floor-plan
+    // palette + grouping algorithm fork. The DB trigger refuses changes once
+    // shapes/assignments exist for the event, so the UI surfaces the constraint
+    // and lets the PATCH error propagate when needed.
+    seating_mode: z.enum(["tables", "cushions"]).optional(),
+    group_size_min: z.number().int().min(1).max(64).optional(),
+    group_size_max: z.number().int().min(1).max(64).optional(),
+
     form_schema: FormSchema.optional(),
 
     bank_details: z

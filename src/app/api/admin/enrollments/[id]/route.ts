@@ -27,11 +27,13 @@ const PAYMENT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const ACTIONS = ["approve", "reject", "cancel", "mark_paid", "mark_unpaid"] as const;
 
-// Two-mode PATCH:
+// Three-mode PATCH:
 //   { action: "...", amount_paid?, payment_method? } — state transition
 //   { amount_paid: number }                           — bare amount edit
-// Bare edits skip the state machine. Used by the inline edit on the enrolments
-// console for quick corrections on already-paid rows.
+//   { pinned_group_no: number | null }                — group pinning
+// Bare + pinning edits skip the state machine. Used by inline edits on the
+// enrolments console for quick corrections + on the GroupBuilder UI for
+// grouping pre-seeding.
 const PatchBody = z
   .object({
     action: z.enum(ACTIONS).optional(),
@@ -43,10 +45,17 @@ const PatchBody = z
       .enum(["no_seats", "duplicate", "unsuitable", "other"])
       .optional(),
     reject_note: z.string().trim().max(500).optional(),
+    pinned_group_no: z.number().int().min(1).max(999).nullable().optional(),
   })
-  .refine((b) => b.action !== undefined || b.amount_paid !== undefined, {
-    message: "Provide an action or amount_paid",
-  });
+  .refine(
+    (b) =>
+      b.action !== undefined
+      || b.amount_paid !== undefined
+      || b.pinned_group_no !== undefined,
+    {
+      message: "Provide an action, amount_paid, or pinned_group_no",
+    },
+  );
 
 const PER_ROW_AUDIT_ACTION: Record<(typeof ACTIONS)[number], AuditAction> = {
   approve: "enrollment.approve",
@@ -95,7 +104,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   }
 
   // Amount-only edit path — no state transition, no notifications.
-  if (body.action === undefined) {
+  if (body.action === undefined && body.amount_paid !== undefined) {
     const before = row.amount_paid;
     const { error: updErr } = await service
       .from("enrollments")
@@ -120,8 +129,49 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     });
   }
 
+  // Pin-only edit path — no state transition, no notifications.
+  if (body.action === undefined && body.pinned_group_no !== undefined) {
+    const { data: beforePin } = await service
+      .from("enrollments")
+      .select("pinned_group_no")
+      .eq("id", enrollmentId)
+      .maybeSingle();
+    const { error: updErr } = await service
+      .from("enrollments")
+      .update({ pinned_group_no: body.pinned_group_no })
+      .eq("id", enrollmentId);
+    if (updErr) {
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.member_moved",
+      entity: "enrollments",
+      entity_id: enrollmentId,
+      before: { pinned_group_no: beforePin?.pinned_group_no ?? null },
+      after: { pinned_group_no: body.pinned_group_no },
+      metadata: { event_id: row.event_id, via: "pin_edit" },
+    });
+    return NextResponse.json({
+      ok: true,
+      id: enrollmentId,
+      pinned_group_no: body.pinned_group_no,
+    });
+  }
+
+  // Beyond this point we MUST have an action — earlier branches handled
+  // the bare-amount and bare-pin paths, and the schema refines that at
+  // least one of (action, amount_paid, pinned_group_no) is set.
+  if (body.action === undefined) {
+    return NextResponse.json(
+      { error: "no_action", detail: "Provide an action, amount_paid, or pinned_group_no" },
+      { status: 400 },
+    );
+  }
+  const action = body.action;
+
   const current = row.status as EnrollmentStatus;
-  const check = canTransition(current, body.action);
+  const check = canTransition(current, action);
   if (!check.ok) {
     return NextResponse.json(
       { error: "transition_blocked", reason: check.reason, current },
@@ -130,12 +180,12 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   }
 
   const now = new Date().toISOString();
-  const nextStatus = ACTION_NEXT_STATUS[body.action];
+  const nextStatus = ACTION_NEXT_STATUS[action];
 
   const update: Record<string, unknown> = { status: nextStatus };
   let resolvedRejectReason: RejectReason | null = null;
   let resolvedRejectNote: string | null = null;
-  switch (body.action) {
+  switch (action) {
     case "approve":
       update.approved_by = admin.id;
       update.approved_at = now;
@@ -187,7 +237,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
 
   await writeAuditLog({
     actor_id: admin.id,
-    action: PER_ROW_AUDIT_ACTION[body.action],
+    action: PER_ROW_AUDIT_ACTION[action],
     entity: "enrollments",
     entity_id: enrollmentId,
     before: { status: current, payment_status: row.payment_status },
@@ -195,7 +245,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     metadata: {
       event_id: row.event_id,
       via: "per_row",
-      ...(body.action === "reject"
+      ...(action === "reject"
         ? { reject_reason: resolvedRejectReason, reject_note: resolvedRejectNote }
         : {}),
     },
@@ -204,7 +254,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   // Mint the student ID on approval (and on mark_paid for offline-paid rows
   // that never went through approve). Idempotent — returning students keep
   // their existing region_id.
-  if (body.action === "approve" || body.action === "mark_paid") {
+  if (action === "approve" || action === "mark_paid") {
     await ensureRegionId(service, row.participant_id);
   }
 
@@ -225,11 +275,11 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         | "zh"
         | "en";
       const amountLabel = fmtAmount(
-        body.action === "mark_paid" ? enr.amount_paid ?? event.price : event.price,
+        action === "mark_paid" ? enr.amount_paid ?? event.price : event.price,
         event.currency,
         locale,
       );
-      if (body.action === "approve") {
+      if (action === "approve") {
         const token = createPaymentAccessToken(row.id, PAYMENT_TOKEN_TTL_MS);
         await notifyApproved({
           enrollment: enr,
@@ -238,7 +288,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
           paymentUrl: buildPaymentUrl(token),
           amountLabel,
         });
-      } else if (body.action === "reject") {
+      } else if (action === "reject") {
         await notifyRejected({
           enrollment: enr,
           participant,
@@ -246,7 +296,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
           reason: resolvedRejectReason,
           note: resolvedRejectNote,
         });
-      } else if (body.action === "mark_paid") {
+      } else if (action === "mark_paid") {
         await notifyPaymentReceived({
           enrollment: enr,
           participant,

@@ -53,6 +53,12 @@ export type EventFull = {
   // Per-event override of the generator rules. Empty {} = use defaults
   // (lib/transfer/types.ts → DEFAULT_RULES).
   transfer_rules: TransferRulesDraft;
+  // M6 grouping policy. seating_mode locks the floor-plan palette and
+  // the grouping algorithm fork; group_size_min/max bound the LLM's
+  // assignment search.
+  seating_mode: "tables" | "cushions";
+  group_size_min: number;
+  group_size_max: number;
   created_at: string;
   updated_at: string;
 };
@@ -284,6 +290,9 @@ export function EventEditor({
         main_venue_hotel_name: draft.main_venue_hotel_name,
         designated_hotels: draft.designated_hotels ?? {},
         transfer_rules: draft.transfer_rules ?? {},
+        seating_mode: draft.seating_mode,
+        group_size_min: draft.group_size_min,
+        group_size_max: draft.group_size_max,
       });
       setSuccess("Saved");
       router.refresh();
@@ -625,6 +634,108 @@ export function EventEditor({
             onChange={(next) => update("transfer_rules", next)}
             disabled={!canEdit}
           />
+        </div>
+
+        <div className="mt-2 pt-5 border-t border-dashed border-[var(--paper-shadow)]">
+          <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
+            <span className="w-4 h-px bg-current" />
+            Seating · 座位编排
+          </div>
+          <p className="mt-2 text-[12px] leading-[1.6] text-[var(--ink-soft)] max-w-[62ch]">
+            Drives the M6 grouping algorithm + the floor-plan editor palette.
+            Tables = round/square tables of 10–12 with 组长 + 1–2 副组长 per
+            group. Cushions = meditation classes — participants are ranked by
+            score and seated front-to-back, with 排长 at the leftmost and
+            rightmost cushion of each row.{" "}
+            <span className="text-[var(--ink-mute)]">
+              Mode can&apos;t be changed once shapes or seat assignments exist
+              for this event — clear the layout first.
+            </span>
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(["tables", "cushions"] as const).map((mode) => {
+              const checked = draft.seating_mode === mode;
+              return (
+                <label
+                  key={mode}
+                  className={`inline-flex items-center gap-2 h-9 px-3 rounded-[var(--radius-pill)] border text-[12px] tracking-[0.04em] cursor-pointer transition-[background-color,border-color,color] duration-[var(--dur-fast)]
+                              ${
+                                checked
+                                  ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                                  : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/30"
+                              }
+                              ${!canEdit ? "cursor-not-allowed opacity-70" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="seating-mode"
+                    checked={checked}
+                    onChange={() => canEdit && update("seating_mode", mode)}
+                    disabled={!canEdit}
+                    className="accent-[var(--cinnabar)]"
+                  />
+                  {mode === "tables" ? (
+                    <>Tables · 桌子</>
+                  ) : (
+                    <>Cushions · 蒲团</>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-5">
+            <Field
+              label="Min group size"
+              labelZh="最小组人数"
+              hint="Lower bound on the number of people per group when generating. Most retreats run 10."
+            >
+              <input
+                type="number"
+                min={1}
+                max={64}
+                value={draft.group_size_min}
+                onChange={(e) =>
+                  update(
+                    "group_size_min",
+                    e.target.value === "" ? 1 : Number(e.target.value),
+                  )
+                }
+                disabled={!canEdit || draft.seating_mode === "cushions"}
+                className={inputCls("tabular-nums")}
+              />
+            </Field>
+            <Field
+              label="Max group size"
+              labelZh="最大组人数"
+              hint="Upper bound on the number of people per group. Default 12."
+            >
+              <input
+                type="number"
+                min={1}
+                max={64}
+                value={draft.group_size_max}
+                onChange={(e) =>
+                  update(
+                    "group_size_max",
+                    e.target.value === "" ? 1 : Number(e.target.value),
+                  )
+                }
+                disabled={!canEdit || draft.seating_mode === "cushions"}
+                className={inputCls("tabular-nums")}
+              />
+            </Field>
+          </div>
+          {draft.seating_mode === "cushions" ? (
+            <p className="mt-2 text-[11px] text-[var(--ink-mute)]">
+              Group size doesn&apos;t apply in cushion mode — every cushion seats
+              exactly one person.
+            </p>
+          ) : null}
+          {draft.group_size_min > draft.group_size_max ? (
+            <p className="mt-2 text-[11.5px] text-[var(--cinnabar-deep)]">
+              Min must be ≤ max.
+            </p>
+          ) : null}
         </div>
       </Section>
 

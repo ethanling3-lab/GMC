@@ -115,7 +115,7 @@ export default async function EventEnrollmentsPage({
   // shipped in 008, transfer_slip_* shipped in 011). Older databases
   // gracefully fall back via the attempt ladder below.
   const enrollmentColsWithBoth = (participant: string) =>
-    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, transfer_slip_url, transfer_slip_uploaded_at, participant:participants(${participant})`;
+    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, transfer_slip_url, transfer_slip_uploaded_at, pinned_group_no, participant:participants(${participant})`;
   const enrollmentColsWithSchema = (participant: string) =>
     `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(${participant})`;
   const enrollmentColsLegacy = (participant: string) =>
