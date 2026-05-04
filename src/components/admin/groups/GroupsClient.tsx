@@ -467,27 +467,60 @@ function GroupCard({
         </>
       )}
 
-      <div className="flex flex-wrap gap-1.5">
-        {group.members.map((m) => (
-          <MemberChip
-            key={m.assignment_id}
-            member={m}
-            groupClass={group.group_class}
-            canEdit={canEdit}
-            onSetRole={onSetRole}
-          />
-        ))}
-        {group.members.length === 0 ? (
-          <span className="text-[11px] text-[var(--ink-faint)] italic">
-            empty group
-          </span>
-        ) : null}
-      </div>
+      {group.members.length === 0 ? (
+        <p className="text-[11px] text-[var(--ink-faint)] italic">
+          empty group
+        </p>
+      ) : (
+        <div className="overflow-hidden rounded-[var(--radius-md)] border border-[var(--paper-shadow)]/60">
+          <table className="w-full text-[11.5px]">
+            <thead className="bg-[var(--paper-deep)]/40 border-b border-[var(--paper-shadow)]/60 text-[9.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
+              <tr>
+                <th className="text-left px-2 py-1.5 font-medium w-[26px]" aria-label="Role" />
+                <th className="text-left px-2 py-1.5 font-medium w-[60px]">ID</th>
+                <th className="text-left px-2 py-1.5 font-medium">Name</th>
+                <th className="text-left px-2 py-1.5 font-medium w-[44px]">Tier</th>
+                <th className="text-left px-1 py-1.5 font-medium w-[24px]" aria-label="Goal" />
+                <th className="text-left px-2 py-1.5 font-medium w-[68px]">Flags</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortMembers(group.members).map((m) => (
+                <MemberRow
+                  key={m.assignment_id}
+                  member={m}
+                  groupClass={group.group_class}
+                  canEdit={canEdit}
+                  onSetRole={onSetRole}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
 
-function MemberChip({
+function sortMembers(members: GroupBuilderMember[]): GroupBuilderMember[] {
+  // Leaders pinned at top (组长 first, then 副组长), participants
+  // alphabetical by region_id so the same person always sorts to the
+  // same row across regenerates.
+  const order: Record<GroupMemberRole, number> = {
+    zu_zhang: 0,
+    fu_zu_zhang: 1,
+    pai_zhang: 2,
+    participant: 3,
+  };
+  return [...members].sort((a, b) => {
+    const ra = order[a.role];
+    const rb = order[b.role];
+    if (ra !== rb) return ra - rb;
+    return (a.region_id ?? "").localeCompare(b.region_id ?? "");
+  });
+}
+
+function MemberRow({
   member,
   groupClass,
   canEdit,
@@ -507,89 +540,122 @@ function MemberChip({
   const isLeader = member.role === "zu_zhang" || member.role === "fu_zu_zhang";
   const roleTone =
     member.role === "zu_zhang"
-      ? "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+      ? "bg-[var(--cinnabar-wash)]/60"
       : member.role === "fu_zu_zhang"
-        ? "border-[var(--gold)]/50 bg-[var(--gold-soft)] text-[var(--ink)]"
-        : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)]";
+        ? "bg-[var(--gold-soft)]/45"
+        : "";
   const primaryGoal: GrowthDimension | null = member.goal_dimensions[0] ?? null;
   const classMismatch = !isLeader && member.effective_class !== groupClass;
 
   const style: React.CSSProperties | undefined = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.5 : 1 }
+    ? {
+        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+        opacity: isDragging ? 0.5 : 1,
+        position: "relative",
+      }
     : undefined;
 
   return (
-    <span
+    <tr
       ref={setNodeRef}
       style={style}
       {...listeners}
       {...attributes}
-      className={`inline-flex items-center gap-1.5 h-7 px-2 rounded-[var(--radius-pill)] border text-[11px] ${roleTone} ${canEdit ? "cursor-grab active:cursor-grabbing" : ""}`}
-      title={canEdit ? "Drag to a different group · click to set role" : undefined}
+      className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${canEdit ? "cursor-grab active:cursor-grabbing hover:bg-[var(--paper-deep)]/35" : ""}`}
+      title={canEdit ? "Drag to another group · click to set role" : undefined}
       onClick={(e) => {
         if (!canEdit) return;
         e.stopPropagation();
         setOpen((v) => !v);
       }}
     >
-      {isLeader && member.zu_zhang_tier ? (
-        <TierBadge tier={member.zu_zhang_tier} grade={member.zu_zhang_grade} />
-      ) : null}
-      {member.region_id ? (
-        <span className="font-mono text-[9.5px] text-[var(--cinnabar-deep)]">
-          {member.region_id}
-        </span>
-      ) : null}
-      <span>{name}</span>
-      {member.is_old_student ? (
-        <span className="text-[9.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">旧</span>
-      ) : null}
-      {primaryGoal ? (
-        <span
-          className="text-[10px]"
-          title={`Primary goal: ${GROWTH_DIMENSION_LABEL[primaryGoal].cn}`}
-        >
-          {GROWTH_DIMENSION_LABEL[primaryGoal].icon}
-        </span>
-      ) : null}
-      {classMismatch && member.qualification ? (
-        <span
-          className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/50 text-[9px] tracking-[0.04em] text-[var(--gold-deep)] bg-[var(--gold-soft)]/60"
-          title={`This person's qualification (${STUDENT_QUALIFICATION_LABEL[member.qualification].cn}) doesn't match the group class (${GROUP_CLASS_LABEL[groupClass].cn}). Override or pin?`}
-        >
-          {STUDENT_QUALIFICATION_LABEL[member.qualification].short_cn}
-        </span>
-      ) : null}
-      {member.pinned_group_no ? (
-        <span
-          className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 text-[9px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
-          title={`Pinned to group #${member.pinned_group_no}`}
-        >
-          📌{member.pinned_group_no}
-        </span>
-      ) : null}
-      {open && canEdit ? (
-        <span
-          className="absolute z-10 mt-1 ml-1 flex flex-col rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] text-[11px]"
-          style={{ transform: "translateY(28px)" }}
-        >
-          {(["zu_zhang", "fu_zu_zhang", "participant"] as const).map((r) => (
-            <button
-              key={r}
-              type="button"
-              onClick={async (e) => {
-                e.stopPropagation();
-                setOpen(false);
-                await onSetRole(member.assignment_id, r);
-              }}
-              className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)]"
+      <td className="px-2 py-1.5 align-middle">
+        {member.role === "zu_zhang" ? (
+          <span
+            className="inline-flex items-center justify-center h-[16px] px-1.5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[var(--paper)] text-[9px] tracking-[0.06em]"
+            title="组长"
+          >
+            组
+          </span>
+        ) : member.role === "fu_zu_zhang" ? (
+          <span
+            className="inline-flex items-center justify-center h-[16px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[var(--ink)] text-[9px] tracking-[0.06em]"
+            title="副组长"
+          >
+            副
+          </span>
+        ) : null}
+      </td>
+      <td className="px-2 py-1.5 align-middle font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
+        {member.region_id ?? "—"}
+      </td>
+      <td className="px-2 py-1.5 align-middle text-[var(--ink)] truncate max-w-[180px]">
+        {name}
+      </td>
+      <td className="px-2 py-1.5 align-middle">
+        {isLeader && member.zu_zhang_tier ? (
+          <TierBadge tier={member.zu_zhang_tier} grade={member.zu_zhang_grade} />
+        ) : null}
+      </td>
+      <td className="px-1 py-1.5 align-middle text-center">
+        {primaryGoal ? (
+          <span
+            className="text-[12px]"
+            title={`Primary goal: ${GROWTH_DIMENSION_LABEL[primaryGoal].cn}`}
+          >
+            {GROWTH_DIMENSION_LABEL[primaryGoal].icon}
+          </span>
+        ) : null}
+      </td>
+      <td className="px-2 py-1.5 align-middle">
+        <span className="inline-flex items-center gap-1">
+          {member.is_old_student ? (
+            <span
+              title="老学员"
+              className="inline-flex items-center justify-center h-[14px] w-[14px] rounded-full border border-[var(--ink-faint)]/50 text-[8.5px] tracking-normal text-[var(--ink-mute)]"
             >
-              {r === "zu_zhang" ? "组长" : r === "fu_zu_zhang" ? "副组长" : "participant"}
-            </button>
-          ))}
+              旧
+            </span>
+          ) : null}
+          {classMismatch && member.qualification ? (
+            <span
+              className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/50 bg-[var(--gold-soft)]/60 text-[9px] tracking-[0.04em] text-[var(--gold-deep)]"
+              title={`Qualification (${STUDENT_QUALIFICATION_LABEL[member.qualification].cn}) doesn't match group class (${GROUP_CLASS_LABEL[groupClass].cn}). Override or pin?`}
+            >
+              {STUDENT_QUALIFICATION_LABEL[member.qualification].short_cn}
+            </span>
+          ) : null}
+          {member.pinned_group_no ? (
+            <span
+              className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 text-[9px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
+              title={`Pinned to group #${member.pinned_group_no}`}
+            >
+              📌{member.pinned_group_no}
+            </span>
+          ) : null}
         </span>
-      ) : null}
-    </span>
+        {open && canEdit ? (
+          <span
+            className="absolute z-10 right-2 mt-1 flex flex-col rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] text-[11px]"
+          >
+            {(["zu_zhang", "fu_zu_zhang", "participant"] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  await onSetRole(member.assignment_id, r);
+                }}
+                className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)]"
+              >
+                {r === "zu_zhang" ? "组长" : r === "fu_zu_zhang" ? "副组长" : "participant"}
+              </button>
+            ))}
+          </span>
+        ) : null}
+      </td>
+    </tr>
   );
 }
 
