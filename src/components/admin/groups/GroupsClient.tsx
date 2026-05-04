@@ -457,7 +457,7 @@ function PreGenerationPanel({
               >
                 <span>{GROUP_CLASS_LABEL[c].cn}</span>
                 <span className="text-[var(--ink-mute)] tabular-nums">
-                  {memberCountByClass[c]}p → {kByClass[c]} group
+                  {memberCountByClass[c]} pax → {kByClass[c]} group
                   {kByClass[c] === 1 ? "" : "s"}
                 </span>
               </span>
