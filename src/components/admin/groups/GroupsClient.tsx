@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -52,6 +52,23 @@ export function GroupsClient(props: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Single open role-popover across the whole page. Click another row
+  // → previous popover closes. Click anywhere outside a row → all close.
+  const [openMemberId, setOpenMemberId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!openMemberId) return;
+    function onPointer(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest("[data-member-row]") || target.closest("[data-role-popover]")) {
+        return;
+      }
+      setOpenMemberId(null);
+    }
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [openMemberId]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -212,6 +229,8 @@ export function GroupsClient(props: Props) {
                 groupSizeMin={props.groupSizeMin}
                 canEdit={props.canEdit}
                 onSetRole={handleSetRole}
+                openMemberId={openMemberId}
+                setOpenMemberId={setOpenMemberId}
               />
             ))}
           </div>
@@ -332,6 +351,8 @@ function GroupCard({
   groupSizeMin,
   canEdit,
   onSetRole,
+  openMemberId,
+  setOpenMemberId,
 }: {
   eventId: string;
   group: GroupBuilderGroup;
@@ -339,6 +360,8 @@ function GroupCard({
   groupSizeMin: number;
   canEdit: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
+  openMemberId: string | null;
+  setOpenMemberId: (id: string | null) => void;
 }) {
   const router = useRouter();
   const { isOver, setNodeRef } = useDroppable({ id: `group-${group.group_no}` });
@@ -492,6 +515,10 @@ function GroupCard({
                   groupClass={group.group_class}
                   canEdit={canEdit}
                   onSetRole={onSetRole}
+                  isOpen={openMemberId === m.assignment_id}
+                  setOpen={(v) =>
+                    setOpenMemberId(v ? m.assignment_id : null)
+                  }
                 />
               ))}
             </tbody>
@@ -525,17 +552,20 @@ function MemberRow({
   groupClass,
   canEdit,
   onSetRole,
+  isOpen,
+  setOpen,
 }: {
   member: GroupBuilderMember;
   groupClass: GroupClass;
   canEdit: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
+  isOpen: boolean;
+  setOpen: (v: boolean) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: member.assignment_id,
     disabled: !canEdit,
   });
-  const [open, setOpen] = useState(false);
   const name = member.name_en || member.name_cn || "—";
   const isLeader = member.role === "zu_zhang" || member.role === "fu_zu_zhang";
   const roleTone =
@@ -559,6 +589,7 @@ function MemberRow({
     <tr
       ref={setNodeRef}
       style={style}
+      data-member-row={member.assignment_id}
       {...listeners}
       {...attributes}
       className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${canEdit ? "cursor-grab active:cursor-grabbing hover:bg-[var(--paper-deep)]/35" : ""}`}
@@ -566,7 +597,7 @@ function MemberRow({
       onClick={(e) => {
         if (!canEdit) return;
         e.stopPropagation();
-        setOpen((v) => !v);
+        setOpen(!isOpen);
       }}
     >
       <td className="px-2 py-1.5 align-middle">
@@ -587,7 +618,7 @@ function MemberRow({
         ) : null}
       </td>
       <td className="px-2 py-1.5 align-middle font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
-        {member.region_id ?? "—"}
+        {member.region_id ?? ""}
       </td>
       <td className="px-2 py-1.5 align-middle text-[var(--ink)] truncate max-w-[180px]">
         {name}
@@ -634,8 +665,9 @@ function MemberRow({
             </span>
           ) : null}
         </span>
-        {open && canEdit ? (
+        {isOpen && canEdit ? (
           <span
+            data-role-popover
             className="absolute z-10 right-2 mt-1 flex flex-col rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] text-[11px]"
           >
             {(["zu_zhang", "fu_zu_zhang", "participant"] as const).map((r) => (
