@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { EnrollmentStatus } from "@/lib/enrollments-shared";
+import { CurateZuZhangDialog } from "./CurateZuZhangDialog";
 
 type Props = {
   eventId: string;
@@ -120,6 +121,41 @@ export function EnrollmentsToolbar({
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--cinnabar)] animate-pulse" aria-hidden="true" />
         Refreshing
       </span>
+
+      <CurateZuZhangDialog
+        eventId={eventId}
+        trigger={(open) => (
+          <button
+            type="button"
+            onClick={open}
+            className="inline-flex items-center gap-2 h-9 px-3.5 rounded-[var(--radius-pill)]
+                       border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)]
+                       text-[12px] tracking-[0.04em] text-[var(--cinnabar-deep)]
+                       hover:bg-[var(--cinnabar)] hover:text-[var(--paper-warm)]
+                       focus-visible:shadow-[var(--shadow-focus)]
+                       transition-[background-color,color] duration-[var(--dur-fast)]"
+            aria-label="Curate 组长 roster"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="4" cy="4" r="2" />
+              <path d="M1 11c0-2 1.5-3.5 3-3.5s3 1.5 3 3.5" />
+              <circle cx="9" cy="5" r="1.5" />
+              <path d="M7 11c0-1.5 1-2.5 2-2.5s2 1 2 2.5" />
+            </svg>
+            Curate 组长
+          </button>
+        )}
+      />
 
       <button
         type="button"
