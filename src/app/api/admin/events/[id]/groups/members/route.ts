@@ -3,8 +3,6 @@ import { z } from "zod";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { writeAuditLog } from "@/lib/audit";
-import { pickTableRoles } from "@/lib/grouping/roles";
-import type { GroupingParticipant } from "@/lib/grouping/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,8 +14,9 @@ export const runtime = "nodejs";
 //     - Reassign one participant to a different group.
 //     - Refuses moves that bust [group_size_min, group_size_max].
 //     - Refuses moves that put a family-linked pair in the same group.
-//     - Recomputes 组长 / 副组长 roles on BOTH source + target groups
-//       since the moving participant could have been the leader.
+//     - In M6.0 the moved member becomes 'participant'. If they were the
+//       source's zu_zhang, the source's leader_participant_id is cleared
+//       (admin must re-curate via the EnrollmentsTable / curate dialog).
 //
 //   { action: "set_role", assignment_id, role: "zu_zhang"|"fu_zu_zhang"|"participant" }
 //     - Direct role override on a single member. Demotes whoever else
@@ -231,12 +230,11 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     );
   }
 
-  // Apply the move + reparent the assignment.
+  // Apply the move + reparent the assignment with role reset.
   const { error: moveErr } = await service
     .from("event_seat_assignments")
     .update({
       group_id: targetGroup.id,
-      // Reset role; we recompute below.
       role: "participant",
     })
     .eq("id", body.assignment_id);
@@ -244,11 +242,14 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: moveErr.message }, { status: 500 });
   }
 
-  // Recompute roles on BOTH groups now that membership changed.
-  await Promise.all([
-    recomputeGroupRoles(service, source.group_id, eventId),
-    recomputeGroupRoles(service, targetGroup.id, eventId),
-  ]);
+  // If the moved member was the source group's 组长, clear the source's
+  // leader pointer. Admin re-curates via the curate dialog or set_role.
+  if (source.role === "zu_zhang") {
+    await service
+      .from("event_groups")
+      .update({ leader_participant_id: null })
+      .eq("id", source.group_id);
+  }
 
   await writeAuditLog({
     actor_id: admin.id,
@@ -304,74 +305,3 @@ function wouldCreateFamilyConflict(
   return false;
 }
 
-async function recomputeGroupRoles(
-  service: ReturnType<typeof createSupabaseServiceClient>,
-  groupId: string,
-  eventId: string,
-): Promise<void> {
-  const { data: members } = await service
-    .from("event_seat_assignments")
-    .select(
-      "id, participant_id, participant:participants!inner(id, region_id, overall_score, influence_score, financial_score, motivation_tag, is_old_student, family_of_participant_id, region)",
-    )
-    .eq("group_id", groupId)
-    .returns<
-      Array<{
-        id: string;
-        participant_id: string;
-        participant: {
-          id: string;
-          region_id: string | null;
-          overall_score: number | null;
-          influence_score: number | null;
-          financial_score: number | null;
-          motivation_tag: string | null;
-          is_old_student: boolean;
-          family_of_participant_id: string | null;
-          region: string | null;
-        };
-      }>
-    >();
-  if (!members || members.length === 0) {
-    await service
-      .from("event_groups")
-      .update({ leader_participant_id: null })
-      .eq("id", groupId);
-    return;
-  }
-
-  const groupingParticipants: GroupingParticipant[] = members.map((m) => ({
-    participant_id: m.participant.id,
-    region_id: m.participant.region_id,
-    overall_score: m.participant.overall_score,
-    influence_score: m.participant.influence_score,
-    financial_score: m.participant.financial_score,
-    motivation_tag: m.participant.motivation_tag,
-    is_old_student: m.participant.is_old_student,
-    family_of_participant_id: m.participant.family_of_participant_id,
-    region: m.participant.region,
-    pinned_group_no: null,
-  }));
-
-  const roles = pickTableRoles(groupingParticipants);
-  const roleByPid = new Map(roles.map((r) => [r.participant_id, r.role]));
-
-  // Update each assignment row's role.
-  for (const m of members) {
-    const newRole = roleByPid.get(m.participant_id) ?? "participant";
-    await service
-      .from("event_seat_assignments")
-      .update({ role: newRole })
-      .eq("id", m.id);
-  }
-  // Update group's leader pointer.
-  const newLeader = members.find(
-    (m) => roleByPid.get(m.participant_id) === "zu_zhang",
-  );
-  await service
-    .from("event_groups")
-    .update({ leader_participant_id: newLeader?.participant_id ?? null })
-    .eq("id", groupId);
-
-  void eventId; // surfaced in audit metadata at the call site
-}

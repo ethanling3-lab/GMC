@@ -42,6 +42,15 @@ type ParticipantRef = {
   referrer_id: string | null;
   referrer_name: string | null;
   referrer_contact: string | null;
+  /** M6.0 — set when admin has tagged this participant as 组长-eligible.
+   * The per-row "Serve as 组长" chip is only rendered when this is non-null.
+   * Optional so pre-022 schemas still load. */
+  zu_zhang_tier?:
+    | "key_recruitment"
+    | "recruitment"
+    | "maintenance"
+    | "auxiliary"
+    | null;
 };
 
 export type ReferrerRef = {
@@ -77,6 +86,14 @@ export type EnrollmentRow = {
   /** M6 grouping pin — admin-set hint that this person should land in group N
    * when the LLM/balance algorithm runs. Optional so pre-021 schemas still work. */
   pinned_group_no?: number | null;
+  /** M6.0 — admin curates the per-event 组长 roster by flipping this on. */
+  serving_as_zu_zhang?: boolean | null;
+  zu_zhang_tier_for_event?:
+    | "key_recruitment"
+    | "recruitment"
+    | "maintenance"
+    | "auxiliary"
+    | null;
 };
 
 type Props = {
@@ -567,6 +584,35 @@ export function EnrollmentsTable({
     }
   }
 
+  // Per-row 'Serve as 组长' toggle. Admin curates by flipping on/off.
+  // Tier override (zu_zhang_tier_for_event) is set via the curate modal —
+  // this chip just toggles serving_as_zu_zhang.
+  async function toggleServingZuZhang(id: string, current: boolean) {
+    if (!canEdit) return;
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serving_as_zu_zhang: !current }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          payload?.error ?? `Couldn't update 组长 toggle (${res.status})`,
+        );
+      }
+      router.refresh();
+      setToast({
+        message: !current
+          ? "Tagged as 组长 for this event"
+          : "Removed from 组长 roster",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "组长 toggle failed");
+    }
+  }
+
   const count = selected.size;
 
   return (
@@ -808,6 +854,20 @@ export function EnrollmentsTable({
                                   ? `Pin · #${r.pinned_group_no}`
                                   : "Pin"}
                               </button>
+                            ) : null}
+                            {canEdit && p.zu_zhang_tier ? (
+                              <ZuZhangChip
+                                serving={r.serving_as_zu_zhang ?? false}
+                                tierForEvent={r.zu_zhang_tier_for_event ?? null}
+                                globalTier={p.zu_zhang_tier}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleServingZuZhang(
+                                    r.id,
+                                    r.serving_as_zu_zhang ?? false,
+                                  );
+                                }}
+                              />
                             ) : null}
                             {p.email ? (
                               <>
@@ -1199,6 +1259,62 @@ function OldChipInline() {
       <span className="w-1 h-1 rounded-full bg-[var(--cinnabar)]" aria-hidden="true" />
       Old
     </span>
+  );
+}
+
+const ZU_ZHANG_TIER_SHORT: Record<
+  "key_recruitment" | "recruitment" | "maintenance" | "auxiliary",
+  string
+> = {
+  key_recruitment: "重",
+  recruitment: "召",
+  maintenance: "维",
+  auxiliary: "辅",
+};
+
+function ZuZhangChip({
+  serving,
+  tierForEvent,
+  globalTier,
+  onClick,
+}: {
+  serving: boolean;
+  tierForEvent:
+    | "key_recruitment"
+    | "recruitment"
+    | "maintenance"
+    | "auxiliary"
+    | null;
+  globalTier:
+    | "key_recruitment"
+    | "recruitment"
+    | "maintenance"
+    | "auxiliary";
+  onClick: (e: React.MouseEvent) => void;
+}) {
+  const effective = tierForEvent ?? globalTier;
+  const overridden = tierForEvent != null && tierForEvent !== globalTier;
+  const label = serving
+    ? `组长 · ${ZU_ZHANG_TIER_SHORT[effective]}${overridden ? "*" : ""}`
+    : "+ 组长";
+  const title = serving
+    ? `Serving as 组长 (${effective}${overridden ? ", per-event override" : ""}) — click to remove from roster`
+    : "Tag this participant as 组长 for this event";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border text-[10px] tracking-[0.04em] transition-colors duration-[var(--dur-fast)] ${
+        serving
+          ? overridden
+            ? "border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[var(--gold-deep)] hover:border-[var(--gold)]"
+            : "border-[var(--cinnabar)]/50 bg-[var(--cinnabar)] text-[var(--paper)] hover:bg-[var(--cinnabar-deep)]"
+          : "border-[var(--paper-shadow)] bg-[var(--paper)] !text-[var(--ink-faint)] hover:!text-[var(--cinnabar-deep)] hover:border-[var(--cinnabar)]/30"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

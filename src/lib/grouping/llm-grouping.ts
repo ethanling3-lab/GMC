@@ -1,24 +1,33 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { computeRosterShortfalls } from "./balance";
+import { applyCuratedRoles } from "./roles";
+import {
+  effectiveQualification,
+  isPriority,
+  participantToClass,
+  requiredLeaderTiers,
+} from "./types";
 import { validateGrouping } from "./validate";
 import type {
   DraftGroup,
+  GroupClass,
   GroupingConfig,
   GroupingParticipant,
   GroupingResult,
+  GroupingZuZhang,
 } from "./types";
 
-// LLM-driven grouping for table-mode events. claude-opus-4-7, system
-// prompt cached with cache_control: ephemeral. The model is given a
-// PII-safe view of all enrolled participants (region_id only, no names
-// or emails) plus the constraint set, and returns a full assignment via
-// the assign_groups tool.
+// LLM-driven grouping for table-mode events. M6.0 rewrite — drops the
+// derive-leader prompt; 组长 are pre-seeded into groups by `group_no`
+// and `group_class` from the curated roster. The LLM's only job is to
+// distribute the remaining participants WITHIN their qualification's
+// class, optimising for goal↔dimension matching, priority spread,
+// family split, and pin respect.
 //
 // Validation runs server-side after each call. On failure, the error
 // list is fed back as a tool_result and the model is asked to retry.
 // Max 3 retries; after that the caller falls back to balance.ts.
-//
-// Mirrors the manual tool-loop pattern from src/lib/inbox/ai/tier1.ts.
 
 const MODEL = "claude-opus-4-7";
 const MAX_RETRIES = 3;
@@ -26,30 +35,57 @@ const MAX_RESPONSE_TOKENS = 16384;
 
 const SYSTEM_PROMPT = `You assign event participants into seated groups for GMC's bilingual leadership events.
 
-Goal: each group should be DIVERSE — a mix of score levels, regions, motivations, and old vs new students. Avoid clustering high scorers together; the discussion benefits from peer-to-peer learning across levels.
+# 4-class group taxonomy
 
-Roles per group:
-- Exactly 1 组长 (zu_zhang) — the group leader. MUST be an old student (is_old_student=true) if any old students are available. Pick the highest combined overall+influence score among old students; if no old students in the event at all, pick the highest scoring participant.
-- 1 to 2 副组长 (fu_zu_zhang) — deputy leaders. Prefer old students; pick the next 1-2 highest scorers among them. If the group has fewer than 3 old students, just pick 1 fu_zu_zhang.
-- All other members = participant.
+Every group is one of four classes, determined by the qualification of its members:
 
-Hard constraints (the assignment will be rejected if any are violated):
-1. Every enrolled participant must be assigned to exactly one group.
-2. Every group's size must be in [group_size_min, group_size_max].
-3. Family members (linked via family_of_region_id, in either direction or transitively) MUST land in DIFFERENT groups. Spouses especially — they should never end up at the same table.
-4. Every group must have exactly 1 zu_zhang and 1-2 fu_zu_zhang.
-5. Pinned participants (pinned_group_no set) MUST land in their assigned group_no.
+- **strategic** (特级组) — members are 卓越级+ (potential new students at Excellence level or above, OR Excellence/Strategic old students). Seated front row, dead center facing the stage.
+- **key** (重点组) — members are 精英级 (Elite). Seated front row sides OR second row center.
+- **growth** (成长组) — members are 成长级 (Rising). Seated middle (excluding front + last rows).
+- **maintenance** (维护组) — members are 基础级 (Basic). Seated last row.
 
-For each group, also write a short bilingual rationale (1-2 sentences each in English and 中文) explaining the group's coherence — who anchors it, what the mix looks like, anything notable.
+# Leader pairings (PRE-SEEDED — do not change)
 
-Use ONLY region_id to refer to participants in your rationale (e.g. "MY007", "SG042"). Never invent names — you don't have any.
+Each group already has its 组长 (zu_zhang) and 副组长 (fu_zu_zhang) seated by the curator. Pairings per class:
+
+- strategic: 重点感召型 (key_recruitment) main + 感召型 (recruitment) auxiliary
+- key:       感召型 (recruitment) main + 维护型 (maintenance) auxiliary
+- growth:    维护型 (maintenance) main + 辅助 (auxiliary) auxiliary
+- maintenance: 维护型 (maintenance) main + 辅助 (auxiliary) auxiliary
+
+The seeded 组长 + 副组长 are listed in groups_seeded[]. They are already members of their group — do NOT include them again in your output.
+
+# Your job
+
+For each regular participant in participants[], pick a group from groups_seeded[] and add them to that group's members list.
+
+Optimise for:
+
+1. **Class match.** Each participant has a target_class. Place them in a group whose group_class matches it. NEVER move a 卓越级 participant into 成长组 (etc) unless they are explicitly pinned.
+2. **Goal ↔ dimension matching.** Each participant declares goal_dimensions[] (ordered, index 0 = primary). Prefer a group whose 组长 dimensions cover the participant's primary goal.
+3. **Priority spread.** Participants with is_priority=true (max(financial, influence) ≥ 4) should be evenly distributed across the strategic + key groups — do NOT cluster them.
+4. **Family split.** Family-linked participants (each lists family_member_region_ids[] of their direct partners; chains are transitive) MUST land in DIFFERENT groups. Spouses especially — never same table.
+5. **Pin respect.** If pinned_group_no is set, the participant MUST land in that exact group_no, even if it pulls them across class. Pin overrides everything.
+
+# Hard constraints (assignment rejected if violated)
+
+- Every regular participant must appear in exactly one group's members list.
+- Every group's total size (seeded leaders + your assigned members) must be in [group_size_min, group_size_max].
+- No two family-linked participants in the same group.
+- All pins respected.
+
+# Rationale
+
+For each group, write a short bilingual rationale (1–2 sentences EN + 中文) explaining: the class, the leader pairing, the dimension coverage, the qualification mix, and any notable decisions (priority spread, family pairs handled).
+
+Use ONLY region_id to refer to participants (e.g. "MY007", "SG042"). Never invent names — you don't have any.
 
 Call the assign_groups tool exactly once per turn with your full proposal. If the validator rejects your proposal, you'll receive an error list and must call assign_groups again with a corrected proposal.`;
 
 const ASSIGN_GROUPS_TOOL: Anthropic.Tool = {
   name: "assign_groups",
   description:
-    "Submit a complete group assignment for the event. Includes role per member and a bilingual rationale per group. Call exactly once per turn.",
+    "Submit a complete group assignment for the event. For each pre-seeded group, list the regular participants you are assigning to it (do NOT re-include the seeded 组长 + 副组长). Includes a bilingual rationale per group. Call exactly once per turn.",
   input_schema: {
     type: "object",
     properties: {
@@ -63,18 +99,15 @@ const ASSIGN_GROUPS_TOOL: Anthropic.Tool = {
             rationale_cn: { type: "string", maxLength: 600 },
             members: {
               type: "array",
+              description:
+                "Regular participants to add to this group. Do NOT include the seeded 组长 / 副组长 — those are already members. Use region_id values from participants[] only.",
               items: {
                 type: "object",
                 properties: {
                   region_id: { type: "string" },
-                  role: {
-                    type: "string",
-                    enum: ["zu_zhang", "fu_zu_zhang", "participant"],
-                  },
                 },
-                required: ["region_id", "role"],
+                required: ["region_id"],
               },
-              minItems: 1,
             },
           },
           required: ["group_no", "rationale_en", "rationale_cn", "members"],
@@ -88,6 +121,7 @@ const ASSIGN_GROUPS_TOOL: Anthropic.Tool = {
 
 export type LlmGroupingInput = {
   participants: GroupingParticipant[];
+  roster: GroupingZuZhang[];
   config: GroupingConfig;
 };
 
@@ -129,13 +163,20 @@ export async function runLlmGrouping(
   if (!client) {
     return { ...empty, failure_reason: "anthropic_not_configured" };
   }
-  if (input.participants.length === 0) {
-    return { ...empty, failure_reason: "no_participants" };
+
+  // Partition the inputs: 组长 are seeded, regular participants are
+  // what the LLM must place.
+  const rosterPids = new Set(input.roster.map((z) => z.participant_id));
+  const regularParticipants = input.participants.filter(
+    (p) => !rosterPids.has(p.participant_id),
+  );
+  if (regularParticipants.length === 0) {
+    return { ...empty, failure_reason: "no_regular_participants" };
   }
 
   // region_id is mandatory for the LLM input — anyone without one would
-  // create unresolvable references. Block the LLM path and let the
-  // caller fall back to balance.ts (which uses participant_id internally).
+  // create unresolvable references. Block the LLM path so the caller
+  // falls back to balance.ts (which uses participant_id internally).
   const missingRegion = input.participants.filter((p) => !p.region_id);
   if (missingRegion.length > 0) {
     return {
@@ -143,33 +184,76 @@ export async function runLlmGrouping(
       failure_reason: `missing_region_id_count:${missingRegion.length}`,
     };
   }
+  const rosterMissingRegion = input.roster.filter((z) => !z.region_id);
+  if (rosterMissingRegion.length > 0) {
+    return {
+      ...empty,
+      failure_reason: `roster_missing_region_id_count:${rosterMissingRegion.length}`,
+    };
+  }
 
-  // Estimate target k for the prompt: midpoint of allowable range.
-  const kMin = Math.ceil(input.participants.length / input.config.group_size_max);
-  const kMax = Math.max(
-    kMin,
-    Math.ceil(input.participants.length / input.config.group_size_min),
-  );
-  const kTarget = Math.round((kMin + kMax) / 2);
+  // Compute groups_seeded[] from roster + per-class k. We build the
+  // skeleton here so the LLM gets group_no's it can index into; the
+  // server is the source of truth for seeding.
+  const skeleton = buildGroupSkeleton(regularParticipants, input.roster, input.config);
+  if ("error" in skeleton) {
+    return { ...empty, failure_reason: skeleton.error };
+  }
 
-  // Build the participant table once. Used as the user's first turn.
-  // family_of_participant_id is resolved to family_of_region_id for the
-  // LLM (which only knows region_ids). Only same-event family links are
-  // surfaced — out-of-event links are dropped because the LLM can't act
-  // on them anyway.
   const regionIdById = new Map(
-    input.participants.map((p) => [p.participant_id, p.region_id ?? ""]),
+    [...input.participants, ...rosterAsParticipants(input.roster)].map((p) => [
+      "participant_id" in p ? p.participant_id : "",
+      p.region_id ?? "",
+    ]),
   );
-  const participantTable = input.participants.map((p) => ({
+
+  // Build the LLM payload: groups_seeded + participants (regular only).
+  // leader_grade is informational — the LLM doesn't choose leaders, but
+  // can reason about queue position when distributing priority members.
+  const groupsSeeded = skeleton.groups.map((g) => ({
+    group_no: g.group_no,
+    group_class: g.group_class,
+    leader: g.main_zu_zhang
+      ? {
+          region_id: g.main_zu_zhang.region_id,
+          tier: g.main_zu_zhang.tier,
+          grade: g.main_zu_zhang.grade,
+          dimensions: g.main_zu_zhang.dimensions,
+        }
+      : null,
+    auxiliary: g.auxiliary_zu_zhang
+      ? {
+          region_id: g.auxiliary_zu_zhang.region_id,
+          tier: g.auxiliary_zu_zhang.tier,
+          grade: g.auxiliary_zu_zhang.grade,
+          dimensions: g.auxiliary_zu_zhang.dimensions,
+        }
+      : null,
+  }));
+
+  const participantTable = regularParticipants.map((p) => ({
     region_id: p.region_id,
-    overall: p.overall_score,
-    influence: p.influence_score,
+    qualification: effectiveQualification(p),
+    target_class: participantToClass(p),
+    is_priority: isPriority(p),
     financial: p.financial_score,
+    influence: p.influence_score,
     motivation_tag: p.motivation_tag,
     is_old_student: p.is_old_student,
-    family_of_region_id: p.family_of_participant_id
-      ? regionIdById.get(p.family_of_participant_id) || null
-      : null,
+    goal_dimensions: p.goal_dimensions,
+    // Union legacy single-edge column with the multi-edge join table
+    // so the LLM sees the full family graph as one list.
+    family_member_region_ids: (() => {
+      const ids = new Set<string>();
+      if (p.family_of_participant_id) ids.add(p.family_of_participant_id);
+      for (const o of p.family_member_ids) ids.add(o);
+      const regionIds: string[] = [];
+      for (const id of ids) {
+        const r = regionIdById.get(id);
+        if (r) regionIds.push(r);
+      }
+      return regionIds;
+    })(),
     pinned_group_no: p.pinned_group_no,
   }));
 
@@ -178,8 +262,8 @@ export async function runLlmGrouping(
       event: {
         group_size_min: input.config.group_size_min,
         group_size_max: input.config.group_size_max,
-        k_target: kTarget,
       },
+      groups_seeded: groupsSeeded,
       participants: participantTable,
     },
     null,
@@ -238,9 +322,9 @@ export async function runLlmGrouping(
         b.type === "tool_use" && b.name === "assign_groups",
     );
     if (!toolUse) {
-      // Model didn't call the tool — treat as failure but log as a
-      // validation error so the retry path tells it what to do next.
-      lastErrors = ["model did not call assign_groups; you must call the tool exactly once per turn"];
+      lastErrors = [
+        "model did not call assign_groups; you must call the tool exactly once per turn",
+      ];
       messages.push({ role: "assistant", content: resp.content });
       messages.push({
         role: "user",
@@ -249,10 +333,9 @@ export async function runLlmGrouping(
       continue;
     }
 
-    // Parse the tool input. Map region_id back to participant_id.
     let drafts: DraftGroup[];
     try {
-      drafts = parseToolInput(toolUse.input, regionIdById);
+      drafts = mergeLlmOutputWithSeeds(toolUse.input, skeleton.groups, regionIdById);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       lastErrors = [`tool input parse failed: ${reason}`];
@@ -271,19 +354,24 @@ export async function runLlmGrouping(
       continue;
     }
 
-    const validation = validateGrouping(drafts, input.participants, input.config);
+    const validation = validateGrouping(
+      drafts,
+      input.participants,
+      input.roster,
+      input.config,
+    );
     if (validation.valid) {
       return {
         result: {
           strategy: "llm",
-          groups: drafts.map((d) => ({
-            ...d,
-            // Stamp leader_participant_id from the zu_zhang member.
-            leader_participant_id:
-              d.members.find((m) => m.role === "zu_zhang")?.participant_id ?? null,
-          })),
+          groups: drafts,
           cushion_assignments: [],
-          metadata: { n: input.participants.length, k: drafts.length, retry_count: attempt },
+          metadata: {
+            n: input.participants.length,
+            k: drafts.length,
+            retry_count: attempt,
+            roster_shortfalls: skeleton.shortfalls.length > 0 ? skeleton.shortfalls : undefined,
+          },
         },
         retries: attempt,
         validation_errors: [],
@@ -296,7 +384,6 @@ export async function runLlmGrouping(
       };
     }
 
-    // Validation failed — feed errors back and ask for a retry.
     lastErrors = validation.errors.map((e) => `[${e.code}] ${e.detail}`);
     messages.push({ role: "assistant", content: resp.content });
     messages.push({
@@ -325,11 +412,92 @@ export async function runLlmGrouping(
   };
 }
 
-// Parse the Anthropic tool input. Validates shape and resolves region_id
-// → participant_id. Throws on shape errors so the caller surfaces them
-// to the model on retry.
-function parseToolInput(
+// Build the per-class k + seeded leader pairings. Returns the same
+// skeleton balance.ts uses, so both algorithms agree on group_no
+// numbering + class assignment.
+function buildGroupSkeleton(
+  regular: GroupingParticipant[],
+  roster: GroupingZuZhang[],
+  config: GroupingConfig,
+): {
+  groups: Array<{
+    group_no: number;
+    group_class: GroupClass;
+    main_zu_zhang: GroupingZuZhang | null;
+    auxiliary_zu_zhang: GroupingZuZhang | null;
+  }>;
+  shortfalls: ReturnType<typeof computeRosterShortfalls>;
+} | { error: string } {
+  const buckets: Record<GroupClass, number> = {
+    strategic: 0,
+    key: 0,
+    growth: 0,
+    maintenance: 0,
+  };
+  for (const p of regular) buckets[participantToClass(p)] += 1;
+
+  const kByClass: Record<GroupClass, number> = {
+    strategic: 0,
+    key: 0,
+    growth: 0,
+    maintenance: 0,
+  };
+  for (const cls of ["strategic", "key", "growth", "maintenance"] as GroupClass[]) {
+    if (buckets[cls] === 0) continue;
+    kByClass[cls] = Math.ceil(buckets[cls] / config.group_size_max);
+  }
+
+  const shortfalls = computeRosterShortfalls(roster, kByClass);
+
+  // Seed greedily: pop main + auxiliary tier 组长 by class. Each tier
+  // bucket sorted by grade desc (nulls last) so the highest-graded
+  // leader of a tier seeds the first group of its required class.
+  const remaining: Record<string, GroupingZuZhang[]> = {
+    key_recruitment: [],
+    recruitment: [],
+    maintenance: [],
+    auxiliary: [],
+  };
+  for (const z of roster) remaining[z.tier].push(z);
+  for (const tier of Object.keys(remaining)) {
+    remaining[tier].sort((a, b) => (b.grade ?? 0) - (a.grade ?? 0));
+  }
+
+  const groups: Array<{
+    group_no: number;
+    group_class: GroupClass;
+    main_zu_zhang: GroupingZuZhang | null;
+    auxiliary_zu_zhang: GroupingZuZhang | null;
+  }> = [];
+  let counter = 0;
+  for (const cls of ["strategic", "key", "growth", "maintenance"] as GroupClass[]) {
+    const k = kByClass[cls];
+    if (k === 0) continue;
+    const { main, auxiliary } = requiredLeaderTiers(cls);
+    for (let i = 0; i < k; i += 1) {
+      counter += 1;
+      groups.push({
+        group_no: counter,
+        group_class: cls,
+        main_zu_zhang: remaining[main].shift() ?? null,
+        auxiliary_zu_zhang: remaining[auxiliary].shift() ?? null,
+      });
+    }
+  }
+
+  return { groups, shortfalls };
+}
+
+// LLM returns regular-member region_ids per group_no. We merge with
+// the seeded leader pairings to produce full DraftGroup[].
+function mergeLlmOutputWithSeeds(
   raw: unknown,
+  seeded: Array<{
+    group_no: number;
+    group_class: GroupClass;
+    main_zu_zhang: GroupingZuZhang | null;
+    auxiliary_zu_zhang: GroupingZuZhang | null;
+  }>,
   regionIdById: Map<string, string>,
 ): DraftGroup[] {
   if (typeof raw !== "object" || raw === null) {
@@ -340,24 +508,25 @@ function parseToolInput(
     throw new Error("tool input missing groups array");
   }
 
-  // Reverse lookup: region_id → participant_id (only for participants
-  // in this event).
   const pidByRegionId = new Map<string, string>();
-  for (const [pid, rid] of regionIdById) {
-    if (rid) pidByRegionId.set(rid, pid);
-  }
+  for (const [pid, rid] of regionIdById) if (rid) pidByRegionId.set(rid, pid);
+
+  const seededByNo = new Map(seeded.map((s) => [s.group_no, s]));
 
   const drafts: DraftGroup[] = [];
   for (const g of obj.groups as Array<Record<string, unknown>>) {
     if (typeof g.group_no !== "number") {
       throw new Error(`group missing group_no`);
     }
+    const seed = seededByNo.get(g.group_no);
+    if (!seed) {
+      throw new Error(`group ${g.group_no} not in seeded skeleton`);
+    }
     if (!Array.isArray(g.members)) {
       throw new Error(`group ${g.group_no} missing members array`);
     }
-    const members = (g.members as Array<Record<string, unknown>>).map((m) => {
+    const llmMembers = (g.members as Array<Record<string, unknown>>).map((m) => {
       const region = String(m.region_id ?? "").trim();
-      const role = String(m.role ?? "participant");
       if (!region) {
         throw new Error(`group ${g.group_no} has a member with no region_id`);
       }
@@ -367,28 +536,52 @@ function parseToolInput(
           `group ${g.group_no} references unknown region_id ${region}`,
         );
       }
-      if (
-        role !== "zu_zhang"
-        && role !== "fu_zu_zhang"
-        && role !== "participant"
-      ) {
-        throw new Error(
-          `group ${g.group_no} member ${region} has invalid role ${role}`,
-        );
-      }
-      return {
-        participant_id: pid,
-        region_id: region,
-        role: role as "zu_zhang" | "fu_zu_zhang" | "participant",
-      };
+      return { participant_id: pid, region_id: region };
     });
+
+    // Re-stamp roles by stitching the seeded leader pairing back in.
+    const memberRoles = applyCuratedRoles({
+      main_zu_zhang: seed.main_zu_zhang,
+      auxiliary_zu_zhang: seed.auxiliary_zu_zhang,
+      members: llmMembers.map((m) => ({
+        participant_id: m.participant_id,
+        region_id: m.region_id,
+        // Stub the algorithm fields it needs — applyCuratedRoles only
+        // reads participant_id + region_id.
+        overall_score: null,
+        influence_score: null,
+        financial_score: null,
+        motivation_tag: null,
+        is_old_student: false,
+        family_of_participant_id: null,
+        family_member_ids: [],
+        region: null,
+        pinned_group_no: null,
+        goal_dimensions: [],
+        student_qualification_override: null,
+      })),
+    });
+
     drafts.push({
       group_no: g.group_no,
-      leader_participant_id: null, // filled in by caller after validation
-      members,
+      group_class: seed.group_class,
+      leader_participant_id: seed.main_zu_zhang?.participant_id ?? null,
+      members: memberRoles,
       rationale_en: String(g.rationale_en ?? "").trim(),
       rationale_cn: String(g.rationale_cn ?? "").trim(),
     });
   }
   return drafts;
 }
+
+// Treat 组长 roster entries as participants for the regionIdById map
+// so we can resolve their family_of_region_id references too.
+function rosterAsParticipants(
+  roster: GroupingZuZhang[],
+): Array<{ participant_id: string; region_id: string | null }> {
+  return roster.map((z) => ({
+    participant_id: z.participant_id,
+    region_id: z.region_id,
+  }));
+}
+

@@ -35,7 +35,7 @@ const SORTS = [
   { code: "oldest", label: "Oldest first" },
   { code: "region_id", label: "Student ID ↑" },
   { code: "name", label: "Name A–Z" },
-  { code: "overall_score", label: "Score · high → low" },
+  { code: "qualification", label: "Qualification · high → low" },
 ];
 
 type ArchivedMode = "active" | "archived" | "all";

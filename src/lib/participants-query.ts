@@ -21,7 +21,7 @@ export type ParticipantFilters = {
   region?: string;
   status?: ParticipantStatus;
   motivation?: MotivationTag;
-  sort?: "recent" | "oldest" | "region_id" | "name" | "overall_score";
+  sort?: "recent" | "oldest" | "region_id" | "name" | "qualification";
   /** "active" (default) hides archived, "archived" shows only archived, "all" shows both. */
   archived?: "active" | "archived" | "all";
 };
@@ -52,7 +52,7 @@ const SORT_VALUES = [
   "oldest",
   "region_id",
   "name",
-  "overall_score",
+  "qualification",
 ] as const;
 
 export function parseFilters(sp: URLSearchParams | Record<string, string | string[] | undefined>): ParticipantFilters {
@@ -162,8 +162,14 @@ export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any
     case "name":
       q = q.order("name_en", { ascending: true, nullsFirst: false });
       break;
-    case "overall_score":
-      q = q.order("overall_score", { ascending: false, nullsFirst: false });
+    case "qualification":
+      // Order by max(financial, influence) descending. PostgREST can't
+      // sort on a computed expression, so we approximate with a two-key
+      // sort that puts higher financial scorers first, then influence.
+      // Close enough for a roster scan; admins use the curate modal for
+      // exact filtering.
+      q = q.order("financial_score", { ascending: false, nullsFirst: false });
+      q = q.order("influence_score", { ascending: false, nullsFirst: false });
       break;
     case "recent":
     default:

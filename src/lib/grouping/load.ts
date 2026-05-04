@@ -4,13 +4,21 @@ import type {
   CushionShape,
   GroupingConfig,
   GroupingParticipant,
+  GroupingZuZhang,
+  GrowthDimension,
   SeatingMode,
+  StudentQualification,
+  ZuZhangCoreTrait,
+  ZuZhangTier,
 } from "./types";
 
 // Loads the inputs the generate route needs:
 //   * event row → seating_mode + group_size_min/max
 //   * enrolled participants (status in approved/paid) joined with the
-//     participants table for scoring fields
+//     participants table for scoring + qualitative fields
+//   * curated 组长 roster — enrolments where serving_as_zu_zhang=true,
+//     resolved to GroupingZuZhang (effective tier from
+//     enrollments.zu_zhang_tier_for_event ?? participants.zu_zhang_tier)
 //   * cushion shapes (cushion mode only) for row clustering
 //
 // The route is responsible for deciding which algorithm to call; this
@@ -23,6 +31,7 @@ export type GroupingLoadedInputs = {
     config: GroupingConfig;
   };
   participants: GroupingParticipant[];
+  zu_zhang_roster: GroupingZuZhang[];
   cushions: CushionShape[];
 };
 
@@ -36,6 +45,9 @@ type EventRow = {
 type EnrolmentRow = {
   id: string;
   pinned_group_no: number | null;
+  serving_as_zu_zhang: boolean;
+  zu_zhang_tier_for_event: ZuZhangTier | null;
+  zu_zhang_grade_for_event: number | null;
   participant: {
     id: string;
     region_id: string | null;
@@ -46,6 +58,12 @@ type EnrolmentRow = {
     is_old_student: boolean;
     family_of_participant_id: string | null;
     region: string | null;
+    goal_dimensions: GrowthDimension[] | null;
+    student_qualification: StudentQualification | null;
+    zu_zhang_tier: ZuZhangTier | null;
+    zu_zhang_grade: number | null;
+    zu_zhang_dimensions: GrowthDimension[] | null;
+    zu_zhang_core_traits: ZuZhangCoreTrait[] | null;
   } | null;
 };
 
@@ -64,27 +82,84 @@ export async function loadGroupingInputs(
   const { data: enrolments, error: enErr } = await supabase
     .from("enrollments")
     .select(
-      "id, pinned_group_no, participant:participants!inner(id, region_id, overall_score, influence_score, financial_score, motivation_tag, is_old_student, family_of_participant_id, region)",
+      `id, pinned_group_no, serving_as_zu_zhang, zu_zhang_tier_for_event,
+       zu_zhang_grade_for_event,
+       participant:participants!inner(
+         id, region_id,
+         overall_score, influence_score, financial_score, motivation_tag,
+         is_old_student, family_of_participant_id, region,
+         goal_dimensions, student_qualification,
+         zu_zhang_tier, zu_zhang_grade, zu_zhang_dimensions, zu_zhang_core_traits
+       )`,
     )
     .eq("event_id", eventId)
     .in("status", ["approved", "paid"])
     .returns<EnrolmentRow[]>();
   if (enErr) return { error: enErr.message };
 
-  const participants: GroupingParticipant[] = (enrolments ?? [])
-    .filter((e) => e.participant)
-    .map((e) => ({
+  const enrolmentRows = (enrolments ?? []).filter((e) => e.participant);
+
+  // Pull the family-link join table for everyone in this event so the
+  // algorithm sees the full multi-edge graph. Filter to event members
+  // server-side via two `or` clauses (a_id or b_id in the set).
+  const eventPids = enrolmentRows.map((e) => e.participant!.id);
+  const familyByPid = new Map<string, Set<string>>();
+  if (eventPids.length > 0) {
+    const inList = `(${eventPids.join(",")})`;
+    const { data: links, error: linkErr } = await supabase
+      .from("participant_family_links")
+      .select("a_id, b_id")
+      .or(`a_id.in.${inList},b_id.in.${inList}`);
+    if (linkErr) return { error: linkErr.message };
+    for (const l of links ?? []) {
+      if (!familyByPid.has(l.a_id)) familyByPid.set(l.a_id, new Set());
+      if (!familyByPid.has(l.b_id)) familyByPid.set(l.b_id, new Set());
+      familyByPid.get(l.a_id)!.add(l.b_id);
+      familyByPid.get(l.b_id)!.add(l.a_id);
+    }
+  }
+
+  const participants: GroupingParticipant[] = enrolmentRows.map((e) => ({
+    participant_id: e.participant!.id,
+    region_id: e.participant!.region_id,
+    overall_score: e.participant!.overall_score,
+    influence_score: e.participant!.influence_score,
+    financial_score: e.participant!.financial_score,
+    motivation_tag: e.participant!.motivation_tag,
+    is_old_student: e.participant!.is_old_student,
+    family_of_participant_id: e.participant!.family_of_participant_id,
+    family_member_ids: Array.from(familyByPid.get(e.participant!.id) ?? []),
+    region: e.participant!.region,
+    pinned_group_no: e.pinned_group_no,
+    goal_dimensions: e.participant!.goal_dimensions ?? [],
+    student_qualification_override: e.participant!.student_qualification,
+  }));
+
+  // Curated 组长 roster — only enrolments admin has flagged. Effective
+  // tier = per-event override else participant's global tier. Drops any
+  // serving=true rows where the participant has no global tier AND no
+  // override (data integrity defense — admin shouldn't be able to flag
+  // someone with no tier, but UI bugs can slip through).
+  const zu_zhang_roster: GroupingZuZhang[] = [];
+  for (const e of enrolmentRows) {
+    if (!e.serving_as_zu_zhang) continue;
+    const tier = e.zu_zhang_tier_for_event ?? e.participant!.zu_zhang_tier;
+    if (!tier) continue;
+    const grade = e.zu_zhang_grade_for_event ?? e.participant!.zu_zhang_grade;
+    zu_zhang_roster.push({
       participant_id: e.participant!.id,
       region_id: e.participant!.region_id,
-      overall_score: e.participant!.overall_score,
-      influence_score: e.participant!.influence_score,
-      financial_score: e.participant!.financial_score,
-      motivation_tag: e.participant!.motivation_tag,
-      is_old_student: e.participant!.is_old_student,
-      family_of_participant_id: e.participant!.family_of_participant_id,
-      region: e.participant!.region,
-      pinned_group_no: e.pinned_group_no,
-    }));
+      tier,
+      grade,
+      dimensions: e.participant!.zu_zhang_dimensions ?? [],
+      core_traits: e.participant!.zu_zhang_core_traits ?? [],
+      is_main:
+        tier === "key_recruitment"
+        || tier === "recruitment"
+        || tier === "maintenance",
+      is_auxiliary: tier === "auxiliary",
+    });
+  }
 
   let cushions: CushionShape[] = [];
   if (event.seating_mode === "cushions") {
@@ -108,6 +183,7 @@ export async function loadGroupingInputs(
       },
     },
     participants,
+    zu_zhang_roster,
     cushions,
   };
 }

@@ -7,6 +7,8 @@ import { LabelRow, Select, Textarea, Toggle } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
 import { MOTIVATIONS } from "@/lib/participant-import-schema";
 import type { MotivationTag } from "@/lib/participants-query";
+import { GROWTH_DIMENSION_LABEL } from "@/lib/grouping/types";
+import type { GrowthDimension } from "@/lib/grouping/types";
 
 export type EnrichmentData = {
   motivation_tag: MotivationTag | null;
@@ -14,7 +16,15 @@ export type EnrichmentData = {
   personality: string | null;
   face_type: string | null;
   parameter_framework: string | null;
+  goal_dimensions: GrowthDimension[];
 };
+
+const DIMENSIONS: GrowthDimension[] = [
+  "financial",
+  "relationship",
+  "health",
+  "inner_peace",
+];
 
 const MOTIVATION_LABEL: Record<MotivationTag, { en: string; zh: string }> = {
   clean: { en: "Clean", zh: "纯粹" },
@@ -49,6 +59,26 @@ export function EnrichmentEditor({
   async function save() {
     const ok = await patch(draft);
     if (ok) setEditing(false);
+  }
+
+  function toggleGoalDimension(d: GrowthDimension) {
+    const has = draft.goal_dimensions.includes(d);
+    if (has) {
+      setDraft({
+        ...draft,
+        goal_dimensions: draft.goal_dimensions.filter((x) => x !== d),
+      });
+    } else {
+      setDraft({ ...draft, goal_dimensions: [...draft.goal_dimensions, d] });
+    }
+  }
+
+  function moveGoalToFront(d: GrowthDimension) {
+    if (!draft.goal_dimensions.includes(d)) return;
+    setDraft({
+      ...draft,
+      goal_dimensions: [d, ...draft.goal_dimensions.filter((x) => x !== d)],
+    });
   }
 
   return (
@@ -106,6 +136,48 @@ export function EnrichmentEditor({
               placeholder="Framework-specific parameters"
             />
           </LabelRow>
+          <div>
+            <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
+              Goal Dimensions · 成长方向 (first = primary)
+            </span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {DIMENSIONS.map((d) => {
+                const idx = draft.goal_dimensions.indexOf(d);
+                const on = idx >= 0;
+                const isPrimary = idx === 0;
+                const lab = GROWTH_DIMENSION_LABEL[d];
+                return (
+                  <button
+                    type="button"
+                    key={d}
+                    onClick={() => toggleGoalDimension(d)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      moveGoalToFront(d);
+                    }}
+                    title={
+                      on
+                        ? "Click to remove · right-click to make primary"
+                        : "Click to add"
+                    }
+                    className={`px-3 py-1.5 rounded-full text-[12px] tracking-[0.04em] border transition-colors duration-[var(--dur-fast)] ${
+                      isPrimary
+                        ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper)]"
+                        : on
+                          ? "border-[var(--cinnabar)]/60 bg-[var(--cinnabar)]/10 text-[var(--cinnabar)]"
+                          : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)]"
+                    }`}
+                  >
+                    {isPrimary ? "★ " : ""}
+                    {lab.icon} {lab.cn}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[11px] text-[var(--ink-faint)]">
+              Right-click a chip to make it primary (first in the list).
+            </p>
+          </div>
         </div>
       ) : (
         <dl className="grid md:grid-cols-2 gap-x-8 gap-y-5">
@@ -144,6 +216,27 @@ export function EnrichmentEditor({
           </Field>
           <Field label="Parameter framework" labelZh="参数体系" multiline>
             {initial.parameter_framework ?? <Empty />}
+          </Field>
+          <Field label="Goal dimensions" labelZh="成长方向">
+            {initial.goal_dimensions.length === 0 ? (
+              <Empty />
+            ) : (
+              <span className="inline-flex flex-wrap gap-1.5">
+                {initial.goal_dimensions.map((d, i) => (
+                  <span
+                    key={d}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] ${
+                      i === 0
+                        ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper)]"
+                        : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)]"
+                    }`}
+                  >
+                    {i === 0 ? "★ " : ""}
+                    {GROWTH_DIMENSION_LABEL[d].icon} {GROWTH_DIMENSION_LABEL[d].cn}
+                  </span>
+                ))}
+              </span>
+            )}
           </Field>
         </dl>
       )}

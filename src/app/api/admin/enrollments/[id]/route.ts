@@ -27,13 +27,14 @@ const PAYMENT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const ACTIONS = ["approve", "reject", "cancel", "mark_paid", "mark_unpaid"] as const;
 
-// Three-mode PATCH:
+// Four-mode PATCH:
 //   { action: "...", amount_paid?, payment_method? } — state transition
 //   { amount_paid: number }                           — bare amount edit
 //   { pinned_group_no: number | null }                — group pinning
-// Bare + pinning edits skip the state machine. Used by inline edits on the
-// enrolments console for quick corrections + on the GroupBuilder UI for
-// grouping pre-seeding.
+//   { serving_as_zu_zhang, zu_zhang_tier_for_event? } — curate 组长 toggle
+// Bare paths skip the state machine. Used by inline edits on the
+// enrolments console for quick corrections + by the GroupBuilder UI
+// for pre-seeding + by the curate-组长 UI for per-event roster curation.
 const PatchBody = z
   .object({
     action: z.enum(ACTIONS).optional(),
@@ -46,14 +47,30 @@ const PatchBody = z
       .optional(),
     reject_note: z.string().trim().max(500).optional(),
     pinned_group_no: z.number().int().min(1).max(999).nullable().optional(),
+    serving_as_zu_zhang: z.boolean().optional(),
+    zu_zhang_tier_for_event: z
+      .enum(["key_recruitment", "recruitment", "maintenance", "auxiliary"])
+      .nullable()
+      .optional(),
+    zu_zhang_grade_for_event: z
+      .number()
+      .int()
+      .min(1)
+      .max(5)
+      .nullable()
+      .optional(),
   })
   .refine(
     (b) =>
       b.action !== undefined
       || b.amount_paid !== undefined
-      || b.pinned_group_no !== undefined,
+      || b.pinned_group_no !== undefined
+      || b.serving_as_zu_zhang !== undefined
+      || b.zu_zhang_tier_for_event !== undefined
+      || b.zu_zhang_grade_for_event !== undefined,
     {
-      message: "Provide an action, amount_paid, or pinned_group_no",
+      message:
+        "Provide an action, amount_paid, pinned_group_no, or zu_zhang flags",
     },
   );
 
@@ -159,12 +176,94 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     });
   }
 
+  // 组长 curation bare-edit path — toggles serving_as_zu_zhang and/or
+  // zu_zhang_tier_for_event. No state transition, no notifications.
+  // Permission scope intentionally narrower than super_admin in the
+  // upper guard — already enforced. (The curate-by-modal route has the
+  // batch path; this is the per-row toggle that lives on the
+  // EnrollmentsTable.)
+  if (
+    body.action === undefined
+    && (body.serving_as_zu_zhang !== undefined
+      || body.zu_zhang_tier_for_event !== undefined
+      || body.zu_zhang_grade_for_event !== undefined)
+  ) {
+    const { data: beforeRow } = await service
+      .from("enrollments")
+      .select(
+        "serving_as_zu_zhang, zu_zhang_tier_for_event, zu_zhang_grade_for_event",
+      )
+      .eq("id", enrollmentId)
+      .maybeSingle();
+    const update: Record<string, unknown> = {};
+    if (body.serving_as_zu_zhang !== undefined) {
+      update.serving_as_zu_zhang = body.serving_as_zu_zhang;
+      // Off → clear the per-event tier + grade overrides too so a later
+      // flip-on starts from the participant's global values.
+      if (body.serving_as_zu_zhang === false) {
+        update.zu_zhang_tier_for_event = null;
+        update.zu_zhang_grade_for_event = null;
+      }
+    }
+    if (body.zu_zhang_tier_for_event !== undefined) {
+      update.zu_zhang_tier_for_event = body.zu_zhang_tier_for_event;
+    }
+    if (body.zu_zhang_grade_for_event !== undefined) {
+      update.zu_zhang_grade_for_event = body.zu_zhang_grade_for_event;
+    }
+    const { error: updErr } = await service
+      .from("enrollments")
+      .update(update)
+      .eq("id", enrollmentId);
+    if (updErr) {
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "enrollment.zu_zhang_curated",
+      entity: "enrollments",
+      entity_id: enrollmentId,
+      before: {
+        serving_as_zu_zhang: beforeRow?.serving_as_zu_zhang ?? false,
+        zu_zhang_tier_for_event: beforeRow?.zu_zhang_tier_for_event ?? null,
+        zu_zhang_grade_for_event:
+          beforeRow?.zu_zhang_grade_for_event ?? null,
+      },
+      after: {
+        serving_as_zu_zhang:
+          body.serving_as_zu_zhang ?? beforeRow?.serving_as_zu_zhang ?? false,
+        zu_zhang_tier_for_event:
+          body.serving_as_zu_zhang === false
+            ? null
+            : (body.zu_zhang_tier_for_event
+              ?? beforeRow?.zu_zhang_tier_for_event
+              ?? null),
+        zu_zhang_grade_for_event:
+          body.serving_as_zu_zhang === false
+            ? null
+            : (body.zu_zhang_grade_for_event
+              ?? beforeRow?.zu_zhang_grade_for_event
+              ?? null),
+      },
+      metadata: {
+        event_id: row.event_id,
+        participant_id: row.participant_id,
+        via: "per_row_chip",
+      },
+    });
+    return NextResponse.json({ ok: true, id: enrollmentId });
+  }
+
   // Beyond this point we MUST have an action — earlier branches handled
-  // the bare-amount and bare-pin paths, and the schema refines that at
-  // least one of (action, amount_paid, pinned_group_no) is set.
+  // the bare paths, and the schema refines that at least one of
+  // (action, amount_paid, pinned_group_no, zu_zhang_*) is set.
   if (body.action === undefined) {
     return NextResponse.json(
-      { error: "no_action", detail: "Provide an action, amount_paid, or pinned_group_no" },
+      {
+        error: "no_action",
+        detail:
+          "Provide an action, amount_paid, pinned_group_no, or zu_zhang flags",
+      },
       { status: 400 },
     );
   }

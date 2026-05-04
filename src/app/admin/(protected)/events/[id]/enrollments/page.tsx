@@ -108,14 +108,16 @@ export default async function EventEnrollmentsPage({
   // is_old_student so we can render the referrer pill and OLD chip inline.
   // If 009 hasn't been applied yet, the select falls back to the legacy set.
   const participantFull =
-    "id, region_id, name_en, name_cn, region, email, phone, language, is_old_student, referrer_id, referrer_name, referrer_contact";
+    "id, region_id, name_en, name_cn, region, email, phone, language, is_old_student, referrer_id, referrer_name, referrer_contact, zu_zhang_tier";
   const participantLegacy =
     "id, region_id, name_en, name_cn, region, email, phone, language, is_old_student, referrer_id";
   // Enrolment selects come in four shapes (cross-product of: form_answers
   // shipped in 008, transfer_slip_* shipped in 011). Older databases
-  // gracefully fall back via the attempt ladder below.
+  // gracefully fall back via the attempt ladder below. Post-022 we also
+  // pull serving_as_zu_zhang + zu_zhang_tier_for_event for the per-row
+  // 组长 chip.
   const enrollmentColsWithBoth = (participant: string) =>
-    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, transfer_slip_url, transfer_slip_uploaded_at, pinned_group_no, participant:participants(${participant})`;
+    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, transfer_slip_url, transfer_slip_uploaded_at, pinned_group_no, serving_as_zu_zhang, zu_zhang_tier_for_event, participant:participants(${participant})`;
   const enrollmentColsWithSchema = (participant: string) =>
     `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(${participant})`;
   const enrollmentColsLegacy = (participant: string) =>

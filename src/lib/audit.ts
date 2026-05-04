@@ -72,7 +72,21 @@ export type AuditAction =
   | "floor_plan.shape_accepted"
   | "floor_plan.shape_rejected"
   | "seating.auto_placed"
-  | "seating.swapped";
+  | "seating.swapped"
+  | "groups.class_changed"
+  | "participant.zu_zhang_tier_changed"
+  | "participant.zu_zhang_grade_changed"
+  | "participant.zu_zhang_traits_changed"
+  | "participant.zu_zhang_dimensions_changed"
+  | "participant.qualification_overridden"
+  | "participant.goal_dimensions_changed"
+  | "participant.upgrade_potential_changed"
+  | "participant.special_contribution_changed"
+  | "participant.programme_tier_changed"
+  | "enrollment.zu_zhang_curated"
+  | "event.zu_zhang_roster_changed"
+  | "participant.family_links_changed"
+  | "participant.referrer_changed";
 
 export type WriteAuditLog = {
   actor_id: string | null;

@@ -3,14 +3,18 @@ export function ScoreBar({
   labelZh,
   score,
   accent = "blue",
+  max = 5,
+  hint,
 }: {
   label: string;
   labelZh?: string;
   score: number | null;
   accent?: "blue" | "slate" | "ink";
+  max?: number;
+  hint?: string | null;
 }) {
   const has = typeof score === "number";
-  const pct = has ? (score! / 10) * 100 : 0;
+  const pct = has ? (Math.min(score!, max) / max) * 100 : 0;
 
   const gradient =
     accent === "slate"
@@ -38,7 +42,9 @@ export function ScoreBar({
               <span className="font-display text-[22px] leading-none tracking-[-0.015em] text-[var(--ink)]">
                 {score}
               </span>
-              <span className="ml-0.5 text-[11px] text-[var(--ink-faint)]">/10</span>
+              <span className="ml-0.5 text-[11px] text-[var(--ink-faint)]">
+                /{max}
+              </span>
             </>
           ) : (
             <span className="text-[11px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
@@ -58,6 +64,11 @@ export function ScoreBar({
           aria-hidden="true"
         />
       </div>
+      {hint ? (
+        <span className="text-[10px] tracking-[0.16em] uppercase text-[var(--ink-faint)]">
+          {hint}
+        </span>
+      ) : null}
     </div>
   );
 }

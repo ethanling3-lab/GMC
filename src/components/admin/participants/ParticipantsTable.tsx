@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ParticipantStatus } from "@/lib/participants-query";
+import {
+  STUDENT_QUALIFICATION_LABEL,
+  effectiveQualification,
+} from "@/lib/grouping/types";
+import type { StudentQualification } from "@/lib/grouping/types";
 
 export type ParticipantRow = {
   id: string;
@@ -13,7 +18,9 @@ export type ParticipantRow = {
   region: string | null;
   email: string | null;
   status: ParticipantStatus;
-  overall_score: number | null;
+  financial_score: number | null;
+  influence_score: number | null;
+  student_qualification: StudentQualification | null;
   motivation_tag: string | null;
   archived_at: string | null;
   created_at: string;
@@ -492,7 +499,7 @@ export function ParticipantsTable({
               <th scope="col" className="px-5 py-3.5 font-medium">Region</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Contact</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Status</th>
-              <th scope="col" className="px-5 py-3.5 font-medium text-right">Score</th>
+              <th scope="col" className="px-5 py-3.5 font-medium text-right">Qualification · 等级</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Registered</th>
             </tr>
           </thead>
@@ -598,14 +605,11 @@ export function ParticipantsTable({
                       </div>
                     </td>
                     <td className="px-5 py-3.5 text-right tabular-nums">
-                      {typeof r.overall_score === "number" ? (
-                        <span className="font-display text-[15px] text-[var(--ink)]">
-                          {r.overall_score}
-                          <span className="text-[var(--ink-faint)] text-[11px] ml-0.5">/10</span>
-                        </span>
-                      ) : (
-                        <span className="text-[var(--ink-faint)]">—</span>
-                      )}
+                      <QualificationCell
+                        financial={r.financial_score}
+                        influence={r.influence_score}
+                        override={r.student_qualification}
+                      />
                     </td>
                     <td className="px-5 py-3.5 text-right text-[var(--ink-mute)] whitespace-nowrap">
                       {formatDate(r.created_at)}
@@ -759,5 +763,42 @@ function BulkButton({
         </svg>
       ) : null}
     </button>
+  );
+}
+
+function QualificationCell({
+  financial,
+  influence,
+  override,
+}: {
+  financial: number | null;
+  influence: number | null;
+  override: StudentQualification | null;
+}) {
+  const q = effectiveQualification({
+    financial_score: financial,
+    influence_score: influence,
+    student_qualification_override: override,
+  });
+  if (!q) {
+    return <span className="text-[var(--ink-faint)]">—</span>;
+  }
+  const label = STUDENT_QUALIFICATION_LABEL[q];
+  const overridden = override != null;
+  return (
+    <span
+      className="inline-flex items-baseline gap-1.5 px-2 py-1 rounded-full
+                 border border-[var(--paper-shadow)] bg-[var(--paper-deep)]
+                 text-[10px] tracking-[0.16em] uppercase"
+      title={overridden ? "Admin override" : "Computed from max(financial, influence)"}
+    >
+      <span className="font-display text-[12px] text-[var(--ink)] tracking-normal normal-case">
+        {label.cn}
+      </span>
+      <span className="text-[var(--ink-faint)]">{label.score}/5</span>
+      {overridden ? (
+        <span className="text-[var(--cinnabar)] tracking-normal normal-case">·</span>
+      ) : null}
+    </span>
   );
 }

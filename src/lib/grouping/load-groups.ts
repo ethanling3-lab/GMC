@@ -1,14 +1,32 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { GroupMemberRole, SeatingMode } from "./types";
+import {
+  effectiveQualification,
+  participantToClass,
+} from "./types";
+import type {
+  GroupClass,
+  GroupMemberRole,
+  GrowthDimension,
+  SeatingMode,
+  StudentQualification,
+  ZuZhangTier,
+} from "./types";
 
 // Loader for the GroupBuilder UI. Mode-aware:
-//   tables   → groups[] with hydrated members + roles + rationale
+//   tables   → groups[] with hydrated members + roles + rationale + class
 //   cushions → ranked seat list (ordered by row → seat) with role tags
 //
 // Both modes also surface the event's pinning + group_size policy so the
 // page can render constraint chips and the generate button knows the
 // k-target window.
+//
+// M6.0 additions:
+//   * GroupBuilderGroup gets group_class.
+//   * GroupBuilderMember gets zu_zhang_tier, zu_zhang_dimensions,
+//     goal_dimensions, qualification (computed from override / max),
+//     plus the participant's effective_class (so the UI can flag
+//     mismatches between member class and group class).
 
 export type GroupBuilderEvent = {
   id: string;
@@ -28,15 +46,26 @@ export type GroupBuilderMember = {
   name_en: string | null;
   name_cn: string | null;
   is_old_student: boolean;
-  overall_score: number | null;
   influence_score: number | null;
+  financial_score: number | null;
   pinned_group_no: number | null;
   role: GroupMemberRole;
+
+  // M6.0 fields surfaced for chip rendering.
+  zu_zhang_tier: ZuZhangTier | null;
+  // Effective grade (per-event override ?? participant global). Null if
+  // ungraded; renders as a plain tier badge instead of a tier+grade pill.
+  zu_zhang_grade: number | null;
+  zu_zhang_dimensions: GrowthDimension[];
+  goal_dimensions: GrowthDimension[];
+  qualification: StudentQualification | null;
+  effective_class: GroupClass;
 };
 
 export type GroupBuilderGroup = {
   id: string;
   group_no: number;
+  group_class: GroupClass;
   rationale_en: string | null;
   rationale_cn: string | null;
   leader_participant_id: string | null;
@@ -81,6 +110,7 @@ type EventRow = {
 type GroupRow = {
   id: string;
   group_no: number;
+  group_class: GroupClass;
   rationale_en: string | null;
   rationale_cn: string | null;
   leader_participant_id: string | null;
@@ -100,13 +130,19 @@ type ParticipantRow = {
   name_en: string | null;
   name_cn: string | null;
   is_old_student: boolean;
-  overall_score: number | null;
   influence_score: number | null;
+  financial_score: number | null;
+  zu_zhang_tier: ZuZhangTier | null;
+  zu_zhang_grade: number | null;
+  zu_zhang_dimensions: GrowthDimension[] | null;
+  goal_dimensions: GrowthDimension[] | null;
+  student_qualification: StudentQualification | null;
 };
 
 type EnrollmentPin = {
   participant_id: string;
   pinned_group_no: number | null;
+  zu_zhang_grade_for_event: number | null;
 };
 
 type CushionShape = {
@@ -133,7 +169,7 @@ export async function loadGroupBuilder(
   const [groupsRes, assignmentsRes, enrolPinsRes, enrolCountRes] = await Promise.all([
     supabase
       .from("event_groups")
-      .select("id, group_no, rationale_en, rationale_cn, leader_participant_id")
+      .select("id, group_no, group_class, rationale_en, rationale_cn, leader_participant_id")
       .eq("event_id", eventId)
       .order("group_no", { ascending: true })
       .returns<GroupRow[]>(),
@@ -144,7 +180,7 @@ export async function loadGroupBuilder(
       .returns<AssignmentRow[]>(),
     supabase
       .from("enrollments")
-      .select("participant_id, pinned_group_no")
+      .select("participant_id, pinned_group_no, zu_zhang_grade_for_event")
       .eq("event_id", eventId)
       .in("status", ["approved", "paid"])
       .returns<EnrollmentPin[]>(),
@@ -160,8 +196,8 @@ export async function loadGroupBuilder(
 
   const groups = groupsRes.data ?? [];
   const assignments = assignmentsRes.data ?? [];
-  const pinByPid = new Map(
-    (enrolPinsRes.data ?? []).map((e) => [e.participant_id, e.pinned_group_no]),
+  const enrolByPid = new Map(
+    (enrolPinsRes.data ?? []).map((e) => [e.participant_id, e]),
   );
 
   const allParticipantIds = Array.from(
@@ -172,7 +208,10 @@ export async function loadGroupBuilder(
     const { data: parts, error: pErr } = await supabase
       .from("participants")
       .select(
-        "id, region_id, name_en, name_cn, is_old_student, overall_score, influence_score",
+        `id, region_id, name_en, name_cn, is_old_student,
+         influence_score, financial_score,
+         zu_zhang_tier, zu_zhang_grade,
+         zu_zhang_dimensions, goal_dimensions, student_qualification`,
       )
       .in("id", allParticipantIds)
       .returns<ParticipantRow[]>();
@@ -186,6 +225,21 @@ export async function loadGroupBuilder(
     const members: GroupBuilderMember[] = groupAssignments
       .map((a) => {
         const p = participantById.get(a.participant_id);
+        const qualification = p
+          ? effectiveQualification({
+              financial_score: p.financial_score,
+              influence_score: p.influence_score,
+              student_qualification_override: p.student_qualification,
+            })
+          : null;
+        const effective_class = p
+          ? participantToClass({
+              financial_score: p.financial_score,
+              influence_score: p.influence_score,
+              student_qualification_override: p.student_qualification,
+            })
+          : "growth";
+        const enrol = enrolByPid.get(a.participant_id);
         return {
           assignment_id: a.id,
           participant_id: a.participant_id,
@@ -193,16 +247,25 @@ export async function loadGroupBuilder(
           name_en: p?.name_en ?? null,
           name_cn: p?.name_cn ?? null,
           is_old_student: p?.is_old_student ?? false,
-          overall_score: p?.overall_score ?? null,
           influence_score: p?.influence_score ?? null,
-          pinned_group_no: pinByPid.get(a.participant_id) ?? null,
+          financial_score: p?.financial_score ?? null,
+          pinned_group_no: enrol?.pinned_group_no ?? null,
           role: a.role,
+          zu_zhang_tier: p?.zu_zhang_tier ?? null,
+          // Effective grade = per-event override ?? participant global.
+          zu_zhang_grade:
+            enrol?.zu_zhang_grade_for_event ?? p?.zu_zhang_grade ?? null,
+          zu_zhang_dimensions: p?.zu_zhang_dimensions ?? [],
+          goal_dimensions: p?.goal_dimensions ?? [],
+          qualification,
+          effective_class,
         };
       })
       .sort((a, b) => roleOrder(a.role) - roleOrder(b.role));
     return {
       id: g.id,
       group_no: g.group_no,
+      group_class: g.group_class,
       rationale_en: g.rationale_en,
       rationale_cn: g.rationale_cn,
       leader_participant_id: g.leader_participant_id,
@@ -210,8 +273,7 @@ export async function loadGroupBuilder(
     };
   });
 
-  // Cushion payload — needs the cushion shapes too. Cheap to load even
-  // in table mode (returns []), so we don't branch.
+  // Cushion payload — needs the cushion shapes too.
   let cushions: GroupBuilderCushion[] = [];
   if (event.seating_mode === "cushions") {
     const { data: shapes, error: shErr } = await supabase

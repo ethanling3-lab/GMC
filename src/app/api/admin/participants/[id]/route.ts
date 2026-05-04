@@ -10,6 +10,7 @@ import {
   SCOPED_ALLOWED_FIELDS,
   type ParticipantUpdate,
 } from "@/lib/participant-update-schema";
+import { writeAuditLog } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,32 +63,108 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   // auth gate, and service role sidesteps any RLS constraints on updates.
   const service = createSupabaseServiceClient();
 
-  const { data, error } = await service
-    .from("participants")
-    .update(patch)
-    .eq("id", id)
-    .select("id, updated_at")
-    .maybeSingle();
+  // Pull family_member_ids out of the column-level patch — it's
+  // reconciled against the participant_family_links join table below,
+  // not stored as a column. Everything else flows straight to UPDATE.
+  const { family_member_ids, ...columnPatch } = patch;
 
-  if (error) {
-    // Duplicate Student ID — surface a clean message instead of the raw Postgres text.
-    if (
-      error.code === "23505" ||
-      error.message.includes("participants_region_id_key") ||
-      /duplicate key value.*region_id/i.test(error.message)
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "That Student ID is already in use. Pick a different one or leave it blank to keep the current ID.",
-        },
-        { status: 409 },
-      );
+  let data: { id: string; updated_at: string } | null = null;
+  if (Object.keys(columnPatch).length > 0) {
+    const res = await service
+      .from("participants")
+      .update(columnPatch)
+      .eq("id", id)
+      .select("id, updated_at")
+      .maybeSingle();
+    if (res.error) {
+      const error = res.error;
+      if (
+        error.code === "23505" ||
+        error.message.includes("participants_region_id_key") ||
+        /duplicate key value.*region_id/i.test(error.message)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "That Student ID is already in use. Pick a different one or leave it blank to keep the current ID.",
+          },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    data = res.data as { id: string; updated_at: string } | null;
   }
 
-  return NextResponse.json({ ok: true, id: data?.id, updated_at: data?.updated_at });
+  // Family-link reconciliation. The client sends the FULL desired set
+  // of partner IDs; we diff against the current set and apply the
+  // delta. Edges are stored canonically (a_id < b_id).
+  if (family_member_ids !== undefined) {
+    const desiredOthers = new Set(
+      family_member_ids.filter((other) => other !== id),
+    );
+
+    const { data: currentRows, error: curErr } = await service
+      .from("participant_family_links")
+      .select("a_id, b_id")
+      .or(`a_id.eq.${id},b_id.eq.${id}`);
+    if (curErr) {
+      return NextResponse.json({ error: curErr.message }, { status: 500 });
+    }
+    const currentOthers = new Set(
+      (currentRows ?? []).map((r) =>
+        r.a_id === id ? r.b_id : r.a_id,
+      ),
+    );
+
+    const toAdd = [...desiredOthers].filter((o) => !currentOthers.has(o));
+    const toRemove = [...currentOthers].filter((o) => !desiredOthers.has(o));
+
+    if (toAdd.length > 0) {
+      const newRows = toAdd.map((other) => {
+        const a_id = id < other ? id : other;
+        const b_id = id < other ? other : id;
+        return { a_id, b_id, created_by: admin.id };
+      });
+      const { error: insErr } = await service
+        .from("participant_family_links")
+        .insert(newRows);
+      if (insErr) {
+        return NextResponse.json({ error: insErr.message }, { status: 500 });
+      }
+    }
+
+    for (const other of toRemove) {
+      const a_id = id < other ? id : other;
+      const b_id = id < other ? other : id;
+      const { error: delErr } = await service
+        .from("participant_family_links")
+        .delete()
+        .eq("a_id", a_id)
+        .eq("b_id", b_id);
+      if (delErr) {
+        return NextResponse.json({ error: delErr.message }, { status: 500 });
+      }
+    }
+
+    if (toAdd.length > 0 || toRemove.length > 0) {
+      await writeAuditLog({
+        actor_id: admin.id,
+        action: "participant.family_links_changed",
+        entity: "participants",
+        entity_id: id,
+        before: { family_member_ids: [...currentOthers] },
+        after: { family_member_ids: [...desiredOthers] },
+        metadata: { added: toAdd, removed: toRemove },
+      });
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    id: data?.id ?? id,
+    updated_at: data?.updated_at,
+  });
 }
 
 export async function DELETE(_req: Request, { params }: RouteCtx) {

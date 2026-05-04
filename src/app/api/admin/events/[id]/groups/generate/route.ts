@@ -93,6 +93,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     // Table mode — try LLM first, fall back to balance.ts if it fails.
     const llm = await runLlmGrouping({
       participants: inputs.participants,
+      roster: inputs.zu_zhang_roster,
       config: inputs.event.config,
     });
     llmFailureReason = llm.failure_reason;
@@ -108,7 +109,11 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     if (llm.result) {
       result = llm.result;
     } else {
-      result = balance(inputs.participants, inputs.event.config);
+      result = balance(
+        inputs.participants,
+        inputs.zu_zhang_roster,
+        inputs.event.config,
+      );
     }
   }
 
@@ -146,6 +151,8 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       k: result.metadata.k,
       groups_inserted: persistResult.groups_inserted,
       assignments_inserted: persistResult.assignments_inserted,
+      roster_size: inputs.zu_zhang_roster.length,
+      roster_shortfalls: result.metadata.roster_shortfalls ?? null,
       latency_ms: Date.now() - startedAt,
       llm: {
         attempted: inputs.event.seating_mode === "tables",
@@ -171,6 +178,8 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     assignments_inserted: persistResult.assignments_inserted,
     n: result.metadata.n,
     k: result.metadata.k,
+    roster_size: inputs.zu_zhang_roster.length,
+    roster_shortfalls: result.metadata.roster_shortfalls ?? null,
     llm_fallback_reason: llmFailureReason,
   });
 }

@@ -16,7 +16,20 @@ import type {
   GroupBuilderGroup,
   GroupBuilderMember,
 } from "@/lib/grouping/load-groups";
-import type { GroupMemberRole, SeatingMode } from "@/lib/grouping/types";
+import {
+  GROUP_CLASS_LABEL,
+  GROWTH_DIMENSION_LABEL,
+  STUDENT_QUALIFICATION_LABEL,
+  ZU_ZHANG_TIER_LABEL,
+  requiredLeaderTiers,
+} from "@/lib/grouping/types";
+import type {
+  GroupClass,
+  GroupMemberRole,
+  GrowthDimension,
+  SeatingMode,
+  ZuZhangTier,
+} from "@/lib/grouping/types";
 
 // Mode-aware client surface for the GroupBuilder. Table mode renders a
 // stack of group cards with dnd-kit drag-drop reassign + role override
@@ -373,10 +386,11 @@ function GroupCard({
       }`}
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
-        <div className="inline-flex items-center gap-2">
+        <div className="inline-flex items-center gap-2 flex-wrap">
           <span className="font-mono text-[11px] tabular-nums text-[var(--cinnabar-deep)]">
             #{group.group_no}
           </span>
+          <ClassChip groupClass={group.group_class} />
           <span
             className={`inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border text-[10px] tabular-nums ${
               sizeChip === "out"
@@ -397,6 +411,8 @@ function GroupCard({
           </button>
         ) : null}
       </div>
+
+      <DimensionCoverageStrip group={group} />
 
       {editingRationale ? (
         <div className="mb-3 flex flex-col gap-2">
@@ -456,6 +472,7 @@ function GroupCard({
           <MemberChip
             key={m.assignment_id}
             member={m}
+            groupClass={group.group_class}
             canEdit={canEdit}
             onSetRole={onSetRole}
           />
@@ -472,10 +489,12 @@ function GroupCard({
 
 function MemberChip({
   member,
+  groupClass,
   canEdit,
   onSetRole,
 }: {
   member: GroupBuilderMember;
+  groupClass: GroupClass;
   canEdit: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
 }) {
@@ -485,18 +504,15 @@ function MemberChip({
   });
   const [open, setOpen] = useState(false);
   const name = member.name_en || member.name_cn || "—";
-  const roleLabel =
-    member.role === "zu_zhang"
-      ? "组长"
-      : member.role === "fu_zu_zhang"
-        ? "副组长"
-        : null;
+  const isLeader = member.role === "zu_zhang" || member.role === "fu_zu_zhang";
   const roleTone =
     member.role === "zu_zhang"
       ? "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
       : member.role === "fu_zu_zhang"
         ? "border-[var(--gold)]/50 bg-[var(--gold-soft)] text-[var(--ink)]"
         : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)]";
+  const primaryGoal: GrowthDimension | null = member.goal_dimensions[0] ?? null;
+  const classMismatch = !isLeader && member.effective_class !== groupClass;
 
   const style: React.CSSProperties | undefined = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.5 : 1 }
@@ -516,6 +532,9 @@ function MemberChip({
         setOpen((v) => !v);
       }}
     >
+      {isLeader && member.zu_zhang_tier ? (
+        <TierBadge tier={member.zu_zhang_tier} grade={member.zu_zhang_grade} />
+      ) : null}
       {member.region_id ? (
         <span className="font-mono text-[9.5px] text-[var(--cinnabar-deep)]">
           {member.region_id}
@@ -525,9 +544,20 @@ function MemberChip({
       {member.is_old_student ? (
         <span className="text-[9.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">旧</span>
       ) : null}
-      {roleLabel ? (
-        <span className="text-[9.5px] tracking-[0.18em] uppercase">
-          {roleLabel}
+      {primaryGoal ? (
+        <span
+          className="text-[10px]"
+          title={`Primary goal: ${GROWTH_DIMENSION_LABEL[primaryGoal].cn}`}
+        >
+          {GROWTH_DIMENSION_LABEL[primaryGoal].icon}
+        </span>
+      ) : null}
+      {classMismatch && member.qualification ? (
+        <span
+          className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/50 text-[9px] tracking-[0.04em] text-[var(--gold-deep)] bg-[var(--gold-soft)]/60"
+          title={`This person's qualification (${STUDENT_QUALIFICATION_LABEL[member.qualification].cn}) doesn't match the group class (${GROUP_CLASS_LABEL[groupClass].cn}). Override or pin?`}
+        >
+          {STUDENT_QUALIFICATION_LABEL[member.qualification].short_cn}
         </span>
       ) : null}
       {member.pinned_group_no ? (
@@ -560,5 +590,110 @@ function MemberChip({
         </span>
       ) : null}
     </span>
+  );
+}
+
+function ClassChip({ groupClass }: { groupClass: GroupClass }) {
+  const lab = GROUP_CLASS_LABEL[groupClass];
+  const tone =
+    groupClass === "strategic"
+      ? "border-[var(--cinnabar)]/60 bg-[var(--cinnabar)] text-[var(--paper)]"
+      : groupClass === "key"
+        ? "border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[var(--gold-deep)]"
+        : groupClass === "growth"
+          ? "border-[var(--paper-shadow)] bg-[var(--paper-deep)] text-[var(--ink)]"
+          : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)]";
+  const required = requiredLeaderTiers(groupClass);
+  return (
+    <span
+      title={`${lab.cn} — main: ${ZU_ZHANG_TIER_LABEL[required.main].cn}, auxiliary: ${ZU_ZHANG_TIER_LABEL[required.auxiliary].cn}`}
+      className={`inline-flex items-center h-[18px] px-2 rounded-[var(--radius-pill)] border text-[10px] tracking-[0.06em] ${tone}`}
+    >
+      {lab.cn}
+    </span>
+  );
+}
+
+function TierBadge({
+  tier,
+  grade,
+}: {
+  tier: ZuZhangTier;
+  grade: number | null;
+}) {
+  const lab = ZU_ZHANG_TIER_LABEL[tier];
+  if (grade == null) {
+    return (
+      <span
+        title={`${lab.cn} · ${lab.en}`}
+        className="inline-flex items-center justify-center w-[16px] h-[16px] rounded-full bg-[var(--ink)] text-[var(--paper)] text-[9px] tracking-normal"
+      >
+        {lab.short_cn}
+      </span>
+    );
+  }
+  return (
+    <span
+      title={`${lab.cn} · grade ${grade}/5`}
+      className="inline-flex items-center justify-center gap-[1px] h-[16px] px-[5px] rounded-[8px] bg-[var(--ink)] text-[var(--paper)] text-[9px] tabular-nums tracking-normal"
+    >
+      <span>{lab.short_cn}</span>
+      <span className="opacity-90">{grade}</span>
+    </span>
+  );
+}
+
+function DimensionCoverageStrip({ group }: { group: GroupBuilderGroup }) {
+  // Aggregate which growth dimensions are covered by ≥1 member's primary
+  // goal; flag a mismatch warning when >40% of non-leader members declare
+  // a primary goal NOT covered by any 组长 in the group.
+  const leaders = group.members.filter(
+    (m) => m.role === "zu_zhang" || m.role === "fu_zu_zhang",
+  );
+  const coverage = new Set<GrowthDimension>();
+  for (const l of leaders) for (const d of l.zu_zhang_dimensions) coverage.add(d);
+  const regulars = group.members.filter(
+    (m) => m.role === "participant" || m.role === "pai_zhang",
+  );
+  let mismatches = 0;
+  for (const m of regulars) {
+    const g = m.goal_dimensions[0];
+    if (g && !coverage.has(g)) mismatches += 1;
+  }
+  const ratio = regulars.length > 0 ? mismatches / regulars.length : 0;
+  const showWarn = ratio > 0.4;
+
+  return (
+    <div className="flex items-center gap-1.5 mb-2 text-[10px] text-[var(--ink-mute)]">
+      <span className="tracking-[0.16em] uppercase">Coverage</span>
+      <div className="flex items-center gap-1">
+        {(["financial", "relationship", "health", "inner_peace"] as GrowthDimension[]).map(
+          (d) => {
+            const has = coverage.has(d);
+            return (
+              <span
+                key={d}
+                title={`${GROWTH_DIMENSION_LABEL[d].cn} ${has ? "covered" : "not covered"}`}
+                className={`inline-flex items-center justify-center w-[18px] h-[18px] rounded-full text-[10px] ${
+                  has
+                    ? "bg-[var(--cinnabar-wash)] border border-[var(--cinnabar)]/40"
+                    : "bg-[var(--paper-deep)]/50 border border-[var(--paper-shadow)] opacity-50"
+                }`}
+              >
+                {GROWTH_DIMENSION_LABEL[d].icon}
+              </span>
+            );
+          },
+        )}
+      </div>
+      {showWarn ? (
+        <span
+          className="inline-flex items-center h-[16px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[10px] text-[var(--gold-deep)]"
+          title={`${mismatches}/${regulars.length} members have a primary goal not covered by this group's 组长`}
+        >
+          mismatch
+        </span>
+      ) : null}
+    </div>
   );
 }

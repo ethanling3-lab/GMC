@@ -6,10 +6,27 @@ import {
   applyRoleScope,
   parseFilters,
 } from "@/lib/participants-query";
+import {
+  effectiveQualification,
+  participantToClass,
+} from "@/lib/grouping/types";
+import type {
+  GroupClass,
+  GrowthDimension,
+  StudentQualification,
+  ZuZhangTier,
+} from "@/lib/grouping/types";
 
 export const dynamic = "force-dynamic";
 
-type ExportRow = {
+// CSV columns post-M6.0:
+//   * overall_score → derived qualification (computed with admin override)
+//   * default_class → which group_class the algorithm would bucket them in
+//   * zu_zhang_tier, zu_zhang_dimensions, goal_dimensions, has_special_contribution
+//   * upgrade_potential, times_led_groups
+// Old `overall_score` column is excluded from the export — soft-deprecated.
+
+type RawRow = {
   region_id: string | null;
   name_en: string | null;
   name_cn: string | null;
@@ -20,13 +37,24 @@ type ExportRow = {
   motivation_tag: string | null;
   financial_score: number | null;
   influence_score: number | null;
-  overall_score: number | null;
+  student_qualification: StudentQualification | null;
   is_old_student: boolean | null;
   created_at: string;
+  zu_zhang_tier: ZuZhangTier | null;
+  zu_zhang_dimensions: GrowthDimension[] | null;
+  goal_dimensions: GrowthDimension[] | null;
+  has_special_contribution: boolean;
+  upgrade_potential: string | null;
+  times_led_groups: number;
 };
 
-// CSV column headers. The first maps to the DB's region_id column but we
-// expose it as `student_id` in the export since the UI calls it "Student ID".
+type ExportRow = Omit<RawRow, "zu_zhang_dimensions" | "goal_dimensions"> & {
+  qualification: StudentQualification | null;
+  default_class: GroupClass;
+  zu_zhang_dimensions: string;
+  goal_dimensions: string;
+};
+
 const HEADER_TO_COLUMN: Readonly<Record<string, keyof ExportRow>> = {
   student_id: "region_id",
   name_en: "name_en",
@@ -38,7 +66,14 @@ const HEADER_TO_COLUMN: Readonly<Record<string, keyof ExportRow>> = {
   motivation_tag: "motivation_tag",
   financial_score: "financial_score",
   influence_score: "influence_score",
-  overall_score: "overall_score",
+  qualification: "qualification",
+  default_class: "default_class",
+  zu_zhang_tier: "zu_zhang_tier",
+  zu_zhang_dimensions: "zu_zhang_dimensions",
+  goal_dimensions: "goal_dimensions",
+  has_special_contribution: "has_special_contribution",
+  upgrade_potential: "upgrade_potential",
+  times_led_groups: "times_led_groups",
   is_old_student: "is_old_student",
   created_at: "created_at",
 };
@@ -78,8 +113,27 @@ export async function GET(req: Request) {
 
   const supabase = await createSupabaseServerClient();
 
-  const columns =
-    "region_id, name_en, name_cn, region, email, phone, status, motivation_tag, financial_score, influence_score, overall_score, is_old_student, created_at";
+  const columns = [
+    "region_id",
+    "name_en",
+    "name_cn",
+    "region",
+    "email",
+    "phone",
+    "status",
+    "motivation_tag",
+    "financial_score",
+    "influence_score",
+    "student_qualification",
+    "is_old_student",
+    "created_at",
+    "zu_zhang_tier",
+    "zu_zhang_dimensions",
+    "goal_dimensions",
+    "has_special_contribution",
+    "upgrade_potential",
+    "times_led_groups",
+  ].join(", ");
 
   let q = supabase.from("participants").select(columns);
   q = applyRoleScope(q, admin.role, admin.id, admin.region);
@@ -99,7 +153,27 @@ export async function GET(req: Request) {
     );
   }
 
-  const csv = toCsv((data ?? []) as ExportRow[]);
+  const exportRows: ExportRow[] = ((data ?? []) as unknown as RawRow[]).map((r) => {
+    const qual = effectiveQualification({
+      financial_score: r.financial_score,
+      influence_score: r.influence_score,
+      student_qualification_override: r.student_qualification,
+    });
+    const cls = participantToClass({
+      financial_score: r.financial_score,
+      influence_score: r.influence_score,
+      student_qualification_override: r.student_qualification,
+    });
+    return {
+      ...r,
+      qualification: qual,
+      default_class: cls,
+      zu_zhang_dimensions: (r.zu_zhang_dimensions ?? []).join("|"),
+      goal_dimensions: (r.goal_dimensions ?? []).join("|"),
+    };
+  });
+
+  const csv = toCsv(exportRows);
 
   const stamp = new Date().toISOString().slice(0, 10);
   const parts = ["participants"];

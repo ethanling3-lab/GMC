@@ -79,6 +79,7 @@ export async function persistGroupingResult(
       result.groups.map((g) => ({
         event_id: eventId,
         group_no: g.group_no,
+        group_class: g.group_class,
         leader_participant_id: g.leader_participant_id,
         rationale_en: g.rationale_en,
         rationale_cn: g.rationale_cn,

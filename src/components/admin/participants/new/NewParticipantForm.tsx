@@ -34,7 +34,6 @@ type FormState = {
   industry: string;
   financial_score: number | null;
   influence_score: number | null;
-  overall_score: number | null;
   motivation_tag: MotivationTag | "";
   is_old_student: boolean;
   personality: string;
@@ -59,7 +58,6 @@ const EMPTY: FormState = {
   industry: "",
   financial_score: null,
   influence_score: null,
-  overall_score: null,
   motivation_tag: "",
   is_old_student: false,
   personality: "",
@@ -180,7 +178,6 @@ export function NewParticipantForm({
       payload.industry = emptyToNull(form.industry);
       payload.financial_score = form.financial_score;
       payload.influence_score = form.influence_score;
-      payload.overall_score = form.overall_score;
       payload.motivation_tag = form.motivation_tag || null;
       payload.is_old_student = form.is_old_student;
       payload.personality = emptyToNull(form.personality);
@@ -392,14 +389,14 @@ export function NewParticipantForm({
 
       {/* Scoring */}
       <Section eyebrow="Scoring" eyebrowZh="评分" title="Qualitative scoring">
-        <div className="grid md:grid-cols-3 gap-6">
-          <LabelRow label="Financial · 财务">
+        <div className="grid md:grid-cols-2 gap-6">
+          <LabelRow label="Financial · 财力">
             <NumberInput
               value={form.financial_score}
               onChange={(v) => setField("financial_score", v)}
               min={1}
-              max={10}
-              placeholder="1 – 10"
+              max={5}
+              placeholder="1 – 5"
             />
           </LabelRow>
           <LabelRow label="Influence · 影响力">
@@ -407,20 +404,17 @@ export function NewParticipantForm({
               value={form.influence_score}
               onChange={(v) => setField("influence_score", v)}
               min={1}
-              max={10}
-              placeholder="1 – 10"
-            />
-          </LabelRow>
-          <LabelRow label="Overall · 综合">
-            <NumberInput
-              value={form.overall_score}
-              onChange={(v) => setField("overall_score", v)}
-              min={1}
-              max={10}
-              placeholder="1 – 10"
+              max={5}
+              placeholder="1 – 5"
             />
           </LabelRow>
         </div>
+        <p className="mt-4 text-[12px] leading-[1.65] text-[var(--ink-mute)]">
+          1=基础级 · 2=成长级 · 3=精英级 · 4=卓越级 · 5=战略级.
+          Qualification = max(financial, influence). Override on the
+          participant detail page if a credit / legal / leverage downgrade
+          applies.
+        </p>
       </Section>
 
       {/* Enrichment */}

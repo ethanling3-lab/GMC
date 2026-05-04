@@ -14,6 +14,45 @@ export const STATUSES = [
   "inactive",
 ] as const;
 
+export const ZU_ZHANG_TIERS = [
+  "key_recruitment",
+  "recruitment",
+  "maintenance",
+  "auxiliary",
+] as const;
+
+export const GROWTH_DIMENSIONS = [
+  "financial",
+  "relationship",
+  "health",
+  "inner_peace",
+] as const;
+
+export const STUDENT_QUALIFICATIONS = [
+  "basic",
+  "rising",
+  "elite",
+  "excellence",
+  "strategic",
+] as const;
+
+export const UPGRADE_POTENTIALS = ["low", "medium", "high"] as const;
+
+export const PROGRAMME_TIERS = [
+  "abundance",
+  "glorious_family",
+  "elite_cultural_heritage",
+  "glorious_cultural_heritage",
+] as const;
+
+export const ZU_ZHANG_CORE_TRAITS = [
+  "logical_thinking",
+  "social_intelligence",
+  "adaptability",
+  "goal_orientation",
+  "attention_to_detail",
+] as const;
+
 const optionalString = z
   .union([z.string().max(2000), z.null()])
   .optional()
@@ -35,7 +74,17 @@ const optionalDate = z
   .optional()
   .transform((v) => (v === "" || v == null ? null : v));
 
+// Post-022 the score scale is 1-5 with semantic level labels
+// (基础/成长/精英/卓越/战略). The DB constraint enforces 1-5; we cap
+// here too so client-side validation matches.
 const score = z
+  .union([z.number().int().min(1).max(5), z.null()])
+  .optional();
+
+// overall_score is soft-deprecated (legacy 1-10 column kept for read-
+// only display). Algorithm doesn't consume it. Schema retains the
+// legacy bound so existing rows still load; nothing should be writing.
+const legacyOverallScore = z
   .union([z.number().int().min(1).max(10), z.null()])
   .optional();
 
@@ -58,7 +107,7 @@ export const ParticipantUpdateSchema = z
 
     financial_score: score,
     influence_score: score,
-    overall_score: score,
+    overall_score: legacyOverallScore,
     motivation_tag: z.union([z.enum(MOTIVATIONS), z.null()]).optional(),
     is_old_student: z.boolean().optional(),
 
@@ -70,8 +119,34 @@ export const ParticipantUpdateSchema = z
       .optional()
       .transform((v) => (v === "" ? null : v)),
 
+    // M6.0 qualitative fields.
+    zu_zhang_tier: z.union([z.enum(ZU_ZHANG_TIERS), z.null()]).optional(),
+    zu_zhang_grade: z
+      .union([z.number().int().min(1).max(5), z.null()])
+      .optional(),
+    zu_zhang_dimensions: z.array(z.enum(GROWTH_DIMENSIONS)).max(4).optional(),
+    zu_zhang_core_traits: z
+      .array(z.enum(ZU_ZHANG_CORE_TRAITS))
+      .max(5)
+      .optional(),
+    goal_dimensions: z.array(z.enum(GROWTH_DIMENSIONS)).max(4).optional(),
+    student_qualification: z
+      .union([z.enum(STUDENT_QUALIFICATIONS), z.null()])
+      .optional(),
+    has_special_contribution: z.boolean().optional(),
+    upgrade_potential: z.union([z.enum(UPGRADE_POTENTIALS), z.null()]).optional(),
+    programme_tier: z.union([z.enum(PROGRAMME_TIERS), z.null()]).optional(),
+
     assigned_region_lead_id: z.union([z.string().uuid(), z.null()]).optional(),
     assigned_cs_id: z.union([z.string().uuid(), z.null()]).optional(),
+
+    // Relationships. family_member_ids is the FULL desired set of
+    // family-link partners; the PATCH route reconciles by adding new
+    // edges + removing dropped ones. Referrer is a simple FK column.
+    family_member_ids: z.array(z.string().uuid()).max(50).optional(),
+    referrer_id: z.union([z.string().uuid(), z.null()]).optional(),
+    referrer_name: optionalString,
+    referrer_contact: optionalString,
 
     status: z.enum(STATUSES).optional(),
   })
@@ -81,6 +156,11 @@ export type ParticipantUpdate = z.infer<typeof ParticipantUpdateSchema>;
 
 // Fields that a regional_lead or customer_service admin is allowed to edit.
 // Super admins can edit everything.
+//
+// `overall_score` was scoped-editable on the legacy 1-10 model; in M6.0
+// it's read-only (soft-deprecated). Drop from the scoped list so the
+// API rejects writes from non-super admins. Super admin can still write
+// via the strict schema for legacy fixups.
 export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "region_id",
   "name_en",
@@ -94,7 +174,6 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "industry",
   "financial_score",
   "influence_score",
-  "overall_score",
   "motivation_tag",
   "is_old_student",
   "personality",
@@ -102,4 +181,17 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "parameter_framework",
   "cs_notes",
   "status",
+  "zu_zhang_tier",
+  "zu_zhang_grade",
+  "zu_zhang_dimensions",
+  "zu_zhang_core_traits",
+  "goal_dimensions",
+  "student_qualification",
+  "has_special_contribution",
+  "upgrade_potential",
+  "programme_tier",
+  "family_member_ids",
+  "referrer_id",
+  "referrer_name",
+  "referrer_contact",
 ];

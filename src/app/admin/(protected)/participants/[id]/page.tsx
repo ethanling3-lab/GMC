@@ -10,8 +10,21 @@ import {
 } from "@/lib/participants-query";
 import { IdentityEditor } from "@/components/admin/participants/detail/IdentityEditor";
 import { ScoringEditor } from "@/components/admin/participants/detail/ScoringEditor";
+import { StudentCategoryEditor } from "@/components/admin/participants/detail/StudentCategoryEditor";
+import { ZuZhangProfileEditor } from "@/components/admin/participants/detail/ZuZhangProfileEditor";
 import { EnrichmentEditor } from "@/components/admin/participants/detail/EnrichmentEditor";
+import { FaceReadingCard } from "@/components/admin/participants/detail/FaceReadingCard";
+import type { FaceMeasurements } from "@/lib/face-reading/archetypes";
+import type {
+  GrowthDimension,
+  ProgrammeTier,
+  StudentQualification,
+  UpgradePotential,
+  ZuZhangCoreTrait,
+  ZuZhangTier,
+} from "@/lib/grouping/types";
 import { NotesEditor } from "@/components/admin/participants/detail/NotesEditor";
+import { RelationshipsEditor } from "@/components/admin/participants/detail/RelationshipsEditor";
 import { PhotoUploader } from "@/components/admin/participants/detail/PhotoUploader";
 import {
   AssignmentEditor,
@@ -41,6 +54,16 @@ type Participant = {
   influence_score: number | null;
   overall_score: number | null;
   motivation_tag: MotivationTag | null;
+  zu_zhang_tier: ZuZhangTier | null;
+  zu_zhang_grade: number | null;
+  zu_zhang_dimensions: GrowthDimension[];
+  zu_zhang_core_traits: ZuZhangCoreTrait[];
+  goal_dimensions: GrowthDimension[];
+  student_qualification: StudentQualification | null;
+  has_special_contribution: boolean;
+  upgrade_potential: UpgradePotential | null;
+  times_led_groups: number;
+  programme_tier: ProgrammeTier | null;
   is_old_student: boolean;
   family_of_participant_id: string | null;
   referrer_id: string | null;
@@ -48,6 +71,15 @@ type Participant = {
   face_type: string | null;
   parameter_framework: string | null;
   front_photo_url: string | null;
+  face_archetype: string | null;
+  face_archetype_suggested: string | null;
+  face_measurements:
+    | FaceMeasurements
+    | { error?: string; diagTips?: string[] }
+    | null;
+  face_skin_tone_override: string | null;
+  face_analyzed_at: string | null;
+  face_analysis_error: string | null;
   assigned_region_lead_id: string | null;
   assigned_cs_id: string | null;
   cs_notes: string | null;
@@ -122,15 +154,12 @@ export default async function ParticipantDetailPage({ params }: Props) {
   const p = data as Participant;
 
   // Fetch related entities + admin options in parallel
-  const [familyRes, referrerRes, referredRes, regionLeadsRes, csRes] =
+  const [familyLinksRes, referrerRes, referredRes, regionLeadsRes, csRes] =
     await Promise.all([
-      p.family_of_participant_id
-        ? supabase
-            .from("participants")
-            .select("id, region_id, name_en, name_cn")
-            .eq("id", p.family_of_participant_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
+      supabase
+        .from("participant_family_links")
+        .select("a_id, b_id")
+        .or(`a_id.eq.${p.id},b_id.eq.${p.id}`),
       p.referrer_id
         ? supabase
             .from("participants")
@@ -153,7 +182,28 @@ export default async function ParticipantDetailPage({ params }: Props) {
         .in("role", ["customer_service", "super_admin"]),
     ]);
 
-  const family = familyRes.data as RelatedParticipant | null;
+  // Resolve the family-link partner IDs into full participant rows.
+  const partnerIds = new Set<string>();
+  for (const row of (familyLinksRes.data ?? []) as Array<{
+    a_id: string;
+    b_id: string;
+  }>) {
+    partnerIds.add(row.a_id === p.id ? row.b_id : row.a_id);
+  }
+  // Legacy single-edge column — include in the displayed list so the
+  // editor surfaces it; saving rewrites the join table only.
+  if (p.family_of_participant_id) {
+    partnerIds.add(p.family_of_participant_id);
+  }
+  let familyMembers: RelatedParticipant[] = [];
+  if (partnerIds.size > 0) {
+    const { data: rows } = await supabase
+      .from("participants")
+      .select("id, region_id, name_en, name_cn")
+      .in("id", Array.from(partnerIds));
+    familyMembers = (rows ?? []) as RelatedParticipant[];
+  }
+
   const referrer = referrerRes.data as RelatedParticipant | null;
   const referred = (referredRes.data ?? []) as RelatedParticipant[];
   const regionLeads = (regionLeadsRes.data ?? []) as AdminOption[];
@@ -258,24 +308,6 @@ export default async function ParticipantDetailPage({ params }: Props) {
           </div>
         </div>
 
-        <aside
-          className="rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]
-                     px-5 py-4 shadow-[var(--shadow-paper-1)] text-right"
-        >
-          <div className="text-[9px] tracking-[0.28em] uppercase text-[var(--ink-faint)]">
-            Overall score
-          </div>
-          <div className="mt-1 font-display text-[36px] leading-[1] tracking-[-0.02em] text-[var(--ink)] tabular-nums">
-            {typeof p.overall_score === "number" ? (
-              <>
-                {p.overall_score}
-                <span className="text-[14px] text-[var(--ink-faint)] ml-0.5">/10</span>
-              </>
-            ) : (
-              <span className="text-[var(--ink-faint)] text-[18px]">Unscored</span>
-            )}
-          </div>
-        </aside>
       </header>
 
       {/* Two-column body */}
@@ -299,12 +331,35 @@ export default async function ParticipantDetailPage({ params }: Props) {
             }}
           />
 
+          <StudentCategoryEditor
+            participantId={p.id}
+            initial={{
+              programme_tier: p.programme_tier,
+              upgrade_potential: p.upgrade_potential,
+            }}
+          />
+
           <ScoringEditor
             participantId={p.id}
             initial={{
               financial_score: p.financial_score,
               influence_score: p.influence_score,
               overall_score: p.overall_score,
+              student_qualification: p.student_qualification,
+            }}
+          />
+
+          <ZuZhangProfileEditor
+            participantId={p.id}
+            initial={{
+              financial_score: p.financial_score,
+              influence_score: p.influence_score,
+              zu_zhang_tier: p.zu_zhang_tier,
+              zu_zhang_grade: p.zu_zhang_grade,
+              zu_zhang_dimensions: p.zu_zhang_dimensions ?? [],
+              zu_zhang_core_traits: p.zu_zhang_core_traits ?? [],
+              has_special_contribution: p.has_special_contribution ?? false,
+              times_led_groups: p.times_led_groups ?? 0,
             }}
           />
 
@@ -316,66 +371,35 @@ export default async function ParticipantDetailPage({ params }: Props) {
               personality: p.personality,
               face_type: p.face_type,
               parameter_framework: p.parameter_framework,
+              goal_dimensions: p.goal_dimensions ?? [],
+            }}
+          />
+
+          <FaceReadingCard
+            participantId={p.id}
+            initial={{
+              front_photo_url: p.front_photo_url,
+              face_archetype: p.face_archetype,
+              face_archetype_suggested: p.face_archetype_suggested,
+              face_measurements: p.face_measurements,
+              face_skin_tone_override: p.face_skin_tone_override,
+              face_analyzed_at: p.face_analyzed_at,
+              face_analysis_error: p.face_analysis_error,
             }}
           />
 
           <NotesEditor participantId={p.id} initial={p.cs_notes} />
 
-          {/* Relationships (read-only for now) */}
-          <section className="relative rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] p-7">
-            <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
-              <span className="w-5 h-px bg-current" />
-              Relationships · 关系
-            </div>
-            <h2 className="mt-2 font-display text-[18px] leading-[1.25] tracking-[-0.005em] text-[var(--ink)]">
-              Family, referrers &amp; referrals
-            </h2>
-
-            <dl className="mt-6 grid md:grid-cols-2 gap-x-8 gap-y-5">
-              <RelField label="Family of" participant={family} />
-              <RelField label="Referred by · 感召" participant={referrer} />
-              {!referrer && (p.referrer_name || p.referrer_contact) ? (
-                <div className="md:col-span-2">
-                  <dt className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
-                    Referred by (unverified) · 感召（文字）
-                  </dt>
-                  <dd className="mt-1.5 flex items-baseline gap-3 flex-wrap">
-                    {p.referrer_name ? (
-                      <span className="font-display text-[16px] text-[var(--ink)]">
-                        {p.referrer_name}
-                      </span>
-                    ) : null}
-                    {p.referrer_contact ? (
-                      <span className="font-mono text-[12px] text-[var(--ink-mute)]">
-                        {p.referrer_contact}
-                      </span>
-                    ) : null}
-                  </dd>
-                  <p className="mt-1 text-[11.5px] leading-[1.5] text-[var(--ink-faint)] max-w-[48ch]">
-                    Free-text entry from the registration form. Link to a
-                    participant record once verified.
-                  </p>
-                </div>
-              ) : null}
-            </dl>
-
-            <div className="mt-6 pt-5 border-t border-[var(--paper-shadow)]">
-              <div className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
-                Referred by this participant · 介绍
-              </div>
-              {referred.length === 0 ? (
-                <p className="mt-3 text-[12.5px] text-[var(--ink-mute)]">None yet.</p>
-              ) : (
-                <ul className="mt-3 flex flex-wrap gap-2">
-                  {referred.map((r) => (
-                    <li key={r.id}>
-                      <ParticipantChip p={r} />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </section>
+          <RelationshipsEditor
+            participantId={p.id}
+            initial={{
+              family_members: familyMembers,
+              referrer,
+              referrer_name: p.referrer_name,
+              referrer_contact: p.referrer_contact,
+              referred_by_this: referred,
+            }}
+          />
         </div>
 
         {/* ASIDE */}
@@ -436,50 +460,3 @@ export default async function ParticipantDetailPage({ params }: Props) {
   );
 }
 
-function RelField({
-  label,
-  participant,
-}: {
-  label: string;
-  participant: RelatedParticipant | null;
-}) {
-  return (
-    <div className="grid grid-cols-[130px_1fr] gap-4 items-baseline">
-      <dt className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
-        {label}
-      </dt>
-      <dd>
-        {participant ? (
-          <ParticipantChip p={participant} />
-        ) : (
-          <span className="text-[var(--ink-faint)]">—</span>
-        )}
-      </dd>
-    </div>
-  );
-}
-
-function ParticipantChip({ p }: { p: RelatedParticipant }) {
-  const name = combinedName(p);
-  return (
-    <Link
-      href={`/admin/participants/${p.id}`}
-      className="inline-flex items-center gap-2 pl-2 pr-3 py-1 rounded-full border border-[var(--paper-shadow)] bg-[var(--paper)]
-                 text-[12px] text-[var(--ink)]
-                 hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
-                 focus-visible:shadow-[var(--shadow-focus)]
-                 transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
-    >
-      <span
-        className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--ink)] text-[var(--paper-warm)] text-[9px] tracking-[0.06em] font-medium"
-        aria-hidden="true"
-      >
-        {initials(p)}
-      </span>
-      <span className="font-mono text-[11px] text-[var(--ink-mute)]">
-        {p.region_id ?? "—"}
-      </span>
-      <span className="max-w-[180px] truncate">{name}</span>
-    </Link>
-  );
-}
