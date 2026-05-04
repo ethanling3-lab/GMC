@@ -27,6 +27,7 @@ import type {
   GroupClass,
   GroupMemberRole,
   GrowthDimension,
+  RosterShortfall,
   SeatingMode,
   ZuZhangTier,
 } from "@/lib/grouping/types";
@@ -46,6 +47,10 @@ type Props = {
   cushions: GroupBuilderCushion[];
   canEdit: boolean;
   canGenerate: boolean;
+  // Pass 1 visibility surfaces.
+  rosterShortfalls: RosterShortfall[];
+  memberCountByClass: Record<GroupClass, number>;
+  kByClass: Record<GroupClass, number>;
 };
 
 export function GroupsClient(props: Props) {
@@ -55,6 +60,8 @@ export function GroupsClient(props: Props) {
   // Single open role-popover across the whole page. Click another row
   // → previous popover closes. Click anywhere outside a row → all close.
   const [openMemberId, setOpenMemberId] = useState<string | null>(null);
+  // Single open detail row across the page (mirrors role popover).
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!openMemberId) return;
@@ -69,6 +76,66 @@ export function GroupsClient(props: Props) {
     window.addEventListener("mousedown", onPointer);
     return () => window.removeEventListener("mousedown", onPointer);
   }, [openMemberId]);
+
+  async function handleSetClass(groupId: string, groupClass: GroupClass) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/members`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "set_class",
+            group_id: groupId,
+            group_class: groupClass,
+          }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Class update failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetPin(
+    enrollmentId: string,
+    pinnedGroupNo: number | null,
+  ) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${enrollmentId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pinned_group_no: pinnedGroupNo }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Pin update failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -190,9 +257,25 @@ export function GroupsClient(props: Props) {
     }
   }
 
+  const totalGroups = props.groups.length;
+  const hasShortfalls = props.rosterShortfalls.length > 0;
+
   return (
     <div>
       <div className="flex items-center justify-end gap-2 flex-wrap mb-4">
+        {props.mode === "tables" && totalGroups > 0 ? (
+          <a
+            href={`/api/admin/events/${props.eventId}/groups/export`}
+            className="inline-flex items-center gap-2 h-9 px-3.5 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[12px] tracking-[0.04em] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] transition-[background-color,color,border-color] duration-[var(--dur-fast)]"
+            aria-label="Export grouping as XLSX"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 1.5v6M3.5 5L6 7.5 8.5 5" />
+              <path d="M2 9.5v0.5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-0.5" />
+            </svg>
+            Export XLSX
+          </a>
+        ) : null}
         {props.canGenerate ? (
           <button
             type="button"
@@ -200,10 +283,26 @@ export function GroupsClient(props: Props) {
             disabled={busy}
             className="inline-flex items-center h-9 px-4 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[var(--paper)] text-[12px] tracking-[0.1em] uppercase font-medium hover:bg-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
           >
-            {busy ? "Working…" : props.groups.length > 0 ? "Re-generate groups" : "Generate groups"}
+            {busy ? "Working…" : totalGroups > 0 ? "Re-generate groups" : "Generate groups"}
           </button>
         ) : null}
       </div>
+
+      {hasShortfalls ? (
+        <RosterShortfallBanner
+          eventId={props.eventId}
+          shortfalls={props.rosterShortfalls}
+        />
+      ) : null}
+
+      {props.canGenerate && props.mode === "tables" ? (
+        <PreGenerationPanel
+          memberCountByClass={props.memberCountByClass}
+          kByClass={props.kByClass}
+          shortfalls={props.rosterShortfalls}
+        />
+      ) : null}
+
       {error ? (
         <div className="mb-4 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] px-4 py-2.5 text-[12px] text-[var(--ink-soft)]">
           {error}
@@ -212,7 +311,7 @@ export function GroupsClient(props: Props) {
 
       {props.mode === "cushions" ? (
         <CushionPreview cushions={props.cushions} />
-      ) : props.groups.length === 0 ? (
+      ) : totalGroups === 0 ? (
         <EmptyState enrolmentCount={props.enrolmentCount} canGenerate={props.canGenerate} />
       ) : (
         <DndContext
@@ -229,13 +328,142 @@ export function GroupsClient(props: Props) {
                 groupSizeMin={props.groupSizeMin}
                 canEdit={props.canEdit}
                 onSetRole={handleSetRole}
+                onSetClass={handleSetClass}
+                onSetPin={handleSetPin}
                 openMemberId={openMemberId}
                 setOpenMemberId={setOpenMemberId}
+                expandedMemberId={expandedMemberId}
+                setExpandedMemberId={setExpandedMemberId}
               />
             ))}
           </div>
         </DndContext>
       )}
+    </div>
+  );
+}
+
+function RosterShortfallBanner({
+  eventId,
+  shortfalls,
+}: {
+  eventId: string;
+  shortfalls: RosterShortfall[];
+}) {
+  // Group by tier so admin sees one line per missing tier rather than 8
+  // duplicates ("3x KR for strategic mains, 1x recruitment for key
+  // mains, ..."). Aggregate the worst gap (max need - have) per tier.
+  type Agg = { tier: ZuZhangTier; classes: Set<GroupClass>; need: number; have: number };
+  const byTier = new Map<ZuZhangTier, Agg>();
+  for (const s of shortfalls) {
+    const cur = byTier.get(s.required_tier);
+    if (!cur) {
+      byTier.set(s.required_tier, {
+        tier: s.required_tier,
+        classes: new Set([s.group_class]),
+        need: s.need,
+        have: s.have,
+      });
+    } else {
+      cur.classes.add(s.group_class);
+      cur.need += s.need - s.have;
+    }
+  }
+  const lines = [...byTier.values()];
+
+  return (
+    <div className="mb-4 rounded-[var(--radius-md)] border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] px-4 py-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.22em] uppercase text-[var(--cinnabar-deep)]">
+            <span aria-hidden="true">⚠</span>
+            Roster shortfall · 组长不足
+          </div>
+          <ul className="mt-2 flex flex-col gap-1 text-[12px] text-[var(--ink)]">
+            {lines.map((l) => (
+              <li key={l.tier}>
+                Need <span className="tabular-nums font-medium">{l.need}</span>{" "}
+                more {ZU_ZHANG_TIER_LABEL[l.tier].cn} · {ZU_ZHANG_TIER_LABEL[l.tier].en}
+                {" "}
+                <span className="text-[var(--ink-mute)]">
+                  for{" "}
+                  {[...l.classes]
+                    .map((c) => GROUP_CLASS_LABEL[c].cn)
+                    .join(" / ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <a
+          href={`/admin/events/${eventId}/enrollments?curate=1`}
+          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 bg-[var(--paper)] text-[11.5px] tracking-[0.04em] text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar)] hover:text-[var(--paper)] transition-colors"
+        >
+          Curate 组长 ↗
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function PreGenerationPanel({
+  memberCountByClass,
+  kByClass,
+  shortfalls,
+}: {
+  memberCountByClass: Record<GroupClass, number>;
+  kByClass: Record<GroupClass, number>;
+  shortfalls: RosterShortfall[];
+}) {
+  const classes: GroupClass[] = ["strategic", "key", "growth", "maintenance"];
+  const anyMembers = classes.some((c) => memberCountByClass[c] > 0);
+  if (!anyMembers) return null;
+
+  // Coverage = which (class, tier, role) slots are short. Index for
+  // quick lookup so we can tag class chips when their leader supply
+  // is incomplete.
+  const shortfallByClass = new Map<GroupClass, RosterShortfall[]>();
+  for (const s of shortfalls) {
+    const list = shortfallByClass.get(s.group_class) ?? [];
+    list.push(s);
+    shortfallByClass.set(s.group_class, list);
+  }
+
+  return (
+    <div className="mb-4 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] px-4 py-3">
+      <div className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
+        Pre-generate preview · 编排预览
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {classes
+          .filter((c) => memberCountByClass[c] > 0)
+          .map((c) => {
+            const incomplete = (shortfallByClass.get(c) ?? []).some(
+              (s) => s.have < s.need,
+            );
+            return (
+              <span
+                key={c}
+                className={`inline-flex items-baseline gap-2 px-2.5 py-1 rounded-[var(--radius-pill)] border text-[11.5px] ${
+                  incomplete
+                    ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                    : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink)]"
+                }`}
+                title={
+                  incomplete
+                    ? `${GROUP_CLASS_LABEL[c].cn} — leaders short. See banner above.`
+                    : `${GROUP_CLASS_LABEL[c].cn} — leader pool ok.`
+                }
+              >
+                <span>{GROUP_CLASS_LABEL[c].cn}</span>
+                <span className="text-[var(--ink-mute)] tabular-nums">
+                  {memberCountByClass[c]}p → {kByClass[c]} group
+                  {kByClass[c] === 1 ? "" : "s"}
+                </span>
+              </span>
+            );
+          })}
+      </div>
     </div>
   );
 }
@@ -351,8 +579,12 @@ function GroupCard({
   groupSizeMin,
   canEdit,
   onSetRole,
+  onSetClass,
+  onSetPin,
   openMemberId,
   setOpenMemberId,
+  expandedMemberId,
+  setExpandedMemberId,
 }: {
   eventId: string;
   group: GroupBuilderGroup;
@@ -360,8 +592,15 @@ function GroupCard({
   groupSizeMin: number;
   canEdit: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
+  onSetClass: (groupId: string, groupClass: GroupClass) => Promise<void>;
+  onSetPin: (
+    enrollmentId: string,
+    pinnedGroupNo: number | null,
+  ) => Promise<void>;
   openMemberId: string | null;
   setOpenMemberId: (id: string | null) => void;
+  expandedMemberId: string | null;
+  setExpandedMemberId: (id: string | null) => void;
 }) {
   const router = useRouter();
   const { isOver, setNodeRef } = useDroppable({ id: `group-${group.group_no}` });
@@ -399,13 +638,19 @@ function GroupCard({
     }
   }
 
+  const hasZuZhang = group.members.some((m) => m.role === "zu_zhang");
+  const hasFuZuZhang = group.members.some((m) => m.role === "fu_zu_zhang");
+  const needsLeader = !hasZuZhang || !hasFuZuZhang;
+
   return (
     <section
       ref={setNodeRef}
       className={`relative rounded-[var(--radius-lg)] border p-4 transition-colors ${
         isOver
           ? "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)]/30 shadow-[var(--shadow-focus)]"
-          : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
+          : needsLeader
+            ? "border-[var(--cinnabar)]/35 bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
+            : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
       }`}
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
@@ -413,7 +658,14 @@ function GroupCard({
           <span className="font-mono text-[11px] tabular-nums text-[var(--cinnabar-deep)]">
             #{group.group_no}
           </span>
-          <ClassChip groupClass={group.group_class} />
+          {canEdit ? (
+            <ClassDropdown
+              groupClass={group.group_class}
+              onChange={(c) => onSetClass(group.id, c)}
+            />
+          ) : (
+            <ClassChip groupClass={group.group_class} />
+          )}
           <span
             className={`inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border text-[10px] tabular-nums ${
               sizeChip === "out"
@@ -423,6 +675,22 @@ function GroupCard({
           >
             {group.members.length} pax
           </span>
+          {!hasZuZhang ? (
+            <span
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
+              title="No 组长 seated. Promote a member or curate one via /enrollments."
+            >
+              missing 主组长
+            </span>
+          ) : null}
+          {!hasFuZuZhang ? (
+            <span
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/45 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)]"
+              title="No 副组长 seated."
+            >
+              missing 副组长
+            </span>
+          ) : null}
         </div>
         {canEdit && !editingRationale ? (
           <button
@@ -505,6 +773,7 @@ function GroupCard({
                 <th className="text-left px-2 py-1.5 font-medium w-[44px]">Tier</th>
                 <th className="text-left px-1 py-1.5 font-medium w-[24px]" aria-label="Goal" />
                 <th className="text-left px-2 py-1.5 font-medium w-[68px]">Flags</th>
+                <th className="text-right px-2 py-1.5 font-medium w-[26px]" aria-label="Detail" />
               </tr>
             </thead>
             <tbody>
@@ -513,11 +782,17 @@ function GroupCard({
                   key={m.assignment_id}
                   member={m}
                   groupClass={group.group_class}
+                  groupNo={group.group_no}
                   canEdit={canEdit}
                   onSetRole={onSetRole}
+                  onSetPin={onSetPin}
                   isOpen={openMemberId === m.assignment_id}
                   setOpen={(v) =>
                     setOpenMemberId(v ? m.assignment_id : null)
+                  }
+                  isExpanded={expandedMemberId === m.assignment_id}
+                  setExpanded={(v) =>
+                    setExpandedMemberId(v ? m.assignment_id : null)
                   }
                 />
               ))}
@@ -547,26 +822,44 @@ function sortMembers(members: GroupBuilderMember[]): GroupBuilderMember[] {
   });
 }
 
+function memberLabel(m: GroupBuilderMember): string {
+  const en = m.name_en?.trim();
+  const cn = m.name_cn?.trim();
+  if (en && cn) return `${en} · ${cn}`;
+  return en || cn || "—";
+}
+
 function MemberRow({
   member,
   groupClass,
+  groupNo,
   canEdit,
   onSetRole,
+  onSetPin,
   isOpen,
   setOpen,
+  isExpanded,
+  setExpanded,
 }: {
   member: GroupBuilderMember;
   groupClass: GroupClass;
+  groupNo: number;
   canEdit: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
+  onSetPin: (
+    enrollmentId: string,
+    pinnedGroupNo: number | null,
+  ) => Promise<void>;
   isOpen: boolean;
   setOpen: (v: boolean) => void;
+  isExpanded: boolean;
+  setExpanded: (v: boolean) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: member.assignment_id,
     disabled: !canEdit,
   });
-  const name = member.name_en || member.name_cn || "—";
+  const name = memberLabel(member);
   const isLeader = member.role === "zu_zhang" || member.role === "fu_zu_zhang";
   const roleTone =
     member.role === "zu_zhang"
@@ -575,7 +868,10 @@ function MemberRow({
         ? "bg-[var(--gold-soft)]/45"
         : "";
   const primaryGoal: GrowthDimension | null = member.goal_dimensions[0] ?? null;
+  const secondaryGoal: GrowthDimension | null = member.goal_dimensions[1] ?? null;
   const classMismatch = !isLeader && member.effective_class !== groupClass;
+  const pinnedHere =
+    member.pinned_group_no != null && member.pinned_group_no === groupNo;
 
   const style: React.CSSProperties | undefined = transform
     ? {
@@ -586,108 +882,327 @@ function MemberRow({
     : undefined;
 
   return (
-    <tr
-      ref={setNodeRef}
-      style={style}
-      data-member-row={member.assignment_id}
-      {...listeners}
-      {...attributes}
-      className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${canEdit ? "cursor-grab active:cursor-grabbing hover:bg-[var(--paper-deep)]/35" : ""}`}
-      title={canEdit ? "Drag to another group · click to set role" : undefined}
-      onClick={(e) => {
-        if (!canEdit) return;
-        e.stopPropagation();
-        setOpen(!isOpen);
-      }}
-    >
-      <td className="px-2 py-1.5 align-middle">
-        {member.role === "zu_zhang" ? (
-          <span
-            className="inline-flex items-center justify-center h-[16px] px-1.5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[var(--paper)] text-[9px] tracking-[0.06em]"
-            title="组长"
-          >
-            组
-          </span>
-        ) : member.role === "fu_zu_zhang" ? (
-          <span
-            className="inline-flex items-center justify-center h-[16px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[var(--ink)] text-[9px] tracking-[0.06em]"
-            title="副组长"
-          >
-            副
-          </span>
-        ) : null}
-      </td>
-      <td className="px-2 py-1.5 align-middle font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
-        {member.region_id ?? ""}
-      </td>
-      <td className="px-2 py-1.5 align-middle text-[var(--ink)] truncate max-w-[180px]">
-        {name}
-      </td>
-      <td className="px-2 py-1.5 align-middle">
-        {isLeader && member.zu_zhang_tier ? (
-          <TierBadge tier={member.zu_zhang_tier} grade={member.zu_zhang_grade} />
-        ) : null}
-      </td>
-      <td className="px-1 py-1.5 align-middle text-center">
-        {primaryGoal ? (
-          <span
-            className="text-[12px]"
-            title={`Primary goal: ${GROWTH_DIMENSION_LABEL[primaryGoal].cn}`}
-          >
-            {GROWTH_DIMENSION_LABEL[primaryGoal].icon}
-          </span>
-        ) : null}
-      </td>
-      <td className="px-2 py-1.5 align-middle">
-        <span className="inline-flex items-center gap-1">
-          {member.is_old_student ? (
+    <>
+      <tr
+        ref={setNodeRef}
+        style={style}
+        data-member-row={member.assignment_id}
+        {...listeners}
+        {...attributes}
+        className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${canEdit ? "cursor-grab active:cursor-grabbing hover:bg-[var(--paper-deep)]/35" : ""}`}
+        title={canEdit ? "Drag to another group · click to set role / pin" : undefined}
+        onClick={(e) => {
+          if (!canEdit) return;
+          e.stopPropagation();
+          setOpen(!isOpen);
+        }}
+      >
+        <td className="px-2 py-1.5 align-middle">
+          {member.role === "zu_zhang" ? (
             <span
-              title="老学员"
-              className="inline-flex items-center justify-center h-[14px] w-[14px] rounded-full border border-[var(--ink-faint)]/50 text-[8.5px] tracking-normal text-[var(--ink-mute)]"
+              className="inline-flex items-center justify-center h-[16px] px-1.5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[var(--paper)] text-[9px] tracking-[0.06em]"
+              title="组长"
             >
-              旧
+              组
+            </span>
+          ) : member.role === "fu_zu_zhang" ? (
+            <span
+              className="inline-flex items-center justify-center h-[16px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[var(--ink)] text-[9px] tracking-[0.06em]"
+              title="副组长"
+            >
+              副
             </span>
           ) : null}
-          {classMismatch && member.qualification ? (
+        </td>
+        <td className="px-2 py-1.5 align-middle font-mono text-[10px] text-[var(--cinnabar-deep)] tabular-nums">
+          {member.region_id ?? ""}
+        </td>
+        <td className="px-2 py-1.5 align-middle text-[var(--ink)]">
+          {name}
+        </td>
+        <td className="px-2 py-1.5 align-middle">
+          {isLeader && member.zu_zhang_tier ? (
+            <TierBadge tier={member.zu_zhang_tier} grade={member.zu_zhang_grade} />
+          ) : null}
+        </td>
+        <td className="px-1 py-1.5 align-middle text-center">
+          {primaryGoal ? (
             <span
-              className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/50 bg-[var(--gold-soft)]/60 text-[9px] tracking-[0.04em] text-[var(--gold-deep)]"
-              title={`Qualification (${STUDENT_QUALIFICATION_LABEL[member.qualification].cn}) doesn't match group class (${GROUP_CLASS_LABEL[groupClass].cn}). Override or pin?`}
+              className="text-[12px]"
+              title={`Primary goal: ${GROWTH_DIMENSION_LABEL[primaryGoal].cn}`}
             >
-              {STUDENT_QUALIFICATION_LABEL[member.qualification].short_cn}
+              {GROWTH_DIMENSION_LABEL[primaryGoal].icon}
             </span>
           ) : null}
-          {member.pinned_group_no ? (
-            <span
-              className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 text-[9px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
-              title={`Pinned to group #${member.pinned_group_no}`}
-            >
-              📌{member.pinned_group_no}
-            </span>
-          ) : null}
-        </span>
-        {isOpen && canEdit ? (
-          <span
-            data-role-popover
-            className="absolute z-10 right-2 mt-1 flex flex-col rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] text-[11px]"
-          >
-            {(["zu_zhang", "fu_zu_zhang", "participant"] as const).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  setOpen(false);
-                  await onSetRole(member.assignment_id, r);
-                }}
-                className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)]"
+        </td>
+        <td className="px-2 py-1.5 align-middle">
+          <span className="inline-flex items-center gap-1">
+            {member.is_old_student ? (
+              <span
+                title="老学员"
+                className="inline-flex items-center justify-center h-[14px] w-[14px] rounded-full border border-[var(--ink-faint)]/50 text-[8.5px] tracking-normal text-[var(--ink-mute)]"
               >
-                {r === "zu_zhang" ? "组长" : r === "fu_zu_zhang" ? "副组长" : "participant"}
-              </button>
+                旧
+              </span>
+            ) : null}
+            {classMismatch && member.qualification ? (
+              <span
+                className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/50 bg-[var(--gold-soft)]/60 text-[9px] tracking-[0.04em] text-[var(--gold-deep)]"
+                title={`Qualification (${STUDENT_QUALIFICATION_LABEL[member.qualification].cn}) doesn't match group class (${GROUP_CLASS_LABEL[groupClass].cn}). Override or pin?`}
+              >
+                {STUDENT_QUALIFICATION_LABEL[member.qualification].short_cn}
+              </span>
+            ) : null}
+            {member.pinned_group_no ? (
+              <span
+                className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 text-[9px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
+                title={
+                  pinnedHere
+                    ? `Pinned to this group (#${member.pinned_group_no})`
+                    : `Pinned to group #${member.pinned_group_no} — currently in #${groupNo}`
+                }
+              >
+                📌{member.pinned_group_no}
+              </span>
+            ) : null}
+          </span>
+          {isOpen && canEdit ? (
+            <span
+              data-role-popover
+              className="absolute z-10 right-2 mt-1 flex flex-col rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] text-[11px]"
+            >
+              {(["zu_zhang", "fu_zu_zhang", "participant"] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setOpen(false);
+                    await onSetRole(member.assignment_id, r);
+                  }}
+                  className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] whitespace-nowrap"
+                >
+                  {r === "zu_zhang" ? "组长" : r === "fu_zu_zhang" ? "副组长" : "participant"}
+                </button>
+              ))}
+              {member.enrollment_id ? (
+                <>
+                  <span className="border-t border-[var(--paper-shadow)]/60" />
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setOpen(false);
+                      await onSetPin(
+                        member.enrollment_id!,
+                        pinnedHere ? null : groupNo,
+                      );
+                    }}
+                    className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] text-[var(--cinnabar-deep)] whitespace-nowrap"
+                  >
+                    {pinnedHere ? "Unpin · 取消固定" : `Pin here · 固定 #${groupNo}`}
+                  </button>
+                  {member.pinned_group_no != null && !pinnedHere ? (
+                    <button
+                      type="button"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        setOpen(false);
+                        await onSetPin(member.enrollment_id!, null);
+                      }}
+                      className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] text-[var(--ink-mute)] whitespace-nowrap"
+                    >
+                      Clear pin · 取消固定 #{member.pinned_group_no}
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+            </span>
+          ) : null}
+        </td>
+        <td className="px-2 py-1.5 align-middle text-right">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(!isExpanded);
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="inline-flex items-center justify-center w-5 h-5 rounded text-[var(--ink-faint)] hover:bg-[var(--paper-deep)] hover:text-[var(--ink-mute)]"
+            aria-label={isExpanded ? "Collapse detail" : "Expand detail"}
+          >
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 120ms" }}
+              aria-hidden="true"
+            >
+              <path d="M3.5 2L7 5l-3.5 3" />
+            </svg>
+          </button>
+        </td>
+      </tr>
+      {isExpanded ? (
+        <tr className="border-b border-[var(--paper-shadow)]/40 bg-[var(--paper)]/60">
+          <td colSpan={7} className="px-3 py-2.5">
+            <MemberDetail member={member} />
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+function MemberDetail({ member }: { member: GroupBuilderMember }) {
+  const fin = member.financial_score ?? 0;
+  const inf = member.influence_score ?? 0;
+  const overrode =
+    member.qualification_override
+    && member.qualification_override !== member.qualification_computed;
+  return (
+    <div className="grid md:grid-cols-2 gap-x-6 gap-y-2 text-[11px] text-[var(--ink-soft)]">
+      <DetailRow label="Financial · 财力">
+        <ScoreInline value={fin} />
+      </DetailRow>
+      <DetailRow label="Influence · 影响力">
+        <ScoreInline value={inf} />
+      </DetailRow>
+      <DetailRow label="Qualification · 等级">
+        {member.qualification ? (
+          <span className="text-[var(--ink)]">
+            {STUDENT_QUALIFICATION_LABEL[member.qualification].cn} ·{" "}
+            {STUDENT_QUALIFICATION_LABEL[member.qualification].en}
+            {overrode && member.qualification_computed ? (
+              <span className="ml-2 text-[10px] text-[var(--ink-mute)]">
+                (override; computed:{" "}
+                {STUDENT_QUALIFICATION_LABEL[member.qualification_computed].cn})
+              </span>
+            ) : null}
+          </span>
+        ) : (
+          <span className="text-[var(--ink-faint)]">—</span>
+        )}
+      </DetailRow>
+      <DetailRow label="Motivation · 动机">
+        {member.motivation_tag ? (
+          <span className="text-[var(--ink)]">{member.motivation_tag}</span>
+        ) : (
+          <span className="text-[var(--ink-faint)]">—</span>
+        )}
+      </DetailRow>
+      <DetailRow label="Old student · 老学员">
+        {member.is_old_student ? (
+          <span className="text-[var(--cinnabar-deep)]">Yes · 是</span>
+        ) : (
+          <span className="text-[var(--ink-mute)]">No</span>
+        )}
+      </DetailRow>
+      <DetailRow label="带组次数">
+        <span className="tabular-nums text-[var(--ink)]">
+          {member.times_led_groups}
+        </span>
+        {member.has_special_contribution ? (
+          <span className="ml-2 text-[10px] tracking-[0.18em] uppercase text-[var(--gold-deep)] bg-[var(--gold-soft)] px-1.5 py-0.5 rounded-full border border-[var(--gold)]/40">
+            特殊贡献
+          </span>
+        ) : null}
+      </DetailRow>
+      <DetailRow label="Goals · 成长方向">
+        {member.goal_dimensions.length === 0 ? (
+          <span className="text-[var(--ink-faint)]">—</span>
+        ) : (
+          <span className="inline-flex items-center gap-2 flex-wrap text-[var(--ink)]">
+            {member.goal_dimensions.map((d, i) => (
+              <span key={d} className="inline-flex items-center gap-1">
+                {i === 0 ? <span className="text-[10px] text-[var(--cinnabar-deep)]">★</span> : null}
+                <span>{GROWTH_DIMENSION_LABEL[d].icon}</span>
+                <span>{GROWTH_DIMENSION_LABEL[d].cn}</span>
+              </span>
             ))}
           </span>
-        ) : null}
-      </td>
-    </tr>
+        )}
+      </DetailRow>
+      <DetailRow label="Family · 家人">
+        {member.family_partner_region_ids.length === 0 ? (
+          <span className="text-[var(--ink-faint)]">—</span>
+        ) : (
+          <span className="font-mono text-[10.5px] text-[var(--cinnabar-deep)]">
+            {member.family_partner_region_ids.join(" / ")}
+          </span>
+        )}
+      </DetailRow>
+    </div>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-3 min-w-0">
+      <span className="shrink-0 w-[120px] text-[9.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+    </div>
+  );
+}
+
+function ScoreInline({ value }: { value: number }) {
+  const pct = Math.max(0, Math.min(100, (value / 5) * 100));
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="tabular-nums text-[var(--ink)]">{value || "—"}</span>
+      <span className="inline-block w-16 h-1 rounded-full bg-[var(--paper-deep)]">
+        <span
+          className="block h-1 rounded-full bg-[var(--cinnabar)]"
+          style={{ width: `${pct}%` }}
+          aria-hidden="true"
+        />
+      </span>
+    </span>
+  );
+}
+
+function ClassDropdown({
+  groupClass,
+  onChange,
+}: {
+  groupClass: GroupClass;
+  onChange: (c: GroupClass) => void;
+}) {
+  const lab = GROUP_CLASS_LABEL[groupClass];
+  const tone =
+    groupClass === "strategic"
+      ? "border-[var(--cinnabar)]/60 bg-[var(--cinnabar)] text-[var(--paper)]"
+      : groupClass === "key"
+        ? "border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[var(--gold-deep)]"
+        : groupClass === "growth"
+          ? "border-[var(--paper-shadow)] bg-[var(--paper-deep)] text-[var(--ink)]"
+          : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)]";
+  return (
+    <label
+      className={`inline-flex items-center h-[18px] pl-2 pr-1 rounded-[var(--radius-pill)] border text-[10px] tracking-[0.06em] cursor-pointer ${tone}`}
+      title="Click to change class"
+    >
+      <span>{lab.cn}</span>
+      <select
+        value={groupClass}
+        onChange={(e) => onChange(e.target.value as GroupClass)}
+        onClick={(e) => e.stopPropagation()}
+        className="ml-1 bg-transparent text-[10px] cursor-pointer outline-none border-0 focus:outline-none"
+      >
+        {(["strategic", "key", "growth", "maintenance"] as GroupClass[]).map((c) => (
+          <option key={c} value={c} className="text-[var(--ink)] bg-[var(--paper)]">
+            {GROUP_CLASS_LABEL[c].cn} · {GROUP_CLASS_LABEL[c].en}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

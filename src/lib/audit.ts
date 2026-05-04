@@ -64,6 +64,7 @@ export type AuditAction =
   | "groups.exported_ppt"
   | "groups.exported_pdf"
   | "groups.exported_png"
+  | "groups.exported_xlsx"
   | "floor_plan.shape_added"
   | "floor_plan.shape_moved"
   | "floor_plan.shape_deleted"

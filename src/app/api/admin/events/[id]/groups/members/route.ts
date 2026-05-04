@@ -46,7 +46,18 @@ const RationaleBody = z.object({
   rationale_cn: z.string().trim().max(2000),
 });
 
-const Body = z.discriminatedUnion("action", [MoveBody, RoleBody, RationaleBody]);
+const ClassBody = z.object({
+  action: z.literal("set_class"),
+  group_id: z.string().uuid(),
+  group_class: z.enum(["strategic", "key", "growth", "maintenance"]),
+});
+
+const Body = z.discriminatedUnion("action", [
+  MoveBody,
+  RoleBody,
+  RationaleBody,
+  ClassBody,
+]);
 
 export async function PATCH(req: Request, { params }: RouteCtx) {
   const admin = await requireAdmin();
@@ -100,6 +111,35 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         rationale_cn: body.rationale_cn,
       },
       metadata: { event_id: eventId },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "set_class") {
+    const { data: before } = await service
+      .from("event_groups")
+      .select("id, event_id, group_class")
+      .eq("id", body.group_id)
+      .maybeSingle();
+    if (!before || before.event_id !== eventId) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    if (before.group_class === body.group_class) {
+      return NextResponse.json({ ok: true, unchanged: true });
+    }
+    const { error: updErr } = await service
+      .from("event_groups")
+      .update({ group_class: body.group_class })
+      .eq("id", body.group_id);
+    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.class_changed",
+      entity: "event_groups",
+      entity_id: body.group_id,
+      before: { group_class: before.group_class },
+      after: { group_class: body.group_class },
+      metadata: { event_id: eventId, via: "card_dropdown" },
     });
     return NextResponse.json({ ok: true });
   }

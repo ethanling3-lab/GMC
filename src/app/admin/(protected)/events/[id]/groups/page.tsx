@@ -86,6 +86,9 @@ export default async function GroupsPage({
           cushions={data.cushions}
           canEdit={!isReadOnly}
           canGenerate={canGenerate}
+          rosterShortfalls={data.roster_shortfalls}
+          memberCountByClass={data.member_count_by_class}
+          kByClass={data.k_by_class}
         />
       </div>
     </div>

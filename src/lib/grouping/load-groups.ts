@@ -3,15 +3,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   effectiveQualification,
   participantToClass,
+  scoreToQualification,
 } from "./types";
+import { computeRosterShortfalls } from "./balance";
 import type {
   GroupClass,
+  GroupingZuZhang,
   GroupMemberRole,
   GrowthDimension,
+  RosterShortfall,
   SeatingMode,
   StudentQualification,
   ZuZhangTier,
 } from "./types";
+import type { MotivationTag } from "@/lib/participants-query";
 
 // Loader for the GroupBuilder UI. Mode-aware:
 //   tables   → groups[] with hydrated members + roles + rationale + class
@@ -41,6 +46,8 @@ export type GroupBuilderEvent = {
 export type GroupBuilderMember = {
   // event_seat_assignments.id — the row-level identity used by drag-drop.
   assignment_id: string;
+  // enrollments.id — needed for inline-pin from the row context menu.
+  enrollment_id: string | null;
   participant_id: string;
   region_id: string | null;
   name_en: string | null;
@@ -59,7 +66,21 @@ export type GroupBuilderMember = {
   zu_zhang_dimensions: GrowthDimension[];
   goal_dimensions: GrowthDimension[];
   qualification: StudentQualification | null;
+  // Both override-aware (for what the algorithm uses) and raw computed
+  // (for "this person was overridden from X" display in the detail row).
+  qualification_override: StudentQualification | null;
+  qualification_computed: StudentQualification | null;
   effective_class: GroupClass;
+
+  // Pass 1 detail-row fields.
+  motivation_tag: MotivationTag | null;
+  has_special_contribution: boolean;
+  times_led_groups: number;
+  // Region IDs of family-link partners enrolled in the same event
+  // (resolved from participant_family_links + the legacy
+  // family_of_participant_id column). Used by the detail row + xlsx
+  // export.
+  family_partner_region_ids: string[];
 };
 
 export type GroupBuilderGroup = {
@@ -95,6 +116,12 @@ export type GroupBuilderData = {
   // Total approved + paid enrolments (used by the generate button + the
   // empty-state copy).
   enrolment_count: number;
+  // Pass 1 visibility surfaces — computed against the CURRENT roster +
+  // member distribution so the page mirrors what the next generate run
+  // would see. Empty arrays / zeroed maps when no enrolments yet.
+  roster_shortfalls: RosterShortfall[];
+  member_count_by_class: Record<GroupClass, number>;
+  k_by_class: Record<GroupClass, number>;
 };
 
 type EventRow = {
@@ -135,15 +162,25 @@ type ParticipantRow = {
   zu_zhang_tier: ZuZhangTier | null;
   zu_zhang_grade: number | null;
   zu_zhang_dimensions: GrowthDimension[] | null;
+  zu_zhang_core_traits: string[] | null;
   goal_dimensions: GrowthDimension[] | null;
   student_qualification: StudentQualification | null;
+  motivation_tag: MotivationTag | null;
+  has_special_contribution: boolean | null;
+  times_led_groups: number | null;
+  family_of_participant_id: string | null;
 };
 
 type EnrollmentPin = {
+  id: string;
   participant_id: string;
   pinned_group_no: number | null;
   zu_zhang_grade_for_event: number | null;
+  zu_zhang_tier_for_event: ZuZhangTier | null;
+  serving_as_zu_zhang: boolean | null;
 };
+
+type FamilyLinkRow = { a_id: string; b_id: string };
 
 type CushionShape = {
   id: string;
@@ -180,7 +217,9 @@ export async function loadGroupBuilder(
       .returns<AssignmentRow[]>(),
     supabase
       .from("enrollments")
-      .select("participant_id, pinned_group_no, zu_zhang_grade_for_event")
+      .select(
+        "id, participant_id, pinned_group_no, zu_zhang_grade_for_event, zu_zhang_tier_for_event, serving_as_zu_zhang",
+      )
       .eq("event_id", eventId)
       .in("status", ["approved", "paid"])
       .returns<EnrollmentPin[]>(),
@@ -211,12 +250,62 @@ export async function loadGroupBuilder(
         `id, region_id, name_en, name_cn, is_old_student,
          influence_score, financial_score,
          zu_zhang_tier, zu_zhang_grade,
-         zu_zhang_dimensions, goal_dimensions, student_qualification`,
+         zu_zhang_dimensions, zu_zhang_core_traits,
+         goal_dimensions, student_qualification,
+         motivation_tag, has_special_contribution, times_led_groups,
+         family_of_participant_id`,
       )
       .in("id", allParticipantIds)
       .returns<ParticipantRow[]>();
     if (pErr) return { error: pErr.message };
     participantById = new Map((parts ?? []).map((p) => [p.id, p]));
+  }
+
+  // Build family adjacency from BOTH the legacy single-edge column and
+  // the multi-edge participant_family_links table. Mirrors the algorithm
+  // loader (src/lib/grouping/load.ts) so the detail row shows the same
+  // family chain the algorithm would respect. Resolves to region_ids for
+  // display.
+  const familyAdj = new Map<string, Set<string>>();
+  if (allParticipantIds.length > 0) {
+    const { data: links, error: lErr } = await supabase
+      .from("participant_family_links")
+      .select("a_id, b_id")
+      .or(
+        `a_id.in.(${allParticipantIds.join(",")}),b_id.in.(${allParticipantIds.join(",")})`,
+      )
+      .returns<FamilyLinkRow[]>();
+    if (lErr) return { error: lErr.message };
+    for (const l of links ?? []) {
+      if (!familyAdj.has(l.a_id)) familyAdj.set(l.a_id, new Set());
+      if (!familyAdj.has(l.b_id)) familyAdj.set(l.b_id, new Set());
+      familyAdj.get(l.a_id)!.add(l.b_id);
+      familyAdj.get(l.b_id)!.add(l.a_id);
+    }
+  }
+  // Fold in legacy single-edge column.
+  for (const p of participantById.values()) {
+    if (p.family_of_participant_id && p.family_of_participant_id !== p.id) {
+      if (!familyAdj.has(p.id)) familyAdj.set(p.id, new Set());
+      if (!familyAdj.has(p.family_of_participant_id)) {
+        familyAdj.set(p.family_of_participant_id, new Set());
+      }
+      familyAdj.get(p.id)!.add(p.family_of_participant_id);
+      familyAdj.get(p.family_of_participant_id)!.add(p.id);
+    }
+  }
+  // Resolve partner IDs → region_ids (only for partners enrolled in
+  // this event; out-of-event partners aren't actionable from this page).
+  function partnerRegionIds(pid: string): string[] {
+    const partners = familyAdj.get(pid);
+    if (!partners) return [];
+    const out: string[] = [];
+    for (const otherId of partners) {
+      const other = participantById.get(otherId);
+      if (!other) continue; // partner not enrolled in this event
+      if (other.region_id) out.push(other.region_id);
+    }
+    return out.sort();
   }
 
   // Tables payload.
@@ -240,8 +329,14 @@ export async function loadGroupBuilder(
             })
           : "growth";
         const enrol = enrolByPid.get(a.participant_id);
+        const computedQ = p
+          ? scoreToQualification(
+              Math.max(p.financial_score ?? 0, p.influence_score ?? 0) || null,
+            )
+          : null;
         return {
           assignment_id: a.id,
+          enrollment_id: enrol?.id ?? null,
           participant_id: a.participant_id,
           region_id: p?.region_id ?? null,
           name_en: p?.name_en ?? null,
@@ -258,7 +353,13 @@ export async function loadGroupBuilder(
           zu_zhang_dimensions: p?.zu_zhang_dimensions ?? [],
           goal_dimensions: p?.goal_dimensions ?? [],
           qualification,
+          qualification_override: p?.student_qualification ?? null,
+          qualification_computed: computedQ,
           effective_class,
+          motivation_tag: p?.motivation_tag ?? null,
+          has_special_contribution: p?.has_special_contribution ?? false,
+          times_led_groups: p?.times_led_groups ?? 0,
+          family_partner_region_ids: p ? partnerRegionIds(p.id) : [],
         };
       })
       .sort((a, b) => roleOrder(a.role) - roleOrder(b.role));
@@ -308,11 +409,102 @@ export async function loadGroupBuilder(
     });
   }
 
+  // Pre-generate visibility surfaces. Build a roster + class demand
+  // from the CURRENT enrolment + curation state — same shape as what
+  // src/lib/grouping/load.ts produces for the algorithm — then call the
+  // existing computeRosterShortfalls helper. This way the page mirrors
+  // exactly what the next generate run would see, even if the page
+  // hasn't been generated yet.
+  const memberCountByClass: Record<GroupClass, number> = {
+    strategic: 0,
+    key: 0,
+    growth: 0,
+    maintenance: 0,
+  };
+  const kByClass: Record<GroupClass, number> = {
+    strategic: 0,
+    key: 0,
+    growth: 0,
+    maintenance: 0,
+  };
+  let rosterShortfalls: RosterShortfall[] = [];
+  if ((enrolPinsRes.data ?? []).length > 0) {
+    // Need participant qualification + zu_zhang fields for every
+    // enrolled participant — even those not yet assigned to groups.
+    const enrolPids = (enrolPinsRes.data ?? []).map((e) => e.participant_id);
+    const missingPids = enrolPids.filter((id) => !participantById.has(id));
+    if (missingPids.length > 0) {
+      const { data: extra, error: xErr } = await supabase
+        .from("participants")
+        .select(
+          `id, region_id, name_en, name_cn, is_old_student,
+           influence_score, financial_score,
+           zu_zhang_tier, zu_zhang_grade,
+           zu_zhang_dimensions, zu_zhang_core_traits,
+           goal_dimensions, student_qualification,
+           motivation_tag, has_special_contribution, times_led_groups,
+           family_of_participant_id`,
+        )
+        .in("id", missingPids)
+        .returns<ParticipantRow[]>();
+      if (xErr) return { error: xErr.message };
+      for (const p of extra ?? []) participantById.set(p.id, p);
+    }
+
+    // Bucket enrolled members by their effective class.
+    for (const e of enrolPinsRes.data ?? []) {
+      const p = participantById.get(e.participant_id);
+      if (!p) continue;
+      const cls = participantToClass({
+        financial_score: p.financial_score,
+        influence_score: p.influence_score,
+        student_qualification_override: p.student_qualification,
+      });
+      memberCountByClass[cls] += 1;
+    }
+
+    // k per class — same formula as balance.ts (regular capacity =
+    // group_size_max - 2 to reserve seats for the leader pair).
+    const regularCapacity = Math.max(1, event.group_size_max - 2);
+    for (const cls of ["strategic", "key", "growth", "maintenance"] as GroupClass[]) {
+      if (memberCountByClass[cls] === 0) continue;
+      kByClass[cls] = Math.ceil(memberCountByClass[cls] / regularCapacity);
+    }
+
+    // Build the curated 组长 roster the algorithm would consume.
+    const roster: GroupingZuZhang[] = [];
+    for (const e of enrolPinsRes.data ?? []) {
+      if (!e.serving_as_zu_zhang) continue;
+      const p = participantById.get(e.participant_id);
+      if (!p) continue;
+      const tier = e.zu_zhang_tier_for_event ?? p.zu_zhang_tier;
+      if (!tier) continue;
+      const grade = e.zu_zhang_grade_for_event ?? p.zu_zhang_grade;
+      roster.push({
+        participant_id: p.id,
+        region_id: p.region_id,
+        tier,
+        grade,
+        dimensions: p.zu_zhang_dimensions ?? [],
+        core_traits: (p.zu_zhang_core_traits ?? []) as never,
+        is_main:
+          tier === "key_recruitment"
+          || tier === "recruitment"
+          || tier === "maintenance",
+        is_auxiliary: tier === "auxiliary",
+      });
+    }
+    rosterShortfalls = computeRosterShortfalls(roster, kByClass);
+  }
+
   return {
     event,
     groups: builderGroups,
     cushions,
     enrolment_count: enrolCountRes.count ?? 0,
+    roster_shortfalls: rosterShortfalls,
+    member_count_by_class: memberCountByClass,
+    k_by_class: kByClass,
   };
 }
 
