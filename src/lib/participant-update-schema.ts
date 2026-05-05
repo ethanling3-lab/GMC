@@ -61,10 +61,18 @@ const optionalString = z
   .optional()
   .transform((v) => (v === "" ? null : v));
 
+// CRITICAL: preserve undefined through transforms. Zod's .optional()
+// lets undefined flow into the transform; if the transform converts
+// undefined → null, missing keys in the PATCH body get nulled out.
+// That bricks region_id (and email + birth_date) whenever ANY PATCH
+// caller doesn't include them. Always check `v === undefined` first.
 const optionalEmail = z
   .union([z.string().email().max(200), z.literal(""), z.null()])
   .optional()
-  .transform((v) => (v === "" || v == null ? null : v));
+  .transform((v) => {
+    if (v === undefined) return undefined;
+    return v === "" || v === null ? null : v;
+  });
 
 const optionalDate = z
   .union([
@@ -75,7 +83,10 @@ const optionalDate = z
     z.null(),
   ])
   .optional()
-  .transform((v) => (v === "" || v == null ? null : v));
+  .transform((v) => {
+    if (v === undefined) return undefined;
+    return v === "" || v === null ? null : v;
+  });
 
 // Post-022 the score scale is 1-5 with semantic level labels
 // (基础/成长/精英/卓越/战略). The DB constraint enforces 1-5; we cap
@@ -96,7 +107,10 @@ export const ParticipantUpdateSchema = z
     region_id: z
       .union([z.string().trim().min(1).max(50), z.literal(""), z.null()])
       .optional()
-      .transform((v) => (v === "" || v == null ? null : v)),
+      .transform((v) => {
+        if (v === undefined) return undefined;
+        return v === "" || v === null ? null : v;
+      }),
     name_en: optionalString,
     name_cn: optionalString,
     email: optionalEmail,

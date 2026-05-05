@@ -982,7 +982,12 @@ function GroupCard({
           empty group
         </p>
       ) : (
-        <div className="overflow-hidden rounded-[var(--radius-md)] border border-[var(--paper-shadow)]/60">
+        // overflow-visible (was overflow-hidden) so the row's role popover
+        // can extend past the table for rows near the bottom of the card.
+        // The role popover is now ~280px tall after Pass 2 added the
+        // qualification submenu — without overflow-visible the bottom rows'
+        // popovers got clipped below the card.
+        <div className="rounded-[var(--radius-md)] border border-[var(--paper-shadow)]/60">
           <table className="w-full text-[11.5px]">
             <thead className="bg-[var(--paper-deep)]/40 border-b border-[var(--paper-shadow)]/60 text-[9.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
               <tr>
@@ -996,7 +1001,7 @@ function GroupCard({
               </tr>
             </thead>
             <tbody>
-              {sortMembers(group.members).map((m) => (
+              {sortMembers(group.members).map((m, rowIndex, arr) => (
                 <MemberRow
                   key={m.assignment_id}
                   member={m}
@@ -1007,6 +1012,10 @@ function GroupCard({
                   // Other mutations on the row stay open: role, pin,
                   // qualification override are all fine on locked rows.
                   canDrag={!group.locked}
+                  // Flip popover upward when the row is in the bottom
+                  // half — otherwise the qualification submenu (~280px
+                  // tall) extends past the card.
+                  popoverFlipUp={rowIndex >= arr.length - 5}
                   onSetRole={onSetRole}
                   onSetPin={onSetPin}
                   onSetQualification={onSetQualification}
@@ -1059,6 +1068,7 @@ function MemberRow({
   groupNo,
   canEdit,
   canDrag,
+  popoverFlipUp,
   onSetRole,
   onSetPin,
   onSetQualification,
@@ -1072,6 +1082,7 @@ function MemberRow({
   groupNo: number;
   canEdit: boolean;
   canDrag: boolean;
+  popoverFlipUp: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
   onSetPin: (
     enrollmentId: string,
@@ -1166,6 +1177,12 @@ function MemberRow({
         <td className="px-2 py-1.5 align-middle">
           {isLeader && member.zu_zhang_tier ? (
             <TierBadge tier={member.zu_zhang_tier} grade={member.zu_zhang_grade} />
+          ) : member.qualification ? (
+            <QualChip
+              qualification={member.qualification}
+              mismatch={classMismatch}
+              groupClass={groupClass}
+            />
           ) : null}
         </td>
         <td className="px-1 py-1.5 align-middle text-center">
@@ -1188,14 +1205,6 @@ function MemberRow({
                 旧
               </span>
             ) : null}
-            {classMismatch && member.qualification ? (
-              <span
-                className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/50 bg-[var(--gold-soft)]/60 text-[9px] tracking-[0.04em] text-[var(--gold-deep)]"
-                title={`Qualification (${STUDENT_QUALIFICATION_LABEL[member.qualification].cn}) doesn't match group class (${GROUP_CLASS_LABEL[groupClass].cn}). Override or pin?`}
-              >
-                {STUDENT_QUALIFICATION_LABEL[member.qualification].short_cn}
-              </span>
-            ) : null}
             {member.pinned_group_no ? (
               <span
                 className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 text-[9px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
@@ -1212,7 +1221,9 @@ function MemberRow({
           {isOpen && canEdit ? (
             <span
               data-role-popover
-              className="absolute z-10 right-2 mt-1 flex flex-col rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] text-[11px]"
+              className={`absolute z-10 right-2 flex flex-col rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] text-[11px] max-h-[320px] overflow-y-auto ${
+                popoverFlipUp ? "bottom-full mb-1" : "mt-1"
+              }`}
             >
               {(["zu_zhang", "fu_zu_zhang", "participant"] as const).map((r) => (
                 <button
@@ -1678,6 +1689,32 @@ function ClassDropdown({
         ))}
       </select>
     </label>
+  );
+}
+
+function QualChip({
+  qualification,
+  mismatch,
+  groupClass,
+}: {
+  qualification: StudentQualification;
+  mismatch: boolean;
+  groupClass: GroupClass;
+}) {
+  const lab = STUDENT_QUALIFICATION_LABEL[qualification];
+  const tone = mismatch
+    ? "border-[var(--gold)]/55 bg-[var(--gold-soft)]/60 text-[var(--gold-deep)]"
+    : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)]";
+  const title = mismatch
+    ? `${lab.cn} · ${lab.en} — doesn't match ${GROUP_CLASS_LABEL[groupClass].cn}. Override or pin to clear.`
+    : `${lab.cn} · ${lab.en}`;
+  return (
+    <span
+      className={`inline-flex items-center h-[16px] px-1.5 rounded-[var(--radius-pill)] border text-[9.5px] tracking-[0.04em] ${tone}`}
+      title={title}
+    >
+      {lab.short_cn}
+    </span>
   );
 }
 
