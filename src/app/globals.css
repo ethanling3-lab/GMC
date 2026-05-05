@@ -228,3 +228,70 @@ a  { color: inherit; text-decoration: none; }
 .toast-in {
   animation: gmc-toast-in 200ms var(--ease-out) both;
 }
+
+/* ==========================================================================
+   Floor plan canvas — density tiers. The canvas root carries one of
+   `gmc-density-hidden | gmc-density-compact | gmc-density-detailed`,
+   chosen by FloorPlanCanvas from `view.scale`. At low zoom we suppress
+   per-seat text labels so dense layouts (40 tables) stay readable.
+   ========================================================================== */
+.gmc-density-hidden .gmc-seat-cluster text {
+  display: none;
+}
+
+/* ==========================================================================
+   Floor plan print surface (实名桌位图 · Named Seating Chart).
+   Cmd+P from /admin/events/[id]/layout produces a clean printout — page
+   chrome (sidebar, top bar, palette, inspector, toolbar) is hidden; only
+   the canvas card + the print header render.
+   ========================================================================== */
+@media print {
+  /* Hide everything by default. */
+  body * { visibility: hidden; }
+
+  /* Reveal only the print surface and its descendants. */
+  .gmc-print-layout,
+  .gmc-print-layout * { visibility: visible; }
+
+  /* Bring the print surface to the page origin so it owns the printed area. */
+  .gmc-print-layout {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 0;
+    background: #fff;
+  }
+
+  /* Anything tagged gmc-print-hide is suppressed inside the print surface. */
+  .gmc-print-hide,
+  .gmc-print-hide * { display: none !important; }
+
+  /* Print-only elements stay hidden on screen and only show in print. */
+  .gmc-print-only { display: block !important; }
+
+  /* A3 landscape fits ~50 round tables comfortably; admin can also pick A4
+     landscape from the print dialog and the SVG re-fits. */
+  @page { size: A3 landscape; margin: 12mm; }
+
+  /* Force colors (browsers strip background fills on print by default). */
+  .gmc-print-layout * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Canvas wrapper uses calc(100vh) on screen — neutralize so the SVG
+     occupies whatever the print page can give it. */
+  .gmc-print-layout .overflow-auto {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Print always shows seat labels regardless of the screen density tier
+     (admin's current zoom doesn't gate the printable seating chart). */
+  .gmc-seat-cluster text {
+    display: inherit !important;
+  }
+}
+
+/* The print-only header is hidden on screen. */
+.gmc-print-only { display: none; }

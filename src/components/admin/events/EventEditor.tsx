@@ -407,6 +407,27 @@ export function EventEditor({
               </span>
             </Link>
 
+            {/* Floor plan link — M6.4 Visio-style layout editor */}
+            <Link
+              href={`/admin/events/${event.id}/layout`}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12.5px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="2" y="2" width="12" height="12" rx="1" />
+                <circle cx="6" cy="6" r="1.4" />
+                <rect x="9" y="9" width="3" height="3" rx="0.5" />
+              </svg>
+              Floor plan
+              <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
+                平面
+              </span>
+            </Link>
+
             {/* Status picker */}
             <div ref={statusMenuRef} className="relative">
             <button

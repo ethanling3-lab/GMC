@@ -9,6 +9,14 @@ import { BreadcrumbProvider } from "./BreadcrumbContext";
 
 const STORAGE_KEY = "gmc-admin-sidebar-collapsed";
 
+// Routes that need the full main-column width (no 1280px cap). The floor
+// plan editor needs every pixel for the SVG canvas; other routes use the
+// standard centered chrome.
+function isFullBleedRoute(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return /^\/admin\/events\/[^/]+\/layout(\/|$)/.test(pathname);
+}
+
 export function AdminShell({
   admin,
   children,
@@ -78,7 +86,13 @@ export function AdminShell({
                 "radial-gradient(700px 420px at -4% 110%, rgba(122,143,179,0.05), transparent 65%)",
             }}
           >
-            <div className="px-6 md:px-10 py-10 max-w-[1280px]">{children}</div>
+            <div
+              className={`px-6 md:px-10 py-10 ${
+                isFullBleedRoute(pathname) ? "" : "max-w-[1280px]"
+              }`}
+            >
+              {children}
+            </div>
           </main>
         </div>
       </div>
