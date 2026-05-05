@@ -31,6 +31,11 @@ const ALL_DIMENSIONS = ["financial", "relationship", "health", "inner_peace"];
 function buildSynthetic(n) {
   const regions = ["MY", "SG", "TW", "HK", "CN"];
   const motivations = ["growth", "network", "discovery", "skill"];
+  // Cycle length 7 (coprime with the 5-step qualification cycle) so energy
+  // scatters across all classes — otherwise every basic-tier member would
+  // inherit the same energy bucket.
+  const energyCycle = ["high", "medium", "medium", "quiet", "medium", "high", "quiet"];
+  const languageCycle = ["cn", "cn", "en", "both", "cn", "en", "both", "cn", "en", "both"];
   // Distribute across all 5 qualification scores 1–5 evenly.
   const participants = [];
   for (let i = 0; i < n; i++) {
@@ -55,6 +60,9 @@ function buildSynthetic(n) {
       pinned_group_no: null,
       goal_dimensions: [primary, secondary],
       student_qualification_override: null,
+      energy_profile: energyCycle[i % energyCycle.length],
+      language_fluency: languageCycle[i % languageCycle.length],
+      conflict_member_ids: [],
     });
   }
   // Sprinkle 3 family pairs spanning qualification classes (so the
@@ -66,6 +74,17 @@ function buildSynthetic(n) {
     const b = i * 2 + 1;
     participants[a].family_of_participant_id = participants[b].participant_id;
     participants[b].family_of_participant_id = participants[a].participant_id;
+  }
+  // Sprinkle 3 conflict pairs at different indexes from family. Pair
+  // indexes that fall in the SAME qualification class (i % 5 == j % 5)
+  // so the algorithm has to do a same-class swap, not a class shuffle.
+  // Indexes 10+15 (both score 1), 11+16 (score 2), 12+17 (score 3).
+  const conflictPairs = [[10, 15], [11, 16], [12, 17]];
+  for (const [a, b] of conflictPairs) {
+    if (a < n && b < n) {
+      participants[a].conflict_member_ids.push(participants[b].participant_id);
+      participants[b].conflict_member_ids.push(participants[a].participant_id);
+    }
   }
   // Pin one participant to group 2.
   participants[7].pinned_group_no = 2;
@@ -297,6 +316,71 @@ function checkBalance() {
   }
   if (familyOk) console.log("  ✓ family split OK");
 
+  // Conflict-pair split check (mirror family check). Pairs are
+  // indexes 10+15, 11+16, 12+17 from buildSynthetic.
+  let conflictOk = true;
+  const conflictPairs = [[10, 15], [11, 16], [12, 17]];
+  for (const g of result.groups) {
+    const ids = new Set(g.members.map((m) => m.region_id));
+    for (const [a, b] of conflictPairs) {
+      if (a >= participants.length || b >= participants.length) continue;
+      const ra = participants[a].region_id;
+      const rb = participants[b].region_id;
+      if (ids.has(ra) && ids.has(rb)) {
+        console.log(`  ✗ conflict pair ${ra} + ${rb} both in group ${g.group_no}`);
+        conflictOk = false;
+      }
+    }
+  }
+  if (conflictOk) console.log("  ✓ conflict-pair split OK");
+
+  // Energy distribution check — no group should be >70% same-bucket
+  // unless its size is too small for spread to matter (≤2 members).
+  let energyOk = true;
+  for (const g of result.groups) {
+    const energyMembers = g.members
+      .map((m) => participants.find((p) => p.region_id === m.region_id))
+      .filter((p) => p && p.energy_profile);
+    if (energyMembers.length <= 2) continue;
+    const counts = { high: 0, medium: 0, quiet: 0 };
+    for (const m of energyMembers) counts[m.energy_profile] += 1;
+    const max = Math.max(counts.high, counts.medium, counts.quiet);
+    const ratio = max / energyMembers.length;
+    if (ratio > 0.7) {
+      console.log(
+        `  · group ${g.group_no} energy concentration: ${Math.round(ratio * 100)}% one bucket (${counts.high}H/${counts.medium}M/${counts.quiet}Q over ${energyMembers.length} energy-tagged)`,
+      );
+    }
+  }
+  if (energyOk) console.log("  ✓ energy distribution OK (no group >70% same bucket)");
+
+  // Language fluency check — when both en + cn speakers are present in
+  // a class, every group in that class should have ≥1 of each.
+  let langOk = true;
+  for (const cls of ["strategic", "key", "growth", "maintenance"]) {
+    const classGroups = result.groups.filter((g) => g.group_class === cls);
+    if (classGroups.length < 2) continue;
+    const classMembers = classGroups.flatMap((g) =>
+      g.members.map((m) => participants.find((p) => p.region_id === m.region_id)).filter(Boolean),
+    );
+    const speaksEn = (m) => m.language_fluency === "en" || m.language_fluency === "both";
+    const speaksCn = (m) => m.language_fluency === "cn" || m.language_fluency === "both";
+    const enPool = classMembers.some(speaksEn);
+    const cnPool = classMembers.some(speaksCn);
+    if (!enPool || !cnPool) continue; // monolingual class
+    for (const g of classGroups) {
+      const gMembers = g.members
+        .map((m) => participants.find((p) => p.region_id === m.region_id))
+        .filter(Boolean);
+      const hasEn = gMembers.some(speaksEn);
+      const hasCn = gMembers.some(speaksCn);
+      if (!hasEn || !hasCn) {
+        console.log(`  · group ${g.group_no} (${cls}) missing ${!hasEn ? "EN" : ""}${!hasEn && !hasCn ? "+" : ""}${!hasCn ? "CN" : ""} fluency`);
+      }
+    }
+  }
+  if (langOk) console.log("  ✓ language mix OK (each group covers en + cn when both present in class)");
+
   // Leader-tier pairing check
   let pairingOk = true;
   for (const g of result.groups) {
@@ -382,7 +466,7 @@ function checkBalance() {
   }
   if (gradeOk) console.log("  ✓ grade priority OK (highest-graded of each tier seeded first)");
 
-  return validation.valid && gradeOk;
+  return validation.valid && gradeOk && conflictOk;
 }
 
 // -----------------------------------------------------------------------------

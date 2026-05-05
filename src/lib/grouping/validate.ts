@@ -37,6 +37,7 @@ export type ValidationError = {
     | "group_too_small"
     | "group_too_large"
     | "family_in_same_group"
+    | "conflict_in_same_group"
     | "no_zu_zhang"
     | "multiple_zu_zhang"
     | "too_many_fu_zu_zhang"
@@ -144,6 +145,28 @@ export function validateGrouping(
           group_no: g.group_no,
           region_id: m.region_id ?? undefined,
           detail: `${m.region_id ?? m.participant_id} shares a family link with ${otherRegionId} in group ${g.group_no} — they must be in different groups`,
+        });
+      } else {
+        chainsInGroup.set(chain, m.region_id ?? m.participant_id);
+      }
+    }
+  }
+
+  // Rule 3b — conflict-pair split (migration 030). Same hardness as
+  // family — admin tagged these as must-not-sit-together.
+  const conflictChains = buildConflictChains(participants);
+  for (const g of groups) {
+    const chainsInGroup = new Map<string, string>();
+    for (const m of g.members) {
+      const chain = conflictChains.get(m.participant_id);
+      if (!chain) continue;
+      if (chainsInGroup.has(chain)) {
+        const otherRegionId = chainsInGroup.get(chain);
+        errors.push({
+          code: "conflict_in_same_group",
+          group_no: g.group_no,
+          region_id: m.region_id ?? undefined,
+          detail: `${m.region_id ?? m.participant_id} is conflict-flagged with ${otherRegionId} in group ${g.group_no} — they must be in different groups`,
         });
       } else {
         chainsInGroup.set(chain, m.region_id ?? m.participant_id);
@@ -307,6 +330,41 @@ function buildFamilyChains(
       adj.get(b)!.add(a);
     }
     for (const other of p.family_member_ids) {
+      if (other === p.participant_id) continue;
+      if (!adj.has(other)) adj.set(other, new Set());
+      adj.get(p.participant_id)!.add(other);
+      adj.get(other)!.add(p.participant_id);
+    }
+  }
+  const chains = new Map<string, string>();
+  for (const p of participants) {
+    if (chains.has(p.participant_id)) continue;
+    const root = p.participant_id;
+    const queue = [root];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (chains.has(cur)) continue;
+      chains.set(cur, root);
+      for (const neigh of adj.get(cur) ?? []) {
+        if (!chains.has(neigh)) queue.push(neigh);
+      }
+    }
+  }
+  const filtered = new Map<string, string>();
+  for (const [pid, chain] of chains) {
+    if ((adj.get(pid)?.size ?? 0) > 0) filtered.set(pid, chain);
+  }
+  return filtered;
+}
+
+// Mirror of buildFamilyChains for the conflict-pair adjacency.
+function buildConflictChains(
+  participants: GroupingParticipant[],
+): Map<string, string> {
+  const adj = new Map<string, Set<string>>();
+  for (const p of participants) {
+    if (!adj.has(p.participant_id)) adj.set(p.participant_id, new Set());
+    for (const other of p.conflict_member_ids) {
       if (other === p.participant_id) continue;
       if (!adj.has(other)) adj.set(other, new Set());
       adj.get(p.participant_id)!.add(other);

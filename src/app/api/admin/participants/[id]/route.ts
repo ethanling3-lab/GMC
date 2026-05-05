@@ -63,10 +63,10 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   // auth gate, and service role sidesteps any RLS constraints on updates.
   const service = createSupabaseServiceClient();
 
-  // Pull family_member_ids out of the column-level patch — it's
-  // reconciled against the participant_family_links join table below,
-  // not stored as a column. Everything else flows straight to UPDATE.
-  const { family_member_ids, ...columnPatch } = patch;
+  // Pull join-table fields out of the column-level patch — they're
+  // reconciled against their respective adjacency tables below, not
+  // stored as columns. Everything else flows straight to UPDATE.
+  const { family_member_ids, conflict_member_ids, ...columnPatch } = patch;
 
   let data: { id: string; updated_at: string } | null = null;
   if (Object.keys(columnPatch).length > 0) {
@@ -155,6 +155,67 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         entity_id: id,
         before: { family_member_ids: [...currentOthers] },
         after: { family_member_ids: [...desiredOthers] },
+        metadata: { added: toAdd, removed: toRemove },
+      });
+    }
+  }
+
+  // Conflict-pair reconciliation. Same shape as family-link block above
+  // — full desired set in, diff against current, apply the delta.
+  if (conflict_member_ids !== undefined) {
+    const desiredOthers = new Set(
+      conflict_member_ids.filter((other) => other !== id),
+    );
+
+    const { data: currentRows, error: curErr } = await service
+      .from("participant_conflict_pairs")
+      .select("a_id, b_id")
+      .or(`a_id.eq.${id},b_id.eq.${id}`);
+    if (curErr) {
+      return NextResponse.json({ error: curErr.message }, { status: 500 });
+    }
+    const currentOthers = new Set(
+      (currentRows ?? []).map((r) => (r.a_id === id ? r.b_id : r.a_id)),
+    );
+
+    const toAdd = [...desiredOthers].filter((o) => !currentOthers.has(o));
+    const toRemove = [...currentOthers].filter((o) => !desiredOthers.has(o));
+
+    if (toAdd.length > 0) {
+      const newRows = toAdd.map((other) => {
+        const a_id = id < other ? id : other;
+        const b_id = id < other ? other : id;
+        return { a_id, b_id, created_by: admin.id };
+      });
+      const { error: insErr } = await service
+        .from("participant_conflict_pairs")
+        .insert(newRows);
+      if (insErr) {
+        return NextResponse.json({ error: insErr.message }, { status: 500 });
+      }
+    }
+
+    for (const other of toRemove) {
+      const a_id = id < other ? id : other;
+      const b_id = id < other ? other : id;
+      const { error: delErr } = await service
+        .from("participant_conflict_pairs")
+        .delete()
+        .eq("a_id", a_id)
+        .eq("b_id", b_id);
+      if (delErr) {
+        return NextResponse.json({ error: delErr.message }, { status: 500 });
+      }
+    }
+
+    if (toAdd.length > 0 || toRemove.length > 0) {
+      await writeAuditLog({
+        actor_id: admin.id,
+        action: "participant.conflict_pairs_changed",
+        entity: "participants",
+        entity_id: id,
+        before: { conflict_member_ids: [...currentOthers] },
+        after: { conflict_member_ids: [...desiredOthers] },
         metadata: { added: toAdd, removed: toRemove },
       });
     }

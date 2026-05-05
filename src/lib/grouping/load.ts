@@ -33,6 +33,10 @@ export type GroupingLoadedInputs = {
   participants: GroupingParticipant[];
   zu_zhang_roster: GroupingZuZhang[];
   cushions: CushionShape[];
+  // Pass 2 — group_no values currently held by locked groups. Persist
+  // skips these when renumbering fresh groups so locked groups keep
+  // their identity across regenerate runs.
+  locked_group_nos: number[];
 };
 
 type EventRow = {
@@ -64,6 +68,8 @@ type EnrolmentRow = {
     zu_zhang_grade: number | null;
     zu_zhang_dimensions: GrowthDimension[] | null;
     zu_zhang_core_traits: ZuZhangCoreTrait[] | null;
+    energy_profile: "high" | "medium" | "quiet" | null;
+    language_fluency: "en" | "cn" | "both" | null;
   } | null;
 };
 
@@ -89,7 +95,8 @@ export async function loadGroupingInputs(
          overall_score, influence_score, financial_score, motivation_tag,
          is_old_student, family_of_participant_id, region,
          goal_dimensions, student_qualification,
-         zu_zhang_tier, zu_zhang_grade, zu_zhang_dimensions, zu_zhang_core_traits
+         zu_zhang_tier, zu_zhang_grade, zu_zhang_dimensions, zu_zhang_core_traits,
+         energy_profile, language_fluency
        )`,
     )
     .eq("event_id", eventId)
@@ -97,13 +104,44 @@ export async function loadGroupingInputs(
     .returns<EnrolmentRow[]>();
   if (enErr) return { error: enErr.message };
 
-  const enrolmentRows = (enrolments ?? []).filter((e) => e.participant);
+  let enrolmentRows = (enrolments ?? []).filter((e) => e.participant);
+
+  // Pass 2 — locked groups: read their assignments so we can exclude
+  // those participants from the to-be-assigned pool AND keep their
+  // group_no values reserved for the persist step.
+  const { data: lockedGroups, error: lgErr } = await supabase
+    .from("event_groups")
+    .select("id, group_no")
+    .eq("event_id", eventId)
+    .eq("locked", true)
+    .returns<Array<{ id: string; group_no: number }>>();
+  if (lgErr) return { error: lgErr.message };
+  const lockedGroupIds = (lockedGroups ?? []).map((g) => g.id);
+  const lockedGroupNos = (lockedGroups ?? [])
+    .map((g) => g.group_no)
+    .sort((a, b) => a - b);
+  const lockedPids = new Set<string>();
+  if (lockedGroupIds.length > 0) {
+    const { data: lockedAssigns, error: laErr } = await supabase
+      .from("event_seat_assignments")
+      .select("participant_id")
+      .in("group_id", lockedGroupIds)
+      .returns<Array<{ participant_id: string }>>();
+    if (laErr) return { error: laErr.message };
+    for (const a of lockedAssigns ?? []) lockedPids.add(a.participant_id);
+  }
+  if (lockedPids.size > 0) {
+    enrolmentRows = enrolmentRows.filter(
+      (e) => !lockedPids.has(e.participant!.id),
+    );
+  }
 
   // Pull the family-link join table for everyone in this event so the
   // algorithm sees the full multi-edge graph. Filter to event members
   // server-side via two `or` clauses (a_id or b_id in the set).
   const eventPids = enrolmentRows.map((e) => e.participant!.id);
   const familyByPid = new Map<string, Set<string>>();
+  const conflictByPid = new Map<string, Set<string>>();
   if (eventPids.length > 0) {
     const inList = `(${eventPids.join(",")})`;
     const { data: links, error: linkErr } = await supabase
@@ -116,6 +154,23 @@ export async function loadGroupingInputs(
       if (!familyByPid.has(l.b_id)) familyByPid.set(l.b_id, new Set());
       familyByPid.get(l.a_id)!.add(l.b_id);
       familyByPid.get(l.b_id)!.add(l.a_id);
+    }
+
+    // Same shape for conflict pairs (migration 030). Hard split — same
+    // hardness as family. Note pairs that are conflict-flagged AND
+    // family-linked (rare but possible — bad-blood relatives) get both
+    // adjacencies; the algorithm enforces both rules so the effect is
+    // the same regardless.
+    const { data: conflicts, error: confErr } = await supabase
+      .from("participant_conflict_pairs")
+      .select("a_id, b_id")
+      .or(`a_id.in.${inList},b_id.in.${inList}`);
+    if (confErr) return { error: confErr.message };
+    for (const l of conflicts ?? []) {
+      if (!conflictByPid.has(l.a_id)) conflictByPid.set(l.a_id, new Set());
+      if (!conflictByPid.has(l.b_id)) conflictByPid.set(l.b_id, new Set());
+      conflictByPid.get(l.a_id)!.add(l.b_id);
+      conflictByPid.get(l.b_id)!.add(l.a_id);
     }
   }
 
@@ -133,6 +188,9 @@ export async function loadGroupingInputs(
     pinned_group_no: e.pinned_group_no,
     goal_dimensions: e.participant!.goal_dimensions ?? [],
     student_qualification_override: e.participant!.student_qualification,
+    energy_profile: e.participant!.energy_profile,
+    language_fluency: e.participant!.language_fluency,
+    conflict_member_ids: Array.from(conflictByPid.get(e.participant!.id) ?? []),
   }));
 
   // Curated 组长 roster — only enrolments admin has flagged. Effective
@@ -185,5 +243,6 @@ export async function loadGroupingInputs(
     participants,
     zu_zhang_roster,
     cushions,
+    locked_group_nos: lockedGroupNos,
   };
 }

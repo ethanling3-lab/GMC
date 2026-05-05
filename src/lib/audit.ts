@@ -65,6 +65,10 @@ export type AuditAction =
   | "groups.exported_pdf"
   | "groups.exported_png"
   | "groups.exported_xlsx"
+  | "groups.name_changed"
+  | "groups.created"
+  | "groups.deleted"
+  | "groups.lock_changed"
   | "floor_plan.shape_added"
   | "floor_plan.shape_moved"
   | "floor_plan.shape_deleted"
@@ -87,7 +91,10 @@ export type AuditAction =
   | "enrollment.zu_zhang_curated"
   | "event.zu_zhang_roster_changed"
   | "participant.family_links_changed"
-  | "participant.referrer_changed";
+  | "participant.referrer_changed"
+  | "participant.energy_profile_changed"
+  | "participant.language_fluency_changed"
+  | "participant.conflict_pairs_changed";
 
 export type WriteAuditLog = {
   actor_id: string | null;

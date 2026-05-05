@@ -122,6 +122,15 @@ export type GroupingParticipant = {
   goal_dimensions: GrowthDimension[];
   // Override only — null means use computed max(fin, inf) → label.
   student_qualification_override: StudentQualification | null;
+
+  // M6.4 grouping signals (migration 030):
+  //  energy_profile: balance H/M/Q across groups (soft).
+  //  language_fluency: each group needs ≥1 of each language present
+  //    in the wider enrolment (soft).
+  //  conflict_member_ids: hard split — same rules as family.
+  energy_profile: "high" | "medium" | "quiet" | null;
+  language_fluency: "en" | "cn" | "both" | null;
+  conflict_member_ids: string[];
 };
 
 // One curated 组长 in the per-event roster. Algorithm seeds groups

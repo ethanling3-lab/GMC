@@ -65,6 +65,8 @@ type Participant = {
   times_led_groups: number;
   programme_tier: ProgrammeTier | null;
   is_old_student: boolean;
+  energy_profile: "high" | "medium" | "quiet" | null;
+  language_fluency: "en" | "cn" | "both" | null;
   family_of_participant_id: string | null;
   referrer_id: string | null;
   personality: string | null;
@@ -154,33 +156,43 @@ export default async function ParticipantDetailPage({ params }: Props) {
   const p = data as Participant;
 
   // Fetch related entities + admin options in parallel
-  const [familyLinksRes, referrerRes, referredRes, regionLeadsRes, csRes] =
-    await Promise.all([
-      supabase
-        .from("participant_family_links")
-        .select("a_id, b_id")
-        .or(`a_id.eq.${p.id},b_id.eq.${p.id}`),
-      p.referrer_id
-        ? supabase
-            .from("participants")
-            .select("id, region_id, name_en, name_cn")
-            .eq("id", p.referrer_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-      supabase
-        .from("participants")
-        .select("id, region_id, name_en, name_cn")
-        .eq("referrer_id", p.id)
-        .limit(10),
-      supabase
-        .from("admins")
-        .select("id, name_en, name_cn, role, region")
-        .in("role", ["regional_lead", "super_admin"]),
-      supabase
-        .from("admins")
-        .select("id, name_en, name_cn, role, region")
-        .in("role", ["customer_service", "super_admin"]),
-    ]);
+  const [
+    familyLinksRes,
+    conflictPairsRes,
+    referrerRes,
+    referredRes,
+    regionLeadsRes,
+    csRes,
+  ] = await Promise.all([
+    supabase
+      .from("participant_family_links")
+      .select("a_id, b_id")
+      .or(`a_id.eq.${p.id},b_id.eq.${p.id}`),
+    supabase
+      .from("participant_conflict_pairs")
+      .select("a_id, b_id")
+      .or(`a_id.eq.${p.id},b_id.eq.${p.id}`),
+    p.referrer_id
+      ? supabase
+          .from("participants")
+          .select("id, region_id, name_en, name_cn")
+          .eq("id", p.referrer_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase
+      .from("participants")
+      .select("id, region_id, name_en, name_cn")
+      .eq("referrer_id", p.id)
+      .limit(10),
+    supabase
+      .from("admins")
+      .select("id, name_en, name_cn, role, region")
+      .in("role", ["regional_lead", "super_admin"]),
+    supabase
+      .from("admins")
+      .select("id, name_en, name_cn, role, region")
+      .in("role", ["customer_service", "super_admin"]),
+  ]);
 
   // Resolve the family-link partner IDs into full participant rows.
   const partnerIds = new Set<string>();
@@ -202,6 +214,23 @@ export default async function ParticipantDetailPage({ params }: Props) {
       .select("id, region_id, name_en, name_cn")
       .in("id", Array.from(partnerIds));
     familyMembers = (rows ?? []) as RelatedParticipant[];
+  }
+
+  // Resolve conflict-pair partner IDs (mirror of family resolution).
+  const conflictPartnerIds = new Set<string>();
+  for (const row of (conflictPairsRes.data ?? []) as Array<{
+    a_id: string;
+    b_id: string;
+  }>) {
+    conflictPartnerIds.add(row.a_id === p.id ? row.b_id : row.a_id);
+  }
+  let conflictPartners: RelatedParticipant[] = [];
+  if (conflictPartnerIds.size > 0) {
+    const { data: rows } = await supabase
+      .from("participants")
+      .select("id, region_id, name_en, name_cn")
+      .in("id", Array.from(conflictPartnerIds));
+    conflictPartners = (rows ?? []) as RelatedParticipant[];
   }
 
   const referrer = referrerRes.data as RelatedParticipant | null;
@@ -372,6 +401,9 @@ export default async function ParticipantDetailPage({ params }: Props) {
               face_type: p.face_type,
               parameter_framework: p.parameter_framework,
               goal_dimensions: p.goal_dimensions ?? [],
+              energy_profile: p.energy_profile ?? null,
+              language_fluency: p.language_fluency ?? null,
+              conflict_partners: conflictPartners,
             }}
           />
 

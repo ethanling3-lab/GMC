@@ -5,10 +5,16 @@ import type { ReactNode } from "react";
 export function LabelRow({
   label,
   labelZh,
+  trailing,
+  hint,
   children,
 }: {
   label: string;
   labelZh?: string;
+  /** Optional inline trailing element (e.g. a "feeds groupBuilder" chip). */
+  trailing?: ReactNode;
+  /** Optional helper text displayed below the input. */
+  hint?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -20,8 +26,14 @@ export function LabelRow({
             {labelZh}
           </span>
         ) : null}
+        {trailing}
       </span>
       {children}
+      {hint ? (
+        <span className="text-[11px] text-[var(--ink-faint)] normal-case tracking-normal">
+          {hint}
+        </span>
+      ) : null}
     </label>
   );
 }

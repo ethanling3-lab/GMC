@@ -53,6 +53,9 @@ export const ZU_ZHANG_CORE_TRAITS = [
   "attention_to_detail",
 ] as const;
 
+export const ENERGY_PROFILES = ["high", "medium", "quiet"] as const;
+export const LANGUAGE_FLUENCIES = ["en", "cn", "both"] as const;
+
 const optionalString = z
   .union([z.string().max(2000), z.null()])
   .optional()
@@ -148,6 +151,15 @@ export const ParticipantUpdateSchema = z
     referrer_name: optionalString,
     referrer_contact: optionalString,
 
+    // M6.4 grouping signals (migration 030).
+    energy_profile: z.union([z.enum(ENERGY_PROFILES), z.null()]).optional(),
+    language_fluency: z
+      .union([z.enum(LANGUAGE_FLUENCIES), z.null()])
+      .optional(),
+    // Conflict pairs — same shape as family_member_ids: full desired
+    // set; PATCH route reconciles vs participant_conflict_pairs.
+    conflict_member_ids: z.array(z.string().uuid()).max(50).optional(),
+
     status: z.enum(STATUSES).optional(),
   })
   .strict();
@@ -194,4 +206,7 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "referrer_id",
   "referrer_name",
   "referrer_contact",
+  "energy_profile",
+  "language_fluency",
+  "conflict_member_ids",
 ];

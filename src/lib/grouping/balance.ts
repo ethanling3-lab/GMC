@@ -164,6 +164,9 @@ export function balance(
         pinned_group_no: null,
         goal_dimensions: z.dimensions,
         student_qualification_override: null,
+        energy_profile: null,
+        language_fluency: null,
+        conflict_member_ids: [],
       });
     }
   }
@@ -250,6 +253,9 @@ export function balance(
 
   // Phase A + B + E within each class.
   const familyChains = buildFamilyChains(participants);
+  // Migration 030 — conflict pairs. Same hardness as family; built as a
+  // parallel chains map so the same swap logic can repair violations.
+  const conflictChains = buildConflictChains(participants);
   for (const cls of CLASS_ORDER) {
     const classGroups = groups.filter((g) => g.group_class === cls);
     if (classGroups.length === 0) continue;
@@ -276,6 +282,7 @@ export function balance(
         p,
         classGroups,
         familyChains,
+        conflictChains,
         config.group_size_max,
       );
       targetGroup.members.push(p);
@@ -283,14 +290,25 @@ export function balance(
 
     // Phase B — priority spread (特级 + 重点 only).
     if (cls === "strategic" || cls === "key") {
-      rebalancePriority(classGroups, familyChains);
+      rebalancePriority(classGroups, familyChains, conflictChains);
     }
 
     // Phase C — family split repair within class.
-    repairFamilySplit(classGroups, familyChains);
+    repairFamilySplit(classGroups, familyChains, conflictChains);
+
+    // Phase C2 — conflict-pair split repair (same hardness, separate
+    // adjacency). Runs after family so the family swap doesn't undo a
+    // conflict swap.
+    repairConflictSplit(classGroups, familyChains, conflictChains);
 
     // Phase E — old-student mix balance.
-    repairOldStudentMix(classGroups, familyChains);
+    repairOldStudentMix(classGroups, familyChains, conflictChains);
+
+    // Phase F — energy_profile distribution (soft).
+    repairEnergyDistribution(classGroups, familyChains, conflictChains);
+
+    // Phase G — language fluency mix (soft).
+    repairLanguageMix(classGroups, familyChains, conflictChains);
   }
 
   // Step 6 — assign roles + generate rationale.
@@ -491,16 +509,28 @@ function pickGroupForParticipant(
   p: GroupingParticipant,
   classGroups: WorkingGroup[],
   familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
   groupSizeMax: number,
 ): WorkingGroup {
   const primaryGoal = p.goal_dimensions[0] ?? null;
-  const pChain = familyChains.get(p.participant_id);
+  const pFamilyChain = familyChains.get(p.participant_id);
+  const pConflictChain = conflictChains.get(p.participant_id);
 
-  const familySafe = (g: WorkingGroup): boolean => {
-    if (!pChain) return true;
-    return !g.members.some(
-      (m) => familyChains.get(m.participant_id) === pChain,
-    );
+  // Hard-safe: respects BOTH family-split and conflict-pair-split rules.
+  const hardSafe = (g: WorkingGroup): boolean => {
+    if (pFamilyChain) {
+      const familyHit = g.members.some(
+        (m) => familyChains.get(m.participant_id) === pFamilyChain,
+      );
+      if (familyHit) return false;
+    }
+    if (pConflictChain) {
+      const conflictHit = g.members.some(
+        (m) => conflictChains.get(m.participant_id) === pConflictChain,
+      );
+      if (conflictHit) return false;
+    }
+    return true;
   };
   // Account for the seeded leader pair when checking capacity — those
   // already occupy 1-2 seats per group before any regular member lands.
@@ -511,7 +541,7 @@ function pickGroupForParticipant(
 
   if (primaryGoal) {
     const mainMatch = classGroups
-      .filter((g) => familySafe(g) && hasCapacity(g))
+      .filter((g) => hardSafe(g) && hasCapacity(g))
       .filter(
         (g) =>
           g.main_zu_zhang
@@ -521,7 +551,7 @@ function pickGroupForParticipant(
     if (mainMatch) return mainMatch;
 
     const auxMatch = classGroups
-      .filter((g) => familySafe(g) && hasCapacity(g))
+      .filter((g) => hardSafe(g) && hasCapacity(g))
       .filter(
         (g) =>
           g.auxiliary_zu_zhang
@@ -531,10 +561,10 @@ function pickGroupForParticipant(
     if (auxMatch) return auxMatch;
   }
 
-  const familySafeGroup = classGroups
-    .filter((g) => familySafe(g) && hasCapacity(g))
+  const safeGroup = classGroups
+    .filter((g) => hardSafe(g) && hasCapacity(g))
     .sort((a, b) => a.members.length - b.members.length)[0];
-  if (familySafeGroup) return familySafeGroup;
+  if (safeGroup) return safeGroup;
 
   const anyWithCapacity = classGroups
     .filter((g) => hasCapacity(g))
@@ -554,6 +584,7 @@ function pickGroupForParticipant(
 function rebalancePriority(
   classGroups: WorkingGroup[],
   familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
 ): void {
   const priorityMembers = classGroups
     .flatMap((g) => g.members.filter((m) => isPriority(m)).map((m) => ({ g, m })));
@@ -588,8 +619,8 @@ function rebalancePriority(
           (m) => !isPriority(m) && m.pinned_group_no == null,
         );
         if (!moveIn) continue;
-        if (createsFamilyConflict(moveOut, c, familyChains)) continue;
-        if (createsFamilyConflict(moveIn, donor, familyChains)) continue;
+        if (createsHardConflict(moveOut, c, familyChains, conflictChains)) continue;
+        if (createsHardConflict(moveIn, donor, familyChains, conflictChains)) continue;
         swapMembers(donor, c, moveOut, moveIn);
         swaps += 1;
         stable = false;
@@ -605,6 +636,7 @@ function rebalancePriority(
 function repairFamilySplit(
   classGroups: WorkingGroup[],
   familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
 ): void {
   let stable = false;
   let swaps = 0;
@@ -623,12 +655,61 @@ function repairFamilySplit(
         seen.set(chain, m);
       }
       if (!conflict) continue;
-      // Find a swap target in another group within the same class.
-      const target = findFamilySafeSwapTarget(
+      // Find a swap target in another group within the same class. The
+      // swap target must be hard-safe in BOTH directions so the swap
+      // doesn't fix a family violation while creating a conflict-pair
+      // one (or vice versa).
+      const target = findHardSafeSwapTarget(
         classGroups,
         g.group_no,
         conflict,
         familyChains,
+        conflictChains,
+        "family",
+      );
+      if (!target) continue;
+      const targetGroup = classGroups.find((cg) =>
+        cg.members.some((m) => m.participant_id === target.participant_id),
+      )!;
+      swapMembers(g, targetGroup, conflict, target);
+      swaps += 1;
+      stable = false;
+      break;
+    }
+  }
+}
+
+// Phase C2 — repair conflict-pair violations within a class. Mirrors
+// repairFamilySplit but scans for conflict-chain collisions.
+function repairConflictSplit(
+  classGroups: WorkingGroup[],
+  familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
+): void {
+  let stable = false;
+  let swaps = 0;
+  while (!stable && swaps < 100) {
+    stable = true;
+    for (const g of classGroups) {
+      const seen = new Map<string, GroupingParticipant>();
+      let conflict: GroupingParticipant | null = null;
+      for (const m of g.members) {
+        const chain = conflictChains.get(m.participant_id);
+        if (!chain) continue;
+        if (seen.has(chain)) {
+          conflict = m;
+          break;
+        }
+        seen.set(chain, m);
+      }
+      if (!conflict) continue;
+      const target = findHardSafeSwapTarget(
+        classGroups,
+        g.group_no,
+        conflict,
+        familyChains,
+        conflictChains,
+        "conflict",
       );
       if (!target) continue;
       const targetGroup = classGroups.find((cg) =>
@@ -647,6 +728,7 @@ function repairFamilySplit(
 function repairOldStudentMix(
   classGroups: WorkingGroup[],
   familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
 ): void {
   for (const g of classGroups) {
     const hasOs = g.members.some((m) => m.is_old_student);
@@ -664,65 +746,245 @@ function repairOldStudentMix(
       (m) =>
         m.is_old_student
         && m.pinned_group_no == null
-        && !createsFamilyConflict(m, g, familyChains),
+        && !createsHardConflict(m, g, familyChains, conflictChains),
     );
     if (!osPick) continue;
     const swapOut = g.members.find(
       (m) =>
         !m.is_old_student
         && m.pinned_group_no == null
-        && !createsFamilyConflict(m, donor.c, familyChains),
+        && !createsHardConflict(m, donor.c, familyChains, conflictChains),
     );
     if (!swapOut) continue;
     swapMembers(g, donor.c, osPick, swapOut);
   }
 }
 
-function findFamilySafeSwapTarget(
+// Phase F — soft balance of energy_profile (high/medium/quiet) across
+// groups within a class. Mirrors the OS-mix idea: if a group has too
+// many of one bucket vs. the per-group average, swap with a sibling
+// group that has the opposite imbalance. Bounded iterations; no
+// validation error if it can't converge — soft constraint.
+function repairEnergyDistribution(
+  classGroups: WorkingGroup[],
+  familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
+): void {
+  if (classGroups.length < 2) return;
+  const k = classGroups.length;
+  type Bucket = "high" | "medium" | "quiet";
+  const buckets: Bucket[] = ["high", "medium", "quiet"];
+
+  // Per-class target: ceil(global_count / k) for each bucket.
+  const totals: Record<Bucket, number> = { high: 0, medium: 0, quiet: 0 };
+  for (const g of classGroups) {
+    for (const m of g.members) {
+      if (m.energy_profile) totals[m.energy_profile] += 1;
+    }
+  }
+  const cap: Record<Bucket, number> = {
+    high: Math.ceil(totals.high / k),
+    medium: Math.ceil(totals.medium / k),
+    quiet: Math.ceil(totals.quiet / k),
+  };
+
+  let stable = false;
+  let swaps = 0;
+  while (!stable && swaps < 30) {
+    stable = true;
+    for (const bucket of buckets) {
+      for (const donor of classGroups) {
+        const donorCount = donor.members.filter(
+          (m) => m.energy_profile === bucket,
+        ).length;
+        if (donorCount <= cap[bucket]) continue;
+        const receiver = classGroups
+          .filter((c) => c.group_no !== donor.group_no)
+          .map((c) => ({
+            c,
+            count: c.members.filter((m) => m.energy_profile === bucket).length,
+          }))
+          .filter((x) => x.count < cap[bucket])
+          .sort((a, b) => a.count - b.count)[0];
+        if (!receiver) continue;
+        const moveOut = donor.members.find(
+          (m) => m.energy_profile === bucket && m.pinned_group_no == null,
+        );
+        if (!moveOut) continue;
+        const moveIn = receiver.c.members.find(
+          (m) => m.energy_profile !== bucket && m.pinned_group_no == null,
+        );
+        if (!moveIn) continue;
+        if (createsHardConflict(moveOut, receiver.c, familyChains, conflictChains))
+          continue;
+        if (createsHardConflict(moveIn, donor, familyChains, conflictChains))
+          continue;
+        swapMembers(donor, receiver.c, moveOut, moveIn);
+        swaps += 1;
+        stable = false;
+      }
+    }
+  }
+}
+
+// Phase G — soft language fluency mix. For each group within a class,
+// guarantee ≥1 person who can converse in EACH language present in the
+// wider class enrolment. "both" counts toward both languages.
+//
+// Skipped when the class has only one language present (no mix to
+// enforce).
+function repairLanguageMix(
+  classGroups: WorkingGroup[],
+  familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
+): void {
+  if (classGroups.length < 2) return;
+  // Snapshot which languages are present anywhere in the class.
+  const present = { en: false, cn: false };
+  for (const g of classGroups) {
+    for (const m of g.members) {
+      if (m.language_fluency === "en" || m.language_fluency === "both")
+        present.en = true;
+      if (m.language_fluency === "cn" || m.language_fluency === "both")
+        present.cn = true;
+    }
+  }
+  if (!present.en || !present.cn) return; // monolingual class — skip
+
+  const speaksEn = (m: GroupingParticipant) =>
+    m.language_fluency === "en" || m.language_fluency === "both";
+  const speaksCn = (m: GroupingParticipant) =>
+    m.language_fluency === "cn" || m.language_fluency === "both";
+
+  const groupHasEn = (g: WorkingGroup) => g.members.some(speaksEn);
+  const groupHasCn = (g: WorkingGroup) => g.members.some(speaksCn);
+
+  let stable = false;
+  let swaps = 0;
+  while (!stable && swaps < 30) {
+    stable = true;
+    for (const g of classGroups) {
+      const needsLang: "en" | "cn" | null = !groupHasEn(g)
+        ? "en"
+        : !groupHasCn(g)
+          ? "cn"
+          : null;
+      if (!needsLang) continue;
+      // Find a donor group with surplus speakers of `needsLang`.
+      const donorList = classGroups
+        .filter((c) => c.group_no !== g.group_no)
+        .map((c) => ({
+          c,
+          surplus: c.members.filter((m) =>
+            needsLang === "en" ? speaksEn(m) : speaksCn(m),
+          ).length,
+        }))
+        .filter((x) => x.surplus >= 2)
+        .sort((a, b) => b.surplus - a.surplus);
+      let swapped = false;
+      for (const { c: donor } of donorList) {
+        // Move someone fluent in needsLang OUT of donor INTO g.
+        const moveOut = donor.members.find(
+          (m) =>
+            (needsLang === "en" ? speaksEn(m) : speaksCn(m))
+            && m.pinned_group_no == null,
+        );
+        if (!moveOut) continue;
+        // And move someone NOT-fluent-in-needsLang from g into donor.
+        // (any member is fine; we just want to keep group sizes equal.)
+        const moveIn = g.members.find(
+          (m) =>
+            !(needsLang === "en" ? speaksEn(m) : speaksCn(m))
+            && m.pinned_group_no == null,
+        );
+        if (!moveIn) continue;
+        if (createsHardConflict(moveOut, g, familyChains, conflictChains)) continue;
+        if (createsHardConflict(moveIn, donor, familyChains, conflictChains)) continue;
+        swapMembers(g, donor, moveIn, moveOut);
+        swaps += 1;
+        stable = false;
+        swapped = true;
+        break;
+      }
+      if (swapped) continue;
+    }
+  }
+}
+
+// Find a swap partner in a sibling group that respects BOTH family and
+// conflict-pair constraints in BOTH directions. The `repairing` arg
+// signals which constraint we're prioritising fixing — but all rules
+// must hold afterwards regardless.
+function findHardSafeSwapTarget(
   classGroups: WorkingGroup[],
   excludeGroupNo: number,
   movingOut: GroupingParticipant,
   familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
+  _repairing: "family" | "conflict",
 ): GroupingParticipant | null {
-  const movingChain = familyChains.get(movingOut.participant_id);
+  const movingFamily = familyChains.get(movingOut.participant_id);
+  const movingConflict = conflictChains.get(movingOut.participant_id);
+  const sourceGroup = classGroups.find((cg) => cg.group_no === excludeGroupNo)!;
   const candidates = classGroups
     .filter((g) => g.group_no !== excludeGroupNo)
     .sort((a, b) => b.members.length - a.members.length);
   for (const g of candidates) {
     for (const m of g.members) {
       if (m.pinned_group_no != null) continue;
-      if (movingChain && familyChains.get(m.participant_id) === movingChain) {
-        continue;
-      }
-      const otherChain = familyChains.get(m.participant_id);
-      if (otherChain) {
-        const otherInOldGroup = classGroups
-          .find((cg) => cg.group_no === excludeGroupNo)!
-          .members.some(
-            (cur) =>
-              cur.participant_id !== movingOut.participant_id
-              && familyChains.get(cur.participant_id) === otherChain,
-          );
-        if (otherInOldGroup) continue;
-      }
+      // movingOut going INTO g: must not collide on either chain with g's
+      // existing members.
+      const mFamily = familyChains.get(m.participant_id);
+      const mConflict = conflictChains.get(m.participant_id);
+      if (movingFamily && g.members.some(
+        (other) =>
+          other.participant_id !== m.participant_id
+          && familyChains.get(other.participant_id) === movingFamily,
+      )) continue;
+      if (movingConflict && g.members.some(
+        (other) =>
+          other.participant_id !== m.participant_id
+          && conflictChains.get(other.participant_id) === movingConflict,
+      )) continue;
+      // m going INTO sourceGroup: must not collide with anyone there
+      // (excluding movingOut who's leaving).
+      if (mFamily && sourceGroup.members.some(
+        (cur) =>
+          cur.participant_id !== movingOut.participant_id
+          && familyChains.get(cur.participant_id) === mFamily,
+      )) continue;
+      if (mConflict && sourceGroup.members.some(
+        (cur) =>
+          cur.participant_id !== movingOut.participant_id
+          && conflictChains.get(cur.participant_id) === mConflict,
+      )) continue;
       return m;
     }
   }
   return null;
 }
 
-function createsFamilyConflict(
+// Returns true if dropping `candidate` into `group` would put two
+// members of the same family-chain OR conflict-chain together.
+function createsHardConflict(
   candidate: GroupingParticipant,
   group: WorkingGroup,
   familyChains: Map<string, string>,
+  conflictChains: Map<string, string>,
 ): boolean {
-  const chain = familyChains.get(candidate.participant_id);
-  if (!chain) return false;
-  return group.members.some(
+  const familyChain = familyChains.get(candidate.participant_id);
+  if (familyChain && group.members.some(
     (m) =>
       m.participant_id !== candidate.participant_id
-      && familyChains.get(m.participant_id) === chain,
-  );
+      && familyChains.get(m.participant_id) === familyChain,
+  )) return true;
+  const conflictChain = conflictChains.get(candidate.participant_id);
+  if (conflictChain && group.members.some(
+    (m) =>
+      m.participant_id !== candidate.participant_id
+      && conflictChains.get(m.participant_id) === conflictChain,
+  )) return true;
+  return false;
 }
 
 function swapMembers(
@@ -759,6 +1021,42 @@ function buildFamilyChains(
       adj.get(b)!.add(a);
     }
     for (const other of p.family_member_ids) {
+      if (other === p.participant_id) continue;
+      if (!adj.has(other)) adj.set(other, new Set());
+      adj.get(p.participant_id)!.add(other);
+      adj.get(other)!.add(p.participant_id);
+    }
+  }
+  const chains = new Map<string, string>();
+  for (const p of participants) {
+    if (chains.has(p.participant_id)) continue;
+    const root = p.participant_id;
+    const queue = [root];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (chains.has(cur)) continue;
+      chains.set(cur, root);
+      for (const neigh of adj.get(cur) ?? []) {
+        if (!chains.has(neigh)) queue.push(neigh);
+      }
+    }
+  }
+  const filtered = new Map<string, string>();
+  for (const [pid, chain] of chains) {
+    if ((adj.get(pid)?.size ?? 0) > 0) filtered.set(pid, chain);
+  }
+  return filtered;
+}
+
+// Same shape as buildFamilyChains but using the conflict_member_ids
+// adjacency. Connected components → must split. Mirror of family logic.
+function buildConflictChains(
+  participants: GroupingParticipant[],
+): Map<string, string> {
+  const adj = new Map<string, Set<string>>();
+  for (const p of participants) {
+    if (!adj.has(p.participant_id)) adj.set(p.participant_id, new Set());
+    for (const other of p.conflict_member_ids) {
       if (other === p.participant_id) continue;
       if (!adj.has(other)) adj.set(other, new Set());
       adj.get(p.participant_id)!.add(other);

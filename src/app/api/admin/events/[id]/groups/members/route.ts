@@ -52,11 +52,27 @@ const ClassBody = z.object({
   group_class: z.enum(["strategic", "key", "growth", "maintenance"]),
 });
 
+const NameBody = z.object({
+  action: z.literal("set_name"),
+  group_id: z.string().uuid(),
+  // Empty string = clear (revert to auto-format). Trimmed.
+  name_en: z.string().trim().max(120),
+  name_cn: z.string().trim().max(120),
+});
+
+const LockedBody = z.object({
+  action: z.literal("set_locked"),
+  group_id: z.string().uuid(),
+  locked: z.boolean(),
+});
+
 const Body = z.discriminatedUnion("action", [
   MoveBody,
   RoleBody,
   RationaleBody,
   ClassBody,
+  NameBody,
+  LockedBody,
 ]);
 
 export async function PATCH(req: Request, { params }: RouteCtx) {
@@ -110,6 +126,66 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         rationale_en: body.rationale_en,
         rationale_cn: body.rationale_cn,
       },
+      metadata: { event_id: eventId },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "set_name") {
+    const nameEn = body.name_en.length > 0 ? body.name_en : null;
+    const nameCn = body.name_cn.length > 0 ? body.name_cn : null;
+    const { data: before } = await service
+      .from("event_groups")
+      .select("id, event_id, name_en, name_cn")
+      .eq("id", body.group_id)
+      .maybeSingle();
+    if (!before || before.event_id !== eventId) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    if (before.name_en === nameEn && before.name_cn === nameCn) {
+      return NextResponse.json({ ok: true, unchanged: true });
+    }
+    const { error: updErr } = await service
+      .from("event_groups")
+      .update({ name_en: nameEn, name_cn: nameCn })
+      .eq("id", body.group_id);
+    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.name_changed",
+      entity: "event_groups",
+      entity_id: body.group_id,
+      before: { name_en: before.name_en, name_cn: before.name_cn },
+      after: { name_en: nameEn, name_cn: nameCn },
+      metadata: { event_id: eventId },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "set_locked") {
+    const { data: before } = await service
+      .from("event_groups")
+      .select("id, event_id, locked")
+      .eq("id", body.group_id)
+      .maybeSingle();
+    if (!before || before.event_id !== eventId) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    if (before.locked === body.locked) {
+      return NextResponse.json({ ok: true, unchanged: true });
+    }
+    const { error: updErr } = await service
+      .from("event_groups")
+      .update({ locked: body.locked })
+      .eq("id", body.group_id);
+    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.lock_changed",
+      entity: "event_groups",
+      entity_id: body.group_id,
+      before: { locked: before.locked },
+      after: { locked: body.locked },
       metadata: { event_id: eventId },
     });
     return NextResponse.json({ ok: true });
@@ -213,10 +289,27 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "source_not_found" }, { status: 404 });
   }
 
+  // Block drags from locked source groups. Lock is a hard fence — admin
+  // must unlock first.
+  const { data: sourceGroup } = await service
+    .from("event_groups")
+    .select("id, group_no, locked")
+    .eq("id", source.group_id)
+    .maybeSingle();
+  if (sourceGroup?.locked) {
+    return NextResponse.json(
+      {
+        error: "source_group_locked",
+        detail: `Group ${sourceGroup.group_no} is locked. Unlock it before moving members out.`,
+      },
+      { status: 409 },
+    );
+  }
+
   // Resolve target group_id from the requested group_no.
   const { data: targetGroup } = await service
     .from("event_groups")
-    .select("id, group_no")
+    .select("id, group_no, locked")
     .eq("event_id", eventId)
     .eq("group_no", body.to_group_no)
     .maybeSingle();
@@ -225,6 +318,15 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   }
   if (targetGroup.id === source.group_id) {
     return NextResponse.json({ ok: true, unchanged: true });
+  }
+  if (targetGroup.locked) {
+    return NextResponse.json(
+      {
+        error: "target_group_locked",
+        detail: `Group ${targetGroup.group_no} is locked. Unlock it before moving members in.`,
+      },
+      { status: 409 },
+    );
   }
 
   // Pull both groups' current memberships + the moving participant's family.

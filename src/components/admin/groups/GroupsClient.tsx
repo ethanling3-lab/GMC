@@ -29,6 +29,7 @@ import type {
   GrowthDimension,
   RosterShortfall,
   SeatingMode,
+  StudentQualification,
   ZuZhangTier,
 } from "@/lib/grouping/types";
 
@@ -62,6 +63,14 @@ export function GroupsClient(props: Props) {
   const [openMemberId, setOpenMemberId] = useState<string | null>(null);
   // Single open detail row across the page (mirrors role popover).
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
+  // dnd-kit's useDraggable injects `aria-describedby="DndDescribedBy-N"`
+  // with an auto-incrementing N; SSR + hydrate generate different N
+  // values which throws a hydration mismatch error. Defer the dnd-aware
+  // grid render until after mount so the IDs only generate client-side.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!openMemberId) return;
@@ -99,6 +108,156 @@ export function GroupsClient(props: Props) {
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? "Class update failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetName(
+    groupId: string,
+    nameEn: string,
+    nameCn: string,
+  ) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/members`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "set_name",
+            group_id: groupId,
+            name_en: nameEn,
+            name_cn: nameCn,
+          }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Name update failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetLocked(groupId: string, locked: boolean) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/members`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "set_locked",
+            group_id: groupId,
+            locked,
+          }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Lock update failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAddGroup(groupClass: GroupClass) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ group_class: groupClass }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Add group failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteGroup(groupId: string, groupNo: number) {
+    if (!window.confirm(`Delete group #${groupNo}? It must be empty first.`)) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/${groupId}`,
+        { method: "DELETE" },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Delete failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetQualification(
+    participantId: string,
+    qualification: StudentQualification | null,
+  ) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/participants/${participantId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ student_qualification: qualification }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Qualification update failed");
         return;
       }
       router.refresh();
@@ -313,6 +472,10 @@ export function GroupsClient(props: Props) {
         <CushionPreview cushions={props.cushions} />
       ) : totalGroups === 0 ? (
         <EmptyState enrolmentCount={props.enrolmentCount} canGenerate={props.canGenerate} />
+      ) : !mounted ? (
+        <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)]/40 px-6 py-12 text-center text-[12px] text-[var(--ink-faint)]">
+          Loading groups…
+        </div>
       ) : (
         <DndContext
           sensors={sensors}
@@ -330,6 +493,10 @@ export function GroupsClient(props: Props) {
                 onSetRole={handleSetRole}
                 onSetClass={handleSetClass}
                 onSetPin={handleSetPin}
+                onSetName={handleSetName}
+                onSetLocked={handleSetLocked}
+                onDeleteGroup={handleDeleteGroup}
+                onSetQualification={handleSetQualification}
                 openMemberId={openMemberId}
                 setOpenMemberId={setOpenMemberId}
                 expandedMemberId={expandedMemberId}
@@ -337,6 +504,11 @@ export function GroupsClient(props: Props) {
               />
             ))}
           </div>
+          {props.canEdit && props.mode === "tables" ? (
+            <div className="mt-4">
+              <AddGroupButton onAdd={handleAddGroup} disabled={busy} />
+            </div>
+          ) : null}
         </DndContext>
       )}
     </div>
@@ -581,6 +753,10 @@ function GroupCard({
   onSetRole,
   onSetClass,
   onSetPin,
+  onSetName,
+  onSetLocked,
+  onDeleteGroup,
+  onSetQualification,
   openMemberId,
   setOpenMemberId,
   expandedMemberId,
@@ -597,13 +773,23 @@ function GroupCard({
     enrollmentId: string,
     pinnedGroupNo: number | null,
   ) => Promise<void>;
+  onSetName: (groupId: string, nameEn: string, nameCn: string) => Promise<void>;
+  onSetLocked: (groupId: string, locked: boolean) => Promise<void>;
+  onDeleteGroup: (groupId: string, groupNo: number) => Promise<void>;
+  onSetQualification: (
+    participantId: string,
+    qualification: StudentQualification | null,
+  ) => Promise<void>;
   openMemberId: string | null;
   setOpenMemberId: (id: string | null) => void;
   expandedMemberId: string | null;
   setExpandedMemberId: (id: string | null) => void;
 }) {
   const router = useRouter();
-  const { isOver, setNodeRef } = useDroppable({ id: `group-${group.group_no}` });
+  const { isOver, setNodeRef } = useDroppable({
+    id: `group-${group.group_no}`,
+    disabled: group.locked,
+  });
   const sizeChip =
     group.members.length > groupSizeMax || group.members.length < groupSizeMin
       ? "out"
@@ -648,9 +834,11 @@ function GroupCard({
       className={`relative rounded-[var(--radius-lg)] border p-4 transition-colors ${
         isOver
           ? "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)]/30 shadow-[var(--shadow-focus)]"
-          : needsLeader
-            ? "border-[var(--cinnabar)]/35 bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
-            : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
+          : group.locked
+            ? "border-[var(--ink)]/30 bg-[var(--paper-deep)]/50 shadow-[var(--shadow-paper-1)]"
+            : needsLeader
+              ? "border-[var(--cinnabar)]/35 bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
+              : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
       }`}
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
@@ -658,6 +846,11 @@ function GroupCard({
           <span className="font-mono text-[11px] tabular-nums text-[var(--cinnabar-deep)]">
             #{group.group_no}
           </span>
+          <GroupNameInline
+            group={group}
+            canEdit={canEdit}
+            onSave={(en, cn) => onSetName(group.id, en, cn)}
+          />
           {canEdit ? (
             <ClassDropdown
               groupClass={group.group_class}
@@ -675,6 +868,20 @@ function GroupCard({
           >
             {group.members.length} pax
           </span>
+          {canEdit ? (
+            <LockToggle
+              locked={group.locked}
+              onToggle={() => onSetLocked(group.id, !group.locked)}
+            />
+          ) : group.locked ? (
+            <span
+              title="Locked from regenerate"
+              className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-[var(--ink)] text-[var(--paper)] text-[10px]"
+              aria-hidden="true"
+            >
+              🔒
+            </span>
+          ) : null}
           {!hasZuZhang ? (
             <span
               className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
@@ -692,15 +899,27 @@ function GroupCard({
             </span>
           ) : null}
         </div>
-        {canEdit && !editingRationale ? (
-          <button
-            type="button"
-            onClick={() => setEditingRationale(true)}
-            className="text-[10.5px] tracking-[0.04em] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
-          >
-            edit rationale
-          </button>
-        ) : null}
+        <div className="inline-flex items-center gap-3">
+          {canEdit && group.members.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => onDeleteGroup(group.id, group.group_no)}
+              className="text-[10.5px] tracking-[0.04em] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
+              title={`Delete group #${group.group_no}`}
+            >
+              delete group
+            </button>
+          ) : null}
+          {canEdit && !editingRationale ? (
+            <button
+              type="button"
+              onClick={() => setEditingRationale(true)}
+              className="text-[10.5px] tracking-[0.04em] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
+            >
+              edit rationale
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <DimensionCoverageStrip group={group} />
@@ -784,8 +1003,13 @@ function GroupCard({
                   groupClass={group.group_class}
                   groupNo={group.group_no}
                   canEdit={canEdit}
+                  // Lock blocks drag (member can't leave a locked group).
+                  // Other mutations on the row stay open: role, pin,
+                  // qualification override are all fine on locked rows.
+                  canDrag={!group.locked}
                   onSetRole={onSetRole}
                   onSetPin={onSetPin}
+                  onSetQualification={onSetQualification}
                   isOpen={openMemberId === m.assignment_id}
                   setOpen={(v) =>
                     setOpenMemberId(v ? m.assignment_id : null)
@@ -834,8 +1058,10 @@ function MemberRow({
   groupClass,
   groupNo,
   canEdit,
+  canDrag,
   onSetRole,
   onSetPin,
+  onSetQualification,
   isOpen,
   setOpen,
   isExpanded,
@@ -845,10 +1071,15 @@ function MemberRow({
   groupClass: GroupClass;
   groupNo: number;
   canEdit: boolean;
+  canDrag: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
   onSetPin: (
     enrollmentId: string,
     pinnedGroupNo: number | null,
+  ) => Promise<void>;
+  onSetQualification: (
+    participantId: string,
+    qualification: StudentQualification | null,
   ) => Promise<void>;
   isOpen: boolean;
   setOpen: (v: boolean) => void;
@@ -857,7 +1088,7 @@ function MemberRow({
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: member.assignment_id,
-    disabled: !canEdit,
+    disabled: !canEdit || !canDrag,
   });
   const name = memberLabel(member);
   const isLeader = member.role === "zu_zhang" || member.role === "fu_zu_zhang";
@@ -889,8 +1120,20 @@ function MemberRow({
         data-member-row={member.assignment_id}
         {...listeners}
         {...attributes}
-        className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${canEdit ? "cursor-grab active:cursor-grabbing hover:bg-[var(--paper-deep)]/35" : ""}`}
-        title={canEdit ? "Drag to another group · click to set role / pin" : undefined}
+        className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${
+          canEdit
+            ? canDrag
+              ? "cursor-grab active:cursor-grabbing hover:bg-[var(--paper-deep)]/35"
+              : "cursor-pointer hover:bg-[var(--paper-deep)]/35"
+            : ""
+        }`}
+        title={
+          canEdit
+            ? canDrag
+              ? "Drag to another group · click to set role / pin"
+              : "Group locked — unlock to drag · click to set role / pin / qualification"
+            : undefined
+        }
         onClick={(e) => {
           if (!canEdit) return;
           e.stopPropagation();
@@ -1016,6 +1259,50 @@ function MemberRow({
                     </button>
                   ) : null}
                 </>
+              ) : null}
+              <span className="border-t border-[var(--paper-shadow)]/60" />
+              <span
+                className="px-2.5 py-1 text-[9.5px] tracking-[0.16em] uppercase text-[var(--ink-faint)]"
+                title="Sets participants.student_qualification (global override)."
+              >
+                Qualification · 等级
+              </span>
+              {(
+                ["strategic", "excellence", "elite", "rising", "basic"] as StudentQualification[]
+              ).map((q) => {
+                const active = member.qualification_override === q;
+                return (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setOpen(false);
+                      await onSetQualification(member.participant_id, q);
+                    }}
+                    className={`px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] whitespace-nowrap ${
+                      active
+                        ? "text-[var(--cinnabar-deep)]"
+                        : "text-[var(--ink)]"
+                    }`}
+                  >
+                    {active ? "✓ " : "  "}
+                    {STUDENT_QUALIFICATION_LABEL[q].cn} · {STUDENT_QUALIFICATION_LABEL[q].en}
+                  </button>
+                );
+              })}
+              {member.qualification_override ? (
+                <button
+                  type="button"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setOpen(false);
+                    await onSetQualification(member.participant_id, null);
+                  }}
+                  className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] text-[var(--ink-mute)] whitespace-nowrap"
+                >
+                  Clear override · 还原
+                </button>
               ) : null}
             </span>
           ) : null}
@@ -1165,6 +1452,194 @@ function ScoreInline({ value }: { value: number }) {
         />
       </span>
     </span>
+  );
+}
+
+function GroupNameInline({
+  group,
+  canEdit,
+  onSave,
+}: {
+  group: GroupBuilderGroup;
+  canEdit: boolean;
+  onSave: (nameEn: string, nameCn: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [en, setEn] = useState(group.name_en ?? "");
+  const [cn, setCn] = useState(group.name_cn ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Default display when admin hasn't set a name yet.
+  const fallbackEn = `Group ${group.group_no}`;
+  const fallbackCn = `组 ${group.group_no}`;
+  const displayEn = group.name_en?.trim() || fallbackEn;
+  const displayCn = group.name_cn?.trim() || fallbackCn;
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!canEdit) return;
+          setEn(group.name_en ?? "");
+          setCn(group.name_cn ?? "");
+          setEditing(true);
+        }}
+        disabled={!canEdit}
+        className={`text-[12px] font-display tracking-[-0.01em] text-[var(--ink)] ${
+          canEdit
+            ? "hover:text-[var(--cinnabar-deep)] cursor-text"
+            : "cursor-default"
+        }`}
+        title={canEdit ? "Click to rename" : undefined}
+      >
+        <span>{displayEn}</span>
+        {group.name_cn?.trim() || !group.name_en?.trim() ? (
+          <span className="ml-1.5 text-[var(--ink-mute)]">· {displayCn}</span>
+        ) : null}
+      </button>
+    );
+  }
+
+  async function commit() {
+    setSaving(true);
+    try {
+      await onSave(en.trim(), cn.trim());
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <span
+      className="inline-flex items-center gap-1.5"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        value={en}
+        onChange={(e) => setEn(e.target.value)}
+        placeholder={fallbackEn}
+        autoFocus
+        maxLength={120}
+        className="h-[22px] w-[120px] px-1.5 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[12px] text-[var(--ink)] font-display"
+      />
+      <input
+        value={cn}
+        onChange={(e) => setCn(e.target.value)}
+        placeholder={fallbackCn}
+        maxLength={120}
+        className="h-[22px] w-[100px] px-1.5 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[12px] text-[var(--ink)] font-display"
+      />
+      <button
+        type="button"
+        onClick={commit}
+        disabled={saving}
+        className="text-[10.5px] tracking-[0.04em] text-[var(--cinnabar-deep)] hover:text-[var(--cinnabar)] disabled:opacity-50"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setEn(group.name_en ?? "");
+          setCn(group.name_cn ?? "");
+          setEditing(false);
+        }}
+        className="text-[10.5px] tracking-[0.04em] text-[var(--ink-mute)] hover:text-[var(--ink)]"
+      >
+        Cancel
+      </button>
+    </span>
+  );
+}
+
+function LockToggle({
+  locked,
+  onToggle,
+}: {
+  locked: boolean;
+  onToggle: () => Promise<void>;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        void onToggle();
+      }}
+      className={`inline-flex items-center justify-center w-[20px] h-[20px] rounded-full border transition-colors ${
+        locked
+          ? "border-[var(--ink)]/40 bg-[var(--ink)] text-[var(--paper)] hover:bg-[var(--ink-soft)]"
+          : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-faint)] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)]"
+      }`}
+      title={
+        locked
+          ? "Locked from regenerate · 解锁 to allow re-generate to overwrite"
+          : "Click to lock from regenerate · 锁定不被重新生成"
+      }
+      aria-pressed={locked}
+      aria-label={locked ? "Unlock group from regenerate" : "Lock group from regenerate"}
+    >
+      <span className="text-[11px] leading-none" aria-hidden="true">
+        {locked ? "🔒" : "🔓"}
+      </span>
+    </button>
+  );
+}
+
+function AddGroupButton({
+  onAdd,
+  disabled,
+}: {
+  onAdd: (groupClass: GroupClass) => Promise<void>;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        className="w-full rounded-[var(--radius-md)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)]/60 px-4 py-3 text-[12px] text-[var(--ink-mute)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)]/30 hover:text-[var(--cinnabar-deep)] transition-colors disabled:opacity-50"
+      >
+        + Add empty group · 添加空组
+      </button>
+    );
+  }
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] px-4 py-3">
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
+          Pick a class · 选择类型
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="text-[10.5px] tracking-[0.04em] text-[var(--ink-mute)] hover:text-[var(--ink)]"
+        >
+          Cancel
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {(["strategic", "key", "growth", "maintenance"] as GroupClass[]).map((c) => (
+          <button
+            key={c}
+            type="button"
+            disabled={disabled}
+            onClick={async () => {
+              setOpen(false);
+              await onAdd(c);
+            }}
+            className="inline-flex items-center h-8 px-3 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11.5px] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] transition-colors disabled:opacity-50"
+          >
+            {GROUP_CLASS_LABEL[c].cn} · {GROUP_CLASS_LABEL[c].en}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

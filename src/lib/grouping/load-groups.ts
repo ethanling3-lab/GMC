@@ -81,12 +81,22 @@ export type GroupBuilderMember = {
   // family_of_participant_id column). Used by the detail row + xlsx
   // export.
   family_partner_region_ids: string[];
+  // M6.4 grouping signals (migration 030).
+  energy_profile: "high" | "medium" | "quiet" | null;
+  language_fluency: "en" | "cn" | "both" | null;
+  // Region IDs of conflict-pair partners enrolled in the same event.
+  conflict_partner_region_ids: string[];
 };
 
 export type GroupBuilderGroup = {
   id: string;
   group_no: number;
   group_class: GroupClass;
+  // Pass 2 — admin-curated name overrides (null = auto-format).
+  name_en: string | null;
+  name_cn: string | null;
+  // Pass 2 — true = group survives Regenerate runs intact.
+  locked: boolean;
   rationale_en: string | null;
   rationale_cn: string | null;
   leader_participant_id: string | null;
@@ -138,6 +148,9 @@ type GroupRow = {
   id: string;
   group_no: number;
   group_class: GroupClass;
+  name_en: string | null;
+  name_cn: string | null;
+  locked: boolean;
   rationale_en: string | null;
   rationale_cn: string | null;
   leader_participant_id: string | null;
@@ -169,6 +182,8 @@ type ParticipantRow = {
   has_special_contribution: boolean | null;
   times_led_groups: number | null;
   family_of_participant_id: string | null;
+  energy_profile: "high" | "medium" | "quiet" | null;
+  language_fluency: "en" | "cn" | "both" | null;
 };
 
 type EnrollmentPin = {
@@ -206,7 +221,9 @@ export async function loadGroupBuilder(
   const [groupsRes, assignmentsRes, enrolPinsRes, enrolCountRes] = await Promise.all([
     supabase
       .from("event_groups")
-      .select("id, group_no, group_class, rationale_en, rationale_cn, leader_participant_id")
+      .select(
+        "id, group_no, group_class, name_en, name_cn, locked, rationale_en, rationale_cn, leader_participant_id",
+      )
       .eq("event_id", eventId)
       .order("group_no", { ascending: true })
       .returns<GroupRow[]>(),
@@ -253,7 +270,8 @@ export async function loadGroupBuilder(
          zu_zhang_dimensions, zu_zhang_core_traits,
          goal_dimensions, student_qualification,
          motivation_tag, has_special_contribution, times_led_groups,
-         family_of_participant_id`,
+         family_of_participant_id,
+         energy_profile, language_fluency`,
       )
       .in("id", allParticipantIds)
       .returns<ParticipantRow[]>();
@@ -267,13 +285,13 @@ export async function loadGroupBuilder(
   // family chain the algorithm would respect. Resolves to region_ids for
   // display.
   const familyAdj = new Map<string, Set<string>>();
+  const conflictAdj = new Map<string, Set<string>>();
   if (allParticipantIds.length > 0) {
+    const inList = `(${allParticipantIds.join(",")})`;
     const { data: links, error: lErr } = await supabase
       .from("participant_family_links")
       .select("a_id, b_id")
-      .or(
-        `a_id.in.(${allParticipantIds.join(",")}),b_id.in.(${allParticipantIds.join(",")})`,
-      )
+      .or(`a_id.in.${inList},b_id.in.${inList}`)
       .returns<FamilyLinkRow[]>();
     if (lErr) return { error: lErr.message };
     for (const l of links ?? []) {
@@ -281,6 +299,20 @@ export async function loadGroupBuilder(
       if (!familyAdj.has(l.b_id)) familyAdj.set(l.b_id, new Set());
       familyAdj.get(l.a_id)!.add(l.b_id);
       familyAdj.get(l.b_id)!.add(l.a_id);
+    }
+
+    // Same shape for conflict pairs (migration 030).
+    const { data: conflicts, error: confErr } = await supabase
+      .from("participant_conflict_pairs")
+      .select("a_id, b_id")
+      .or(`a_id.in.${inList},b_id.in.${inList}`)
+      .returns<FamilyLinkRow[]>();
+    if (confErr) return { error: confErr.message };
+    for (const l of conflicts ?? []) {
+      if (!conflictAdj.has(l.a_id)) conflictAdj.set(l.a_id, new Set());
+      if (!conflictAdj.has(l.b_id)) conflictAdj.set(l.b_id, new Set());
+      conflictAdj.get(l.a_id)!.add(l.b_id);
+      conflictAdj.get(l.b_id)!.add(l.a_id);
     }
   }
   // Fold in legacy single-edge column.
@@ -303,6 +335,18 @@ export async function loadGroupBuilder(
     for (const otherId of partners) {
       const other = participantById.get(otherId);
       if (!other) continue; // partner not enrolled in this event
+      if (other.region_id) out.push(other.region_id);
+    }
+    return out.sort();
+  }
+
+  function conflictPartnerRegionIds(pid: string): string[] {
+    const partners = conflictAdj.get(pid);
+    if (!partners) return [];
+    const out: string[] = [];
+    for (const otherId of partners) {
+      const other = participantById.get(otherId);
+      if (!other) continue;
       if (other.region_id) out.push(other.region_id);
     }
     return out.sort();
@@ -360,6 +404,9 @@ export async function loadGroupBuilder(
           has_special_contribution: p?.has_special_contribution ?? false,
           times_led_groups: p?.times_led_groups ?? 0,
           family_partner_region_ids: p ? partnerRegionIds(p.id) : [],
+          energy_profile: p?.energy_profile ?? null,
+          language_fluency: p?.language_fluency ?? null,
+          conflict_partner_region_ids: p ? conflictPartnerRegionIds(p.id) : [],
         };
       })
       .sort((a, b) => roleOrder(a.role) - roleOrder(b.role));
@@ -367,6 +414,9 @@ export async function loadGroupBuilder(
       id: g.id,
       group_no: g.group_no,
       group_class: g.group_class,
+      name_en: g.name_en,
+      name_cn: g.name_cn,
+      locked: g.locked,
       rationale_en: g.rationale_en,
       rationale_cn: g.rationale_cn,
       leader_participant_id: g.leader_participant_id,

@@ -65,13 +65,17 @@ Optimise for:
 2. **Goal ↔ dimension matching.** Each participant declares goal_dimensions[] (ordered, index 0 = primary). Prefer a group whose 组长 dimensions cover the participant's primary goal.
 3. **Priority spread.** Participants with is_priority=true (max(financial, influence) ≥ 4) should be evenly distributed across the strategic + key groups — do NOT cluster them.
 4. **Family split.** Family-linked participants (each lists family_member_region_ids[] of their direct partners; chains are transitive) MUST land in DIFFERENT groups. Spouses especially — never same table.
-5. **Pin respect.** If pinned_group_no is set, the participant MUST land in that exact group_no, even if it pulls them across class. Pin overrides everything.
+5. **Conflict-pair split.** Each participant lists conflict_member_region_ids[] — admin-tagged people they MUST NOT sit with (ex-spouses, business rivals, bad-blood). Hard rule, exactly the same hardness as family. Chains are transitive: if A-B and B-C are conflict-tagged, A and C also can't share a group.
+6. **Pin respect.** If pinned_group_no is set, the participant MUST land in that exact group_no, even if it pulls them across class. Pin overrides everything.
+7. **Energy mix (soft).** Each participant has energy_profile (high / medium / quiet / null). Try to spread energy across groups — avoid all-high or all-quiet tables. Don't break a hard constraint to satisfy this.
+8. **Language fluency (soft).** Each participant has language_fluency (en / cn / both / null). When the wider enrolment includes BOTH cn-fluent and en-fluent participants, every group should have at least one person who can converse in each language. Treat "both" as covering both. Soft — don't break hard constraints to satisfy.
 
 # Hard constraints (assignment rejected if violated)
 
 - Every regular participant must appear in exactly one group's members list.
 - Every group's total size (seeded leaders + your assigned members) must be in [group_size_min, group_size_max].
 - No two family-linked participants in the same group.
+- No two conflict-flagged participants in the same group.
 - All pins respected.
 
 # Rationale
@@ -254,6 +258,18 @@ export async function runLlmGrouping(
       }
       return regionIds;
     })(),
+    // Migration 030 — conflict pairs (admin-tagged must-not-sit-together).
+    // Same hardness as family for the LLM.
+    conflict_member_region_ids: (() => {
+      const regionIds: string[] = [];
+      for (const id of p.conflict_member_ids) {
+        const r = regionIdById.get(id);
+        if (r) regionIds.push(r);
+      }
+      return regionIds;
+    })(),
+    energy_profile: p.energy_profile,
+    language_fluency: p.language_fluency,
     pinned_group_no: p.pinned_group_no,
   }));
 
@@ -559,6 +575,9 @@ function mergeLlmOutputWithSeeds(
         pinned_group_no: null,
         goal_dimensions: [],
         student_qualification_override: null,
+        energy_profile: null,
+        language_fluency: null,
+        conflict_member_ids: [],
       })),
     });
 

@@ -2,7 +2,7 @@ import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import type { GroupingResult } from "./types";
 
-// Replaces the existing event_groups + event_seat_assignments for an
+// Replaces the non-locked event_groups + event_seat_assignments for an
 // event with the result of a fresh grouping run. Idempotent.
 //
 // Table mode: writes event_groups (with rationales + leader) and one
@@ -13,6 +13,11 @@ import type { GroupingResult } from "./types";
 // Cushion mode: skips event_groups; writes event_seat_assignments per
 // cushion_assignments entry, with shape_id + seat_no already populated.
 //
+// Pass 2 (lock-from-regenerate): groups with locked=true are preserved
+// across runs. Their assignments are NOT wiped. Fresh groups produced
+// by the algorithm (group_no 1..k) are renumbered to skip locked
+// group_no values so locked groups keep their identity.
+//
 // NOT atomic in the strict sense — Supabase REST has no native cross-
 // table transaction. We accept a brief window of empty state. The route
 // is super-admin gated and idempotent so an interrupted call can be
@@ -21,6 +26,7 @@ import type { GroupingResult } from "./types";
 export type PersistResult = {
   groups_inserted: number;
   assignments_inserted: number;
+  locked_groups_preserved: number;
 };
 
 export async function persistGroupingResult(
@@ -29,24 +35,53 @@ export async function persistGroupingResult(
 ): Promise<PersistResult | { error: string }> {
   const service = createSupabaseServiceClient();
 
-  // Wipe previous state. Order matters: assignments → groups so the
-  // group_id FK doesn't block the delete.
-  const { error: delAssignErr } = await service
+  // Snapshot locked groups BEFORE the wipe so we know which group_no
+  // values to skip when renumbering fresh groups.
+  const { data: lockedGroups, error: lgErr } = await service
+    .from("event_groups")
+    .select("id, group_no")
+    .eq("event_id", eventId)
+    .eq("locked", true)
+    .returns<Array<{ id: string; group_no: number }>>();
+  if (lgErr) return { error: lgErr.message };
+  const lockedIds = (lockedGroups ?? []).map((g) => g.id);
+  const lockedNos = new Set((lockedGroups ?? []).map((g) => g.group_no));
+
+  // Wipe previous NON-LOCKED state. Order matters: assignments → groups
+  // so the group_id FK doesn't block the delete.
+  let assignDelete = service
     .from("event_seat_assignments")
     .delete()
     .eq("event_id", eventId);
+  if (lockedIds.length > 0) {
+    // Postgrest `.not(col, "in", "(...)")` excludes locked groups'
+    // assignments + the cushion-mode rows where group_id is null.
+    assignDelete = assignDelete.or(
+      `group_id.not.in.(${lockedIds.join(",")}),group_id.is.null`,
+    );
+  }
+  const { error: delAssignErr } = await assignDelete;
   if (delAssignErr) return { error: delAssignErr.message };
 
-  const { error: delGroupsErr } = await service
+  let groupDelete = service
     .from("event_groups")
     .delete()
     .eq("event_id", eventId);
+  if (lockedIds.length > 0) {
+    groupDelete = groupDelete.eq("locked", false);
+  }
+  const { error: delGroupsErr } = await groupDelete;
   if (delGroupsErr) return { error: delGroupsErr.message };
 
-  // Cushion mode — write assignments only; no groups.
+  // Cushion mode — write assignments only; no groups. Locked groups
+  // don't apply in cushion mode (no event_groups rows in that mode).
   if (result.strategy === "cushion_rank") {
     if (result.cushion_assignments.length === 0) {
-      return { groups_inserted: 0, assignments_inserted: 0 };
+      return {
+        groups_inserted: 0,
+        assignments_inserted: 0,
+        locked_groups_preserved: 0,
+      };
     }
     const { error: insErr } = await service
       .from("event_seat_assignments")
@@ -64,13 +99,29 @@ export async function persistGroupingResult(
     return {
       groups_inserted: 0,
       assignments_inserted: result.cushion_assignments.length,
+      locked_groups_preserved: 0,
     };
   }
 
   // Table mode — insert groups, capture ids, then insert one
   // event_seat_assignments per draft member with NULL shape/seat.
   if (result.groups.length === 0) {
-    return { groups_inserted: 0, assignments_inserted: 0 };
+    return {
+      groups_inserted: 0,
+      assignments_inserted: 0,
+      locked_groups_preserved: lockedNos.size,
+    };
+  }
+
+  // Renumber fresh groups to skip locked group_no values. The result
+  // arrives with group_no 1..k; map each fresh slot to the next
+  // available number that isn't held by a locked group.
+  const renumber = new Map<number, number>();
+  let nextNo = 1;
+  for (const g of result.groups) {
+    while (lockedNos.has(nextNo)) nextNo += 1;
+    renumber.set(g.group_no, nextNo);
+    nextNo += 1;
   }
 
   const { data: insertedGroups, error: groupInsErr } = await service
@@ -78,7 +129,7 @@ export async function persistGroupingResult(
     .insert(
       result.groups.map((g) => ({
         event_id: eventId,
-        group_no: g.group_no,
+        group_no: renumber.get(g.group_no)!,
         group_class: g.group_class,
         leader_participant_id: g.leader_participant_id,
         rationale_en: g.rationale_en,
@@ -90,11 +141,13 @@ export async function persistGroupingResult(
     return { error: groupInsErr?.message ?? "group_insert_failed" };
   }
 
-  const groupIdByNo = new Map<number, string>();
-  for (const g of insertedGroups) groupIdByNo.set(g.group_no, g.id);
+  const groupIdByRenumberedNo = new Map<number, string>();
+  for (const g of insertedGroups) groupIdByRenumberedNo.set(g.group_no, g.id);
 
   const assignmentRows = result.groups.flatMap((g) => {
-    const gid = groupIdByNo.get(g.group_no);
+    const renumbered = renumber.get(g.group_no);
+    if (!renumbered) return [];
+    const gid = groupIdByRenumberedNo.get(renumbered);
     if (!gid) return [];
     return g.members.map((m) => ({
       event_id: eventId,
@@ -107,7 +160,11 @@ export async function persistGroupingResult(
   });
 
   if (assignmentRows.length === 0) {
-    return { groups_inserted: insertedGroups.length, assignments_inserted: 0 };
+    return {
+      groups_inserted: insertedGroups.length,
+      assignments_inserted: 0,
+      locked_groups_preserved: lockedNos.size,
+    };
   }
 
   const { error: assignInsErr } = await service
@@ -118,5 +175,6 @@ export async function persistGroupingResult(
   return {
     groups_inserted: insertedGroups.length,
     assignments_inserted: assignmentRows.length,
+    locked_groups_preserved: lockedNos.size,
   };
 }
