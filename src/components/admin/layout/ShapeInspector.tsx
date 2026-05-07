@@ -21,9 +21,15 @@ type Props = {
   allGroups: GroupRoster[];
   seatingMode: "tables" | "cushions";
   canEdit: boolean;
+  // Total selection count. 0 = idle (no panel), 1 = single (full inspector
+  // for `shape`), >1 = multi (compact summary with batch ops).
+  selectedCount: number;
   onUpdate: (patch: Partial<Shape>) => void;
   onDelete: () => void;
   onBumpZ: (dir: "up" | "down") => void;
+  onDeleteAll: () => void;
+  onToggleLockAll: () => void;
+  onDuplicateAll: () => void;
   onClose: () => void;
 };
 
@@ -40,12 +46,33 @@ export function ShapeInspector({
   allGroups,
   seatingMode,
   canEdit,
+  selectedCount,
   onUpdate,
   onDelete,
   onBumpZ,
+  onDeleteAll,
+  onToggleLockAll,
+  onDuplicateAll,
   onClose,
 }: Props) {
   // Idle (no selection) → render nothing per Pass 4 decision.
+  if (selectedCount === 0) return null;
+
+  // Multi-select → compact summary + batch ops only.
+  if (selectedCount > 1) {
+    return (
+      <MultiSelectInspector
+        count={selectedCount}
+        canEdit={canEdit}
+        onDeleteAll={onDeleteAll}
+        onToggleLockAll={onToggleLockAll}
+        onDuplicateAll={onDuplicateAll}
+        onClose={onClose}
+      />
+    );
+  }
+
+  // Single select with no shape resolved (timing race) → render nothing.
   if (!shape) return null;
 
   return (
@@ -695,6 +722,108 @@ function AssignGroupField({
         </p>
       )}
     </FieldShell>
+  );
+}
+
+// Compact panel shown when N>1 shapes are selected. The single-select
+// inspector renders too much detail to be useful for batch operations, so
+// this surface restricts to the actions that genuinely apply across the
+// whole set: delete, lock toggle, duplicate. Per-shape edits stay one
+// shape at a time.
+function MultiSelectInspector({
+  count,
+  canEdit,
+  onDeleteAll,
+  onToggleLockAll,
+  onDuplicateAll,
+  onClose,
+}: {
+  count: number;
+  canEdit: boolean;
+  onDeleteAll: () => void;
+  onToggleLockAll: () => void;
+  onDuplicateAll: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <aside
+      className="gmc-print-hide absolute right-3 top-3 w-[300px] rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] overflow-hidden z-10"
+    >
+      <div className="px-3 py-2.5 border-b border-[var(--paper-shadow)]/70 flex items-center justify-between gap-2">
+        <div className="text-[9.5px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
+          Inspector · 检视
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)] tabular-nums">
+            {count} selected
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close inspector"
+            className="inline-flex items-center justify-center w-6 h-6 rounded-full text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] transition-colors"
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+              <path d="M3 3 L 9 9 M9 3 L 3 9" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div className="p-3 flex flex-col gap-3">
+        <p className="text-[11px] leading-[1.55] text-[var(--ink-soft)]">
+          <span className="font-display text-[15px] tabular-nums text-[var(--ink)]">{count}</span>
+          <span className="ml-1.5">shapes selected. Use the keyboard or
+          buttons below to act on them as a group.</span>
+        </p>
+
+        <div className="flex flex-col gap-1.5 text-[10.5px] tracking-[0.04em] text-[var(--ink-soft)]">
+          <KbdHint k="↑↓←→" label="Nudge · Shift = ×10" />
+          <KbdHint k="⌘D" label="Duplicate" />
+          <KbdHint k="L" label="Lock / unlock" />
+          <KbdHint k="⌫" label="Delete" />
+          <KbdHint k="⌘A" label="Select all" />
+          <KbdHint k="⌘Z" label="Undo · Shift = redo" />
+        </div>
+
+        {canEdit ? (
+          <div className="grid grid-cols-2 gap-1.5 pt-1">
+            <button
+              type="button"
+              onClick={onDuplicateAll}
+              className="px-2 h-8 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11px] tracking-[0.04em] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/50 hover:text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] transition-colors"
+            >
+              Duplicate
+            </button>
+            <button
+              type="button"
+              onClick={onToggleLockAll}
+              className="px-2 h-8 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11px] tracking-[0.04em] text-[var(--ink-soft)] hover:border-[var(--ink)]/50 hover:text-[var(--ink)] transition-colors"
+            >
+              Lock / unlock
+            </button>
+            <button
+              type="button"
+              onClick={onDeleteAll}
+              className="col-span-2 px-2 h-8 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[11px] tracking-[0.04em] text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar)] hover:text-[var(--paper)] transition-colors"
+            >
+              Delete {count} shapes
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function KbdHint({ k, label }: { k: string; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <kbd className="inline-flex items-center justify-center min-w-[28px] h-5 px-1.5 rounded-[var(--radius-sm,4px)] border border-[var(--paper-shadow)] bg-[var(--paper)] font-mono text-[10px] tracking-normal text-[var(--ink-soft)]">
+        {k}
+      </kbd>
+      <span className="text-[var(--ink-faint)]">{label}</span>
+    </div>
   );
 }
 

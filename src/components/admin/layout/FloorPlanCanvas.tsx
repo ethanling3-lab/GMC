@@ -26,11 +26,25 @@ import type { GroupRoster, Shape } from "./types";
 
 type Props = {
   shapes: Shape[];
+  // Primary selection — drives the inspector. Always either null or a
+  // member of selectedIds.
   selectedId: string | null;
-  onSelect: (id: string | null) => void;
+  // Full multi-select set — drives ring rendering + group move + marquee
+  // additive behavior. Size 0 = nothing selected.
+  selectedIds: ReadonlySet<string>;
+  // Click on a shape: replace replaces selection with this id; toggle adds
+  // or removes from selection without affecting other members. Click on
+  // empty canvas: id=null + mode=replace clears selection.
+  onSelect: (id: string | null, mode: "replace" | "toggle") => void;
+  // Marquee result: replace replaces selection with these ids; additive
+  // unions them in.
+  onSelectMany: (ids: string[], additive: boolean) => void;
   onUpdate: (id: string, patch: Partial<Shape>) => void;
   canEdit: boolean;
   revealNames: boolean;
+  // When true, drag positions snap to a 5-unit grid AND to other shapes'
+  // edge / center alignments within a tolerance (smart guides).
+  gridSnap: boolean;
   groupsById: Map<string, GroupRoster>;
   // View is lifted so the LayoutEditor toolbar can show + adjust the scale.
   view: View;
@@ -49,9 +63,14 @@ type DragState =
   | null
   | {
       kind: "move";
-      id: string;
+      // Anchor shape — the one the pointer is dragging directly.
+      anchorId: string;
       dx: number;
       dy: number;
+      // Other selected shapes that move with the anchor. relX/relY are the
+      // signed offsets from the anchor's start position; we re-apply them
+      // to the anchor's current position each pointer move.
+      others: Array<{ id: string; relX: number; relY: number }>;
     }
   | {
       kind: "resize";
@@ -74,15 +93,34 @@ type DragState =
       startClientY: number;
       startViewX: number;
       startViewY: number;
+    }
+  | {
+      kind: "marquee";
+      // User-space anchor and current corner. We render a rect between
+      // them; on pointer up we compute hits.
+      startX: number;
+      startY: number;
+      currentX: number;
+      currentY: number;
+      additive: boolean;
+      // Movement threshold tracking — clicks that don't move past 4px in
+      // client space are treated as plain background clicks (selection
+      // clear or no-op).
+      startClientX: number;
+      startClientY: number;
+      moved: boolean;
     };
 
 export function FloorPlanCanvas({
   shapes,
   selectedId,
+  selectedIds,
   onSelect,
+  onSelectMany,
   onUpdate,
   canEdit,
   revealNames,
+  gridSnap,
   groupsById,
   view,
   onViewChange,
@@ -96,9 +134,33 @@ export function FloorPlanCanvas({
 
   // UI-only flags for cursor styling.
   const [dragKind, setDragKind] = useState<
-    "move" | "resize" | "rotate" | "pan" | null
+    "move" | "resize" | "rotate" | "pan" | "marquee" | null
   >(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
+  // Live marquee state for rendering. Mirrors dragRef when active.
+  const [marquee, setMarquee] = useState<
+    | null
+    | { x: number; y: number; w: number; h: number }
+  >(null);
+
+  // Smart-alignment guides surfaced during a move drag. Each guide spans
+  // the full canvas in its axis. Rendered above shapes during drag, cleared
+  // on endDrag.
+  const [guides, setGuides] = useState<
+    Array<{ axis: "v" | "h"; coord: number }>
+  >([]);
+
+  // Latest selection — read by drag handlers without re-binding callbacks.
+  const selectedIdsRef = useRef<ReadonlySet<string>>(selectedIds);
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
+
+  // Latest gridSnap — same idea.
+  const gridSnapRef = useRef<boolean>(gridSnap);
+  useEffect(() => {
+    gridSnapRef.current = gridSnap;
+  }, [gridSnap]);
 
   // Density tier — drives label visibility via CSS class on the canvas root.
   const density: "hidden" | "compact" | "detailed" =
@@ -215,16 +277,49 @@ export function FloorPlanCanvas({
       e.stopPropagation();
       // Selection happens regardless of lock state so admin can reach the
       // inspector to unlock the shape. Drag-state setup below is gated.
-      onSelect(id);
+      // Shift-click on a shape toggles it in/out of the multi-selection
+      // set. Plain click replaces selection. If shift-clicking a shape
+      // that's already selected we just toggle and skip drag — otherwise
+      // we'd unselect mid-drag.
+      const wasSelected = selectedIdsRef.current.has(id);
+      if (e.shiftKey) {
+        onSelect(id, "toggle");
+        if (wasSelected) {
+          // Removing from selection — don't enter drag state.
+          return;
+        }
+      } else if (!wasSelected) {
+        // Plain click on an unselected shape → replace selection.
+        onSelect(id, "replace");
+      }
+      // Else: plain click on already-selected shape → preserve selection
+      // so a group move can grab any member without losing the others.
 
       if (target.locked) return;
 
       if (handle === "body") {
+        // Capture the snapshot of every selected shape's position relative
+        // to the anchor at drag start so we can move them in lock-step.
+        // If only one shape is selected (or the clicked shape is the only
+        // one we just selected), `others` is empty.
+        const sel = selectedIdsRef.current;
+        const others: Array<{ id: string; relX: number; relY: number }> = [];
+        if (sel.size > 1 && sel.has(id)) {
+          for (const s of shapes) {
+            if (s.id === id || !sel.has(s.id) || s.locked) continue;
+            others.push({
+              id: s.id,
+              relX: s.x_pct - target.x_pct,
+              relY: s.y_pct - target.y_pct,
+            });
+          }
+        }
         dragRef.current = {
           kind: "move",
-          id,
+          anchorId: id,
           dx: p.x - target.x_pct,
           dy: p.y - target.y_pct,
+          others,
         };
         setDragKind("move");
       } else if (handle === "rotate") {
@@ -316,36 +411,94 @@ export function FloorPlanCanvas({
         return;
       }
 
-      const p = clientToVB(e.clientX, e.clientY);
-      if (!p) return;
-      const target = shapes.find((s) => s.id === drag.id);
-      if (!target) return;
-
-      if (drag.kind === "move") {
-        onUpdate(drag.id, {
-          x_pct: p.x - drag.dx,
-          y_pct: p.y - drag.dy,
-        });
+      if (drag.kind === "marquee") {
+        const p = clientToVB(e.clientX, e.clientY);
+        if (!p) return;
+        const dxC = e.clientX - drag.startClientX;
+        const dyC = e.clientY - drag.startClientY;
+        if (!drag.moved && Math.abs(dxC) + Math.abs(dyC) >= 4) {
+          drag.moved = true;
+        }
+        drag.currentX = p.x;
+        drag.currentY = p.y;
+        if (drag.moved) {
+          setMarquee({
+            x: Math.min(drag.startX, drag.currentX),
+            y: Math.min(drag.startY, drag.currentY),
+            w: Math.abs(drag.currentX - drag.startX),
+            h: Math.abs(drag.currentY - drag.startY),
+          });
+        }
         return;
       }
 
+      const p = clientToVB(e.clientX, e.clientY);
+      if (!p) return;
+
+      if (drag.kind === "move") {
+        const target = shapes.find((s) => s.id === drag.anchorId);
+        if (!target) return;
+        const proposedX = p.x - drag.dx;
+        const proposedY = p.y - drag.dy;
+        // Snap the anchor (using its own bounding box). Guide lines are
+        // recorded against page coords for render. Group members follow at
+        // exact relative offsets — they may not individually snap, but the
+        // group preserves its internal spacing, which is what admins want.
+        const movingIds = new Set<string>([drag.anchorId]);
+        for (const o of drag.others) movingIds.add(o.id);
+        const snap = snapMovePosition(
+          shapes,
+          movingIds,
+          proposedX,
+          proposedY,
+          target.width_pct,
+          target.height_pct,
+          gridSnapRef.current,
+        );
+        onUpdate(drag.anchorId, { x_pct: snap.x, y_pct: snap.y });
+        for (const o of drag.others) {
+          onUpdate(o.id, {
+            x_pct: snap.x + o.relX,
+            y_pct: snap.y + o.relY,
+          });
+        }
+        setGuides(snap.guides);
+        return;
+      }
+
+      const target = shapes.find((s) => s.id === drag.id);
+      if (!target) return;
+
       if (drag.kind === "resize") {
         const minSize = 1;
-        let w = Math.max(minSize, Math.abs(p.x - drag.anchorX));
-        let h = Math.max(minSize, Math.abs(p.y - drag.anchorY));
+        // Snap the moving edge (the pointer-side, not the anchor) to the
+        // grid + alignment targets. The anchor is the opposite corner so
+        // it stays put; the new edge's coords are the snap surface.
+        const snapped = snapResizeEdges(
+          shapes,
+          drag.id,
+          drag.anchorX,
+          drag.anchorY,
+          p.x,
+          p.y,
+          gridSnapRef.current,
+        );
+        let w = Math.max(minSize, Math.abs(snapped.x - drag.anchorX));
+        let h = Math.max(minSize, Math.abs(snapped.y - drag.anchorY));
         if (drag.uniform) {
           const m = Math.max(w, h);
           w = m;
           h = m;
         }
-        const x = Math.min(p.x, drag.anchorX);
-        const y = Math.min(p.y, drag.anchorY);
+        const x = Math.min(snapped.x, drag.anchorX);
+        const y = Math.min(snapped.y, drag.anchorY);
         onUpdate(drag.id, {
           x_pct: x,
           y_pct: y,
           width_pct: w,
           height_pct: h,
         });
+        setGuides(snapped.guides);
         return;
       }
 
@@ -363,16 +516,49 @@ export function FloorPlanCanvas({
     [shapes, clientToVB, onUpdate, onViewChange],
   );
 
-  const endDrag = useCallback((e: React.PointerEvent) => {
-    if (!dragRef.current) return;
-    dragRef.current = null;
-    setDragKind(null);
-    try {
-      svgRef.current?.releasePointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
-  }, []);
+  const endDrag = useCallback(
+    (e: React.PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      // Marquee: compute hits OR treat as plain click on empty canvas.
+      if (drag.kind === "marquee") {
+        if (!drag.moved) {
+          // Plain click on empty canvas. Shift = no-op (keep selection),
+          // bare click = clear.
+          if (!drag.additive) onSelect(null, "replace");
+        } else {
+          const x0 = Math.min(drag.startX, drag.currentX);
+          const y0 = Math.min(drag.startY, drag.currentY);
+          const x1 = Math.max(drag.startX, drag.currentX);
+          const y1 = Math.max(drag.startY, drag.currentY);
+          const hits: string[] = [];
+          for (const s of shapes) {
+            // Bounding-box overlap test (any intersection counts). Don't
+            // include rotation in the hit test — close enough for now and
+            // matches the visual.
+            const sx1 = s.x_pct + s.width_pct;
+            const sy1 = s.y_pct + s.height_pct;
+            if (s.x_pct < x1 && sx1 > x0 && s.y_pct < y1 && sy1 > y0) {
+              hits.push(s.id);
+            }
+          }
+          onSelectMany(hits, drag.additive);
+        }
+        setMarquee(null);
+      }
+
+      dragRef.current = null;
+      setDragKind(null);
+      setGuides([]);
+      try {
+        svgRef.current?.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    },
+    [shapes, onSelect, onSelectMany],
+  );
 
   // ---------------------------------------------------------------------------
   // Background pointerdown — clears selection OR enters pan mode.
@@ -388,9 +574,35 @@ export function FloorPlanCanvas({
         return;
       }
       if (e.button !== 0) return;
-      onSelect(null);
+
+      // Start a marquee. If the user just clicks (no drag), endDrag treats
+      // it as a selection clear (or no-op on shift). Marquee threshold is
+      // checked in onPointerMove.
+      const p = clientToVB(e.clientX, e.clientY);
+      if (!p) {
+        // Fallback to legacy clear-selection behavior.
+        if (!e.shiftKey) onSelect(null, "replace");
+        return;
+      }
+      dragRef.current = {
+        kind: "marquee",
+        startX: p.x,
+        startY: p.y,
+        currentX: p.x,
+        currentY: p.y,
+        additive: e.shiftKey,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        moved: false,
+      };
+      setDragKind("marquee");
+      try {
+        svgRef.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
     },
-    [onSelect, spaceHeld, startPan],
+    [onSelect, spaceHeld, startPan, clientToVB],
   );
 
   // ---------------------------------------------------------------------------
@@ -415,6 +627,8 @@ export function FloorPlanCanvas({
       if (ev.key === "Escape" && dragRef.current) {
         dragRef.current = null;
         setDragKind(null);
+        setMarquee(null);
+        setGuides([]);
         return;
       }
 
@@ -515,6 +729,8 @@ export function FloorPlanCanvas({
       ? "alias"
       : dragKind === "resize"
       ? "nwse-resize"
+      : dragKind === "marquee"
+      ? "crosshair"
       : "default";
 
   return (
@@ -623,22 +839,76 @@ export function FloorPlanCanvas({
         {sorted.map((s) => {
           const roster =
             s.group_id ? groupsById.get(s.group_id) ?? null : null;
+          // Selected = anywhere in the multi-set; primary = the one whose
+          // resize/rotate handles + inspector edits target. Only the
+          // primary gets handles to avoid 50 handle rings on Cmd+A.
+          const isSelected = selectedIds.has(s.id);
+          const isPrimary = s.id === selectedId;
           return (
             <ShapeNode
               key={s.id}
               shape={s}
               roster={roster}
               revealNames={revealNames}
-              selected={s.id === selectedId}
+              selected={isSelected}
               canEdit={canEdit}
               onPointerDownHandle={(e, handle) => startDrag(e, s.id, handle)}
               showResizeHandles={
-                isSeatedKind(s.kind) || nonSeatedResizable(s.kind)
+                isPrimary
+                && (isSeatedKind(s.kind) || nonSeatedResizable(s.kind))
               }
-              showRotateHandle={rotatableKind(s.kind)}
+              showRotateHandle={isPrimary && rotatableKind(s.kind)}
             />
           );
         })}
+
+        {/* Marquee rect — drawn during drag-rect selection. */}
+        {marquee ? (
+          <rect
+            x={marquee.x}
+            y={marquee.y}
+            width={marquee.w}
+            height={marquee.h}
+            fill="var(--cinnabar)"
+            fillOpacity="0.07"
+            stroke="var(--cinnabar)"
+            strokeWidth={0.4 / view.scale}
+            strokeDasharray={`${1.2 / view.scale} ${0.8 / view.scale}`}
+            pointerEvents="none"
+          />
+        ) : null}
+
+        {/* Smart-alignment guides — gold hairlines across the full
+            pannable area, only visible while a snap is active. */}
+        {guides.length > 0
+          ? guides.map((g, i) =>
+              g.axis === "v" ? (
+                <line
+                  key={`g-${i}-${g.axis}-${g.coord}`}
+                  x1={g.coord}
+                  y1={-padY}
+                  x2={g.coord}
+                  y2={padY * 2 + VB_H}
+                  stroke="var(--gold, #B8860B)"
+                  strokeWidth={0.18 / view.scale}
+                  strokeOpacity="0.75"
+                  pointerEvents="none"
+                />
+              ) : (
+                <line
+                  key={`g-${i}-${g.axis}-${g.coord}`}
+                  x1={-padX}
+                  y1={g.coord}
+                  x2={padX * 2 + VB_W}
+                  y2={g.coord}
+                  stroke="var(--gold, #B8860B)"
+                  strokeWidth={0.18 / view.scale}
+                  strokeOpacity="0.75"
+                  pointerEvents="none"
+                />
+              ),
+            )
+          : null}
       </svg>
 
     </div>
@@ -647,6 +917,140 @@ export function FloorPlanCanvas({
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+// Snap math — applies during a body drag. When `gridSnap` is on, look for
+// a smart-guide alignment first (left / center / right edges of the moving
+// shape against any non-moving shape's edges or the page boundary), then
+// fall back to a 5-unit grid. Threshold is in user-space units.
+const SNAP_GRID = 5;
+const SNAP_THRESHOLD = 1.0;
+
+function snapMovePosition(
+  shapes: Shape[],
+  movingIds: ReadonlySet<string>,
+  proposedX: number,
+  proposedY: number,
+  width: number,
+  height: number,
+  gridSnap: boolean,
+): {
+  x: number;
+  y: number;
+  guides: Array<{ axis: "v" | "h"; coord: number }>;
+} {
+  if (!gridSnap) {
+    return { x: proposedX, y: proposedY, guides: [] };
+  }
+
+  // Build candidate target arrays. Page boundaries + center are always
+  // candidates; other shapes contribute their three edges per axis.
+  const xTargets: number[] = [0, VB_W / 2, VB_W];
+  const yTargets: number[] = [0, VB_H / 2, VB_H];
+  for (const s of shapes) {
+    if (movingIds.has(s.id)) continue;
+    xTargets.push(s.x_pct, s.x_pct + s.width_pct / 2, s.x_pct + s.width_pct);
+    yTargets.push(s.y_pct, s.y_pct + s.height_pct / 2, s.y_pct + s.height_pct);
+  }
+
+  const movingXs = [proposedX, proposedX + width / 2, proposedX + width];
+  const movingYs = [proposedY, proposedY + height / 2, proposedY + height];
+
+  const xSnap = nearestTarget(movingXs, xTargets, SNAP_THRESHOLD);
+  const ySnap = nearestTarget(movingYs, yTargets, SNAP_THRESHOLD);
+
+  let x = proposedX;
+  let y = proposedY;
+  const guides: Array<{ axis: "v" | "h"; coord: number }> = [];
+
+  if (xSnap) {
+    x = proposedX + xSnap.delta;
+    guides.push({ axis: "v", coord: xSnap.target });
+  } else {
+    // Fall back to grid-multiples on the left edge.
+    x = Math.round(proposedX / SNAP_GRID) * SNAP_GRID;
+  }
+  if (ySnap) {
+    y = proposedY + ySnap.delta;
+    guides.push({ axis: "h", coord: ySnap.target });
+  } else {
+    y = Math.round(proposedY / SNAP_GRID) * SNAP_GRID;
+  }
+
+  return { x, y, guides };
+}
+
+// Resize variant — only the moving (pointer-side) corner snaps. Anchor
+// stays put. Returns the new x/y for the moving corner + guide specs.
+function snapResizeEdges(
+  shapes: Shape[],
+  movingId: string,
+  anchorX: number,
+  anchorY: number,
+  proposedX: number,
+  proposedY: number,
+  gridSnap: boolean,
+): {
+  x: number;
+  y: number;
+  guides: Array<{ axis: "v" | "h"; coord: number }>;
+} {
+  if (!gridSnap) {
+    return { x: proposedX, y: proposedY, guides: [] };
+  }
+  const xTargets: number[] = [0, VB_W / 2, VB_W];
+  const yTargets: number[] = [0, VB_H / 2, VB_H];
+  for (const s of shapes) {
+    if (s.id === movingId) continue;
+    xTargets.push(s.x_pct, s.x_pct + s.width_pct / 2, s.x_pct + s.width_pct);
+    yTargets.push(s.y_pct, s.y_pct + s.height_pct / 2, s.y_pct + s.height_pct);
+  }
+
+  // The moving corner is a single point in each axis.
+  const xSnap = nearestTarget([proposedX], xTargets, SNAP_THRESHOLD);
+  const ySnap = nearestTarget([proposedY], yTargets, SNAP_THRESHOLD);
+
+  let x = proposedX;
+  let y = proposedY;
+  const guides: Array<{ axis: "v" | "h"; coord: number }> = [];
+  if (xSnap) {
+    x = xSnap.target;
+    guides.push({ axis: "v", coord: xSnap.target });
+  } else {
+    x = Math.round(proposedX / SNAP_GRID) * SNAP_GRID;
+  }
+  if (ySnap) {
+    y = ySnap.target;
+    guides.push({ axis: "h", coord: ySnap.target });
+  } else {
+    y = Math.round(proposedY / SNAP_GRID) * SNAP_GRID;
+  }
+  // Suppress empty-axis adjustments — anchorX/Y are reference points;
+  // when proposed is on the wrong side, the resize math on the caller
+  // handles flipping the bounding box. Just pass back the snapped values.
+  void anchorX;
+  void anchorY;
+  return { x, y, guides };
+}
+
+function nearestTarget(
+  movingValues: number[],
+  targetValues: number[],
+  threshold: number,
+): { delta: number; target: number } | null {
+  let best: { delta: number; target: number } | null = null;
+  let bestAbs = threshold;
+  for (const m of movingValues) {
+    for (const t of targetValues) {
+      const d = t - m;
+      const a = Math.abs(d);
+      if (a < bestAbs) {
+        bestAbs = a;
+        best = { delta: d, target: t };
+      }
+    }
+  }
+  return best;
 }
 
 function nonSeatedResizable(kind: Shape["kind"]): boolean {

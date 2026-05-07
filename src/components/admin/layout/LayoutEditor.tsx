@@ -65,6 +65,18 @@ function readInitialReveal(eventId: string): boolean {
   return true;
 }
 
+function readInitialGridSnap(eventId: string): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const v = window.sessionStorage.getItem(`gmc-grid-snap:${eventId}`);
+    if (v === "0") return false;
+    if (v === "1") return true;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
 export function LayoutEditor({
   event,
   initialShapes,
@@ -72,12 +84,22 @@ export function LayoutEditor({
   canEdit,
 }: LayoutEditorProps) {
   const [shapes, setShapes] = useState<Shape[]>(initialShapes);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Selection state — selectedId is the primary (last-clicked) shape that
+  // drives the inspector; selectedIds is the full set used by group move +
+  // batch keyboard ops. Invariant: when selectedId is non-null it is also
+  // in selectedIds. When selectedIds.size === 0, selectedId is null.
+  const [selectedId, setSelectedIdRaw] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [view, setView] = useState<View>(FIT_VIEW);
   const [revealNames, setRevealNamesState] = useState<boolean>(() =>
     readInitialReveal(event.id),
+  );
+  const [gridSnap, setGridSnapState] = useState<boolean>(() =>
+    readInitialGridSnap(event.id),
   );
 
   const setRevealNames = useCallback(
@@ -95,6 +117,21 @@ export function LayoutEditor({
     [event.id],
   );
 
+  const setGridSnap = useCallback(
+    (next: boolean) => {
+      setGridSnapState(next);
+      try {
+        window.sessionStorage.setItem(
+          `gmc-grid-snap:${event.id}`,
+          next ? "1" : "0",
+        );
+      } catch {
+        /* ignore */
+      }
+    },
+    [event.id],
+  );
+
   // Track which shapes need to be sent to the server. Cleared on save.
   const dirtyRef = useRef<Set<string>>(new Set());
   // Track shapes deleted client-side that need a server-side delete.
@@ -107,9 +144,129 @@ export function LayoutEditor({
     shapesRef.current = shapes;
   }, [shapes]);
 
+  // ---------------------------------------------------------------------------
+  // History — undo/redo. Snapshots Shape[] before each mutation. Rapid
+  // streams of updates within COALESCE_MS collapse into one entry, so a
+  // continuous drag is one undo step. Capped at HISTORY_LIMIT entries.
+  // ---------------------------------------------------------------------------
+  const HISTORY_LIMIT = 50;
+  const COALESCE_MS = 300;
+  const historyPastRef = useRef<Shape[][]>([]);
+  const historyFutureRef = useRef<Shape[][]>([]);
+  const lastTouchAtRef = useRef<number>(0);
+
+  const maybePushHistory = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTouchAtRef.current > COALESCE_MS) {
+      historyPastRef.current.push(shapesRef.current);
+      if (historyPastRef.current.length > HISTORY_LIMIT) {
+        historyPastRef.current.shift();
+      }
+      historyFutureRef.current = [];
+    }
+    lastTouchAtRef.current = now;
+  }, []);
+
+  // Reconcile dirty + deleted refs after a swap to a different shape state.
+  // We compare prevShapes (what was on screen) → nextShapes (what's about
+  // to be on screen): added shapes go to deleted, removed shapes come back
+  // as dirty, mutated shapes are dirty. Server delete is idempotent so it
+  // is safe to send a delete for a shape that was never persisted.
+  const reconcileAfterTimeTravel = useCallback(
+    (prevShapes: Shape[], nextShapes: Shape[]) => {
+      const prevById = new Map(prevShapes.map((s) => [s.id, s]));
+      const nextById = new Map(nextShapes.map((s) => [s.id, s]));
+      for (const id of prevById.keys()) {
+        if (!nextById.has(id)) {
+          // Shape disappeared — remove from dirty, queue for server delete.
+          dirtyRef.current.delete(id);
+          deletedRef.current.add(id);
+        }
+      }
+      for (const [id, s] of nextById) {
+        if (!prevById.has(id)) {
+          // Shape reappeared — undo a delete or redo an add.
+          deletedRef.current.delete(id);
+          dirtyRef.current.add(id);
+        } else if (prevById.get(id) !== s) {
+          // Same id, content shifted (object identity differs) → dirty.
+          dirtyRef.current.add(id);
+        }
+      }
+    },
+    [],
+  );
+
   const selected = useMemo(
     () => shapes.find((s) => s.id === selectedId) ?? null,
     [shapes, selectedId],
+  );
+
+  // Selection helpers — keep selectedId + selectedIds in sync.
+  const selectOnly = useCallback((id: string | null) => {
+    setSelectedIdRaw(id);
+    setSelectedIds(id ? new Set([id]) : new Set());
+  }, []);
+
+  const selectToggle = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        // If we removed the primary, fall back to any remaining selection.
+        setSelectedIdRaw((cur) => {
+          if (cur !== id) return cur;
+          const fallback = next.values().next().value;
+          return fallback ?? null;
+        });
+      } else {
+        next.add(id);
+        setSelectedIdRaw(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(shapesRef.current.map((s) => s.id)));
+    setSelectedIdRaw((cur) => {
+      if (cur && shapesRef.current.some((s) => s.id === cur)) return cur;
+      return shapesRef.current[0]?.id ?? null;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIdRaw(null);
+    setSelectedIds(new Set());
+  }, []);
+
+  const selectMany = useCallback(
+    (ids: string[], additive: boolean) => {
+      setSelectedIds((prev) => {
+        const next = additive ? new Set(prev) : new Set<string>();
+        for (const id of ids) next.add(id);
+        return next;
+      });
+      const last = ids[ids.length - 1] ?? null;
+      if (last) setSelectedIdRaw(last);
+      else if (!additive) setSelectedIdRaw(null);
+    },
+    [],
+  );
+
+  // Canvas-facing onSelect — translates a (id, mode) pair into the right
+  // selection helper. The canvas calls this on shape click + on background
+  // click.
+  const onCanvasSelect = useCallback(
+    (id: string | null, mode: "replace" | "toggle") => {
+      if (id === null) {
+        clearSelection();
+        return;
+      }
+      if (mode === "toggle") selectToggle(id);
+      else selectOnly(id);
+    },
+    [clearSelection, selectOnly, selectToggle],
   );
 
   const palette = useMemo(
@@ -215,6 +372,7 @@ export function LayoutEditor({
   const spawnShape = useCallback(
     (kind: ShapeKind) => {
       if (!canEdit) return;
+      maybePushHistory();
       const d = defaultsForKind(kind);
       // Spawn near canvas center with a small randomized offset so successive
       // spawns don't stack on the exact same point.
@@ -242,40 +400,53 @@ export function LayoutEditor({
         z_order: z,
       });
       setShapes((prev) => [...prev, shape]);
-      setSelectedId(id);
+      selectOnly(id);
       dirtyRef.current.add(id);
       scheduleSave();
     },
-    [canEdit, shapes, scheduleSave],
+    [canEdit, shapes, scheduleSave, maybePushHistory, selectOnly],
   );
 
   const updateShape = useCallback(
     (id: string, patch: Partial<Shape>) => {
       if (!canEdit) return;
+      maybePushHistory();
       setShapes((prev) =>
         prev.map((s) => (s.id === id ? clampShape({ ...s, ...patch }) : s)),
       );
       dirtyRef.current.add(id);
       scheduleSave();
     },
-    [canEdit, scheduleSave],
+    [canEdit, scheduleSave, maybePushHistory],
   );
 
   const deleteShape = useCallback(
     (id: string) => {
       if (!canEdit) return;
+      maybePushHistory();
       setShapes((prev) => prev.filter((s) => s.id !== id));
       dirtyRef.current.delete(id);
       deletedRef.current.add(id);
-      if (selectedId === id) setSelectedId(null);
+      // Drop from selection set; promote primary if needed.
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setSelectedIdRaw((cur) => {
+        if (cur !== id) return cur;
+        return null;
+      });
       scheduleSave();
     },
-    [canEdit, selectedId, scheduleSave],
+    [canEdit, scheduleSave, maybePushHistory],
   );
 
   const bumpZ = useCallback(
     (id: string, dir: "up" | "down") => {
       if (!canEdit) return;
+      maybePushHistory();
       setShapes((prev) => {
         const target = prev.find((s) => s.id === id);
         if (!target) return prev;
@@ -290,8 +461,136 @@ export function LayoutEditor({
       dirtyRef.current.add(id);
       scheduleSave();
     },
-    [canEdit, scheduleSave],
+    [canEdit, scheduleSave, maybePushHistory],
   );
+
+  // ---------------------------------------------------------------------------
+  // Undo / redo + keyboard ops.
+  // ---------------------------------------------------------------------------
+
+  // Prune selection refs against the new shape set after a time-travel,
+  // so dangling ids in selectedIds (shape no longer exists) get dropped.
+  const pruneSelectionAgainst = useCallback((nextShapes: Shape[]) => {
+    const ids = new Set(nextShapes.map((s) => s.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (ids.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+    setSelectedIdRaw((cur) => (cur && ids.has(cur) ? cur : null));
+  }, []);
+
+  const undo = useCallback(() => {
+    if (!canEdit) return;
+    const prev = historyPastRef.current.pop();
+    if (!prev) return;
+    const current = shapesRef.current;
+    historyFutureRef.current.push(current);
+    setShapes(prev);
+    reconcileAfterTimeTravel(current, prev);
+    pruneSelectionAgainst(prev);
+    // Reset coalesce window so the next user mutation starts a new entry.
+    lastTouchAtRef.current = 0;
+    scheduleSave();
+  }, [canEdit, scheduleSave, reconcileAfterTimeTravel, pruneSelectionAgainst]);
+
+  const redo = useCallback(() => {
+    if (!canEdit) return;
+    const next = historyFutureRef.current.pop();
+    if (!next) return;
+    const current = shapesRef.current;
+    historyPastRef.current.push(current);
+    if (historyPastRef.current.length > HISTORY_LIMIT) {
+      historyPastRef.current.shift();
+    }
+    setShapes(next);
+    reconcileAfterTimeTravel(current, next);
+    pruneSelectionAgainst(next);
+    lastTouchAtRef.current = 0;
+    scheduleSave();
+  }, [canEdit, scheduleSave, reconcileAfterTimeTravel, pruneSelectionAgainst]);
+
+  const duplicateSelected = useCallback(() => {
+    if (!canEdit || selectedIds.size === 0) return;
+    const sources = shapesRef.current.filter((s) => selectedIds.has(s.id));
+    if (sources.length === 0) return;
+    maybePushHistory();
+    const baseZ = Math.max(...shapesRef.current.map((s) => s.z_order), -1);
+    const copies: Shape[] = sources.map((src, i) => {
+      const id = uuid();
+      return clampShape({
+        ...src,
+        id,
+        x_pct: src.x_pct + 4,
+        y_pct: src.y_pct + 4,
+        group_id: null, // never duplicate a group binding
+        locked: false,
+        z_order: baseZ + 1 + i,
+      });
+    });
+    setShapes((prev) => [...prev, ...copies]);
+    // Select the new copies, primary = last.
+    const newIds = copies.map((c) => c.id);
+    setSelectedIds(new Set(newIds));
+    setSelectedIdRaw(newIds[newIds.length - 1] ?? null);
+    for (const c of copies) dirtyRef.current.add(c.id);
+    scheduleSave();
+  }, [canEdit, selectedIds, scheduleSave, maybePushHistory]);
+
+  const nudgeSelected = useCallback(
+    (dx: number, dy: number) => {
+      if (!canEdit || selectedIds.size === 0) return;
+      // updateShape coalesces consecutive nudges (typematic repeat) into a
+      // single undo entry — works for batch the same way.
+      const movable = shapesRef.current.filter(
+        (s) => selectedIds.has(s.id) && !s.locked,
+      );
+      for (const s of movable) {
+        updateShape(s.id, {
+          x_pct: s.x_pct + dx,
+          y_pct: s.y_pct + dy,
+        });
+      }
+    },
+    [canEdit, selectedIds, updateShape],
+  );
+
+  const deleteSelected = useCallback(() => {
+    if (!canEdit || selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    if (ids.length === 1) {
+      deleteShape(ids[0]);
+      return;
+    }
+    maybePushHistory();
+    const idSet = new Set(ids);
+    setShapes((prev) => prev.filter((s) => !idSet.has(s.id)));
+    for (const id of ids) {
+      dirtyRef.current.delete(id);
+      deletedRef.current.add(id);
+    }
+    setSelectedIds(new Set());
+    setSelectedIdRaw(null);
+    scheduleSave();
+  }, [canEdit, selectedIds, deleteShape, maybePushHistory, scheduleSave]);
+
+  const toggleLockSelected = useCallback(() => {
+    if (!canEdit || selectedIds.size === 0) return;
+    const targets = shapesRef.current.filter((s) => selectedIds.has(s.id));
+    if (targets.length === 0) return;
+    // If any selected is unlocked, the action locks all (the more
+    // conservative bulk action). Else unlock all.
+    const nextLocked = targets.some((s) => !s.locked);
+    for (const s of targets) {
+      if (s.locked !== nextLocked) {
+        updateShape(s.id, { locked: nextLocked });
+      }
+    }
+  }, [canEdit, selectedIds, updateShape]);
 
   // ---------------------------------------------------------------------------
   // Keyboard.
@@ -311,20 +610,113 @@ export function LayoutEditor({
       ) {
         return;
       }
+
+      const cmd = e.metaKey || e.ctrlKey;
+
+      // Undo / redo. Cmd+Z = undo, Cmd+Shift+Z or Cmd+Y = redo.
+      if (cmd && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (cmd && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
+      // Duplicate.
+      if (cmd && e.key.toLowerCase() === "d") {
+        if (selectedIds.size > 0) {
+          e.preventDefault();
+          duplicateSelected();
+        }
+        return;
+      }
+
+      // Select all.
+      if (cmd && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        selectAll();
+        return;
+      }
+
+      // Bare keys below — ignore when any modifier is held so we don't
+      // collide with browser shortcuts.
+      if (cmd || e.altKey) return;
+
       if (e.key === "Escape") {
-        setSelectedId(null);
+        clearSelection();
         return;
       }
       if (e.key === "Backspace" || e.key === "Delete") {
-        if (selectedId) {
+        if (selectedIds.size > 0) {
           e.preventDefault();
-          deleteShape(selectedId);
+          deleteSelected();
         }
+        return;
+      }
+      if (e.key === "l" || e.key === "L") {
+        if (selectedIds.size > 0) {
+          e.preventDefault();
+          toggleLockSelected();
+        }
+        return;
+      }
+      if (e.key === "g" || e.key === "G") {
+        e.preventDefault();
+        setGridSnap(!gridSnap);
+        return;
+      }
+
+      // Arrow nudge — 1 unit, Shift+arrow = 10 units.
+      const step = e.shiftKey ? 10 : 1;
+      if (e.key === "ArrowUp") {
+        if (selectedIds.size > 0) {
+          e.preventDefault();
+          nudgeSelected(0, -step);
+        }
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        if (selectedIds.size > 0) {
+          e.preventDefault();
+          nudgeSelected(0, step);
+        }
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        if (selectedIds.size > 0) {
+          e.preventDefault();
+          nudgeSelected(-step, 0);
+        }
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        if (selectedIds.size > 0) {
+          e.preventDefault();
+          nudgeSelected(step, 0);
+        }
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canEdit, selectedId, deleteShape]);
+  }, [
+    canEdit,
+    selectedIds,
+    clearSelection,
+    deleteSelected,
+    duplicateSelected,
+    gridSnap,
+    nudgeSelected,
+    redo,
+    selectAll,
+    setGridSnap,
+    toggleLockSelected,
+    undo,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Render.
@@ -353,10 +745,13 @@ export function LayoutEditor({
         <FloorPlanCanvas
           shapes={shapes}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedIds={selectedIds}
+          onSelect={onCanvasSelect}
+          onSelectMany={selectMany}
           onUpdate={updateShape}
           canEdit={canEdit}
           revealNames={revealNames}
+          gridSnap={gridSnap}
           groupsById={groupsById}
           view={view}
           onViewChange={setView}
@@ -384,6 +779,8 @@ export function LayoutEditor({
           onViewChange={setView}
           revealNames={revealNames}
           onRevealChange={setRevealNames}
+          gridSnap={gridSnap}
+          onGridSnapChange={setGridSnap}
           canEdit={canEdit}
         />
 
@@ -393,10 +790,14 @@ export function LayoutEditor({
           allGroups={groups}
           seatingMode={event.seating_mode}
           canEdit={canEdit}
+          selectedCount={selectedIds.size}
           onUpdate={(patch) => selected && updateShape(selected.id, patch)}
           onDelete={() => selected && deleteShape(selected.id)}
           onBumpZ={(dir) => selected && bumpZ(selected.id, dir)}
-          onClose={() => setSelectedId(null)}
+          onDeleteAll={deleteSelected}
+          onToggleLockAll={toggleLockSelected}
+          onDuplicateAll={duplicateSelected}
+          onClose={clearSelection}
         />
       </div>
     </div>
@@ -461,6 +862,8 @@ function FloatingTopChip({
   onViewChange,
   revealNames,
   onRevealChange,
+  gridSnap,
+  onGridSnapChange,
   canEdit,
 }: {
   saveState: SaveState;
@@ -469,6 +872,8 @@ function FloatingTopChip({
   onViewChange: (v: View) => void;
   revealNames: boolean;
   onRevealChange: (n: boolean) => void;
+  gridSnap: boolean;
+  onGridSnapChange: (n: boolean) => void;
   canEdit: boolean;
 }) {
   function zoomBy(factor: number) {
@@ -512,6 +917,27 @@ function FloatingTopChip({
       >
         Fit
       </button>
+
+      <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+
+      {canEdit ? (
+        <button
+          type="button"
+          onClick={() => onGridSnapChange(!gridSnap)}
+          aria-pressed={gridSnap}
+          title="Snap to grid · G"
+          className={`inline-flex items-center gap-1.5 px-2 h-6 rounded-full text-[10.5px] tracking-[0.16em] uppercase transition-colors ${
+            gridSnap
+              ? "bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+              : "text-[var(--ink-faint)] hover:text-[var(--ink)] hover:bg-[var(--paper)]"
+          }`}
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.1">
+            <path d="M0 4 H12 M0 8 H12 M4 0 V12 M8 0 V12" />
+          </svg>
+          Grid
+        </button>
+      ) : null}
 
       <span className="w-px h-4 bg-[var(--paper-shadow)]" />
 
