@@ -100,11 +100,27 @@ export type GroupRoster = {
   members: GroupRosterMember[];
 };
 
+// Background-image asset rendered under the shapes layer in the editor.
+// Stored in the private `event-floor-plans` bucket; `url` is a fresh signed
+// URL produced by the layout page loader (1h TTL). Width/height are kept
+// for future use (vision auto-detect needs the natural dimensions); for
+// rendering we just stretch the image to fit the page bounding box.
+export type FloorPlanAsset = {
+  id: string;
+  storage_path: string;
+  opacity: number;
+  width_px: number | null;
+  height_px: number | null;
+  original_filename: string | null;
+  url: string;
+};
+
 export type LayoutEditorProps = {
   event: EventLite;
   initialShapes: Shape[];
   groups: GroupRoster[];
   canEdit: boolean;
+  initialAsset: FloorPlanAsset | null;
 };
 
 // Viewport extents (user-space units inside the SVG viewBox).

@@ -30,6 +30,7 @@ import {
   VB_W,
 } from "./types";
 import type {
+  FloorPlanAsset,
   GroupRoster,
   LayoutEditorProps,
   Shape,
@@ -82,6 +83,7 @@ export function LayoutEditor({
   initialShapes,
   groups,
   canEdit,
+  initialAsset,
 }: LayoutEditorProps) {
   const [shapes, setShapes] = useState<Shape[]>(initialShapes);
   // Selection state — selectedId is the primary (last-clicked) shape that
@@ -95,11 +97,30 @@ export function LayoutEditor({
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [view, setView] = useState<View>(FIT_VIEW);
-  const [revealNames, setRevealNamesState] = useState<boolean>(() =>
-    readInitialReveal(event.id),
-  );
-  const [gridSnap, setGridSnapState] = useState<boolean>(() =>
-    readInitialGridSnap(event.id),
+  // Both default to true so SSR + first-client render agree. The actual
+  // saved values from sessionStorage / URL params get read in a useEffect
+  // after mount — a brief flicker (one render) is preferable to a
+  // hydration-mismatch warning when the saved value disagrees with the
+  // SSR default.
+  const [revealNames, setRevealNamesState] = useState<boolean>(true);
+  const [gridSnap, setGridSnapState] = useState<boolean>(true);
+  useEffect(() => {
+    const r = readInitialReveal(event.id);
+    if (r !== true) setRevealNamesState(r);
+    const g = readInitialGridSnap(event.id);
+    if (g !== true) setGridSnapState(g);
+  }, [event.id]);
+
+  // Background floor-plan asset — uploaded once per event, rendered under
+  // the shapes layer at adjustable opacity. Null when nothing is uploaded.
+  const [asset, setAsset] = useState<FloorPlanAsset | null>(initialAsset);
+  const [assetBusy, setAssetBusy] = useState<
+    null | "uploading" | "saving" | "removing"
+  >(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  // Debounce opacity PATCH so dragging the slider doesn't fire 30 requests.
+  const opacitySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
   );
 
   const setRevealNames = useCallback(
@@ -131,6 +152,103 @@ export function LayoutEditor({
     },
     [event.id],
   );
+
+  const uploadAsset = useCallback(
+    async (file: File) => {
+      if (!canEdit) return;
+      setAssetError(null);
+      setAssetBusy("uploading");
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        if (asset) fd.append("opacity", String(asset.opacity));
+        const res = await fetch(
+          `/api/admin/events/${event.id}/floor-plan-asset`,
+          { method: "POST", body: fd },
+        );
+        const json = (await res.json().catch(() => ({}))) as {
+          asset?: FloorPlanAsset;
+          error?: string;
+          detail?: string;
+        };
+        if (!res.ok) {
+          throw new Error(json.detail ?? json.error ?? `HTTP ${res.status}`);
+        }
+        if (json.asset) setAsset(json.asset);
+      } catch (err) {
+        setAssetError(err instanceof Error ? err.message : "upload failed");
+      } finally {
+        setAssetBusy(null);
+      }
+    },
+    [canEdit, event.id, asset],
+  );
+
+  const setAssetOpacity = useCallback(
+    (next: number) => {
+      if (!canEdit || !asset) return;
+      const clamped = Math.max(0.05, Math.min(1, next));
+      // Optimistic local update so the slider feels live.
+      setAsset((prev) => (prev ? { ...prev, opacity: clamped } : prev));
+      if (opacitySaveTimerRef.current) {
+        clearTimeout(opacitySaveTimerRef.current);
+      }
+      opacitySaveTimerRef.current = setTimeout(() => {
+        void (async () => {
+          setAssetBusy("saving");
+          try {
+            const res = await fetch(
+              `/api/admin/events/${event.id}/floor-plan-asset`,
+              {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ opacity: clamped }),
+              },
+            );
+            if (!res.ok) {
+              const json = (await res.json().catch(() => ({}))) as {
+                error?: string;
+                detail?: string;
+              };
+              throw new Error(
+                json.detail ?? json.error ?? `HTTP ${res.status}`,
+              );
+            }
+          } catch (err) {
+            setAssetError(err instanceof Error ? err.message : "save failed");
+          } finally {
+            setAssetBusy(null);
+          }
+        })();
+      }, 350);
+    },
+    [canEdit, asset, event.id],
+  );
+
+  const removeAsset = useCallback(async () => {
+    if (!canEdit || !asset) return;
+    if (!window.confirm("Remove the background floor plan image?")) return;
+    setAssetError(null);
+    setAssetBusy("removing");
+    try {
+      const res = await fetch(
+        `/api/admin/events/${event.id}/floor-plan-asset`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          detail?: string;
+        };
+        throw new Error(json.detail ?? json.error ?? `HTTP ${res.status}`);
+      }
+      setAsset(null);
+    } catch (err) {
+      setAssetError(err instanceof Error ? err.message : "remove failed");
+    } finally {
+      setAssetBusy(null);
+    }
+  }, [canEdit, asset, event.id]);
 
   // Track which shapes need to be sent to the server. Cleared on save.
   const dirtyRef = useRef<Set<string>>(new Set());
@@ -752,6 +870,7 @@ export function LayoutEditor({
           canEdit={canEdit}
           revealNames={revealNames}
           gridSnap={gridSnap}
+          asset={asset}
           groupsById={groupsById}
           view={view}
           onViewChange={setView}
@@ -782,6 +901,16 @@ export function LayoutEditor({
           gridSnap={gridSnap}
           onGridSnapChange={setGridSnap}
           canEdit={canEdit}
+        />
+
+        <FloatingBackgroundChip
+          asset={asset}
+          busy={assetBusy}
+          error={assetError}
+          canEdit={canEdit}
+          onUpload={uploadAsset}
+          onOpacityChange={setAssetOpacity}
+          onRemove={removeAsset}
         />
 
         <ShapeInspector
@@ -976,6 +1105,161 @@ function FloatingTopChip({
           </span>
         </>
       ) : null}
+    </div>
+  );
+}
+
+// FloatingBackgroundChip — M6.5 surface for the per-event background floor
+// plan asset. Sits at the bottom-left of the canvas as a small Miro-style
+// pill. Empty state = "Upload background plan" CTA. Loaded state = thumbnail
+// + opacity slider + Replace / Remove. Hidden when canEdit is false (no
+// affordance to upload, but the asset still renders as the canvas background).
+function FloatingBackgroundChip({
+  asset,
+  busy,
+  error,
+  canEdit,
+  onUpload,
+  onOpacityChange,
+  onRemove,
+}: {
+  asset: FloorPlanAsset | null;
+  busy: null | "uploading" | "saving" | "removing";
+  error: string | null;
+  canEdit: boolean;
+  onUpload: (file: File) => void;
+  onOpacityChange: (opacity: number) => void;
+  onRemove: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  function pickFile() {
+    inputRef.current?.click();
+  }
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) onUpload(f);
+    // Reset so re-picking the same file fires another change.
+    e.target.value = "";
+  }
+
+  if (!canEdit && !asset) return null;
+
+  return (
+    <div className="gmc-print-hide absolute left-3 bottom-3 z-10 inline-flex items-center gap-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] pl-2 pr-3 py-1.5 max-w-[440px]">
+      <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--cinnabar)] shrink-0">
+        Background · 底图
+      </span>
+
+      <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+
+      {asset ? (
+        <>
+          {/* Thumbnail. <img> not <Image> — the URL is signed + per-event,
+              not amenable to Next's optimizer. */}
+          <span className="inline-flex items-center justify-center shrink-0 w-7 h-7 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--paper-shadow)] bg-[var(--paper)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={asset.url}
+              alt=""
+              className="w-full h-full object-cover"
+            />
+          </span>
+
+          <span
+            className="text-[11px] text-[var(--ink-soft)] truncate max-w-[120px]"
+            title={asset.original_filename ?? "background plan"}
+          >
+            {asset.original_filename ?? "uploaded plan"}
+          </span>
+
+          {canEdit ? (
+            <>
+              <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+              <label
+                className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)] shrink-0"
+                title="Background opacity"
+              >
+                <span>透</span>
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={Math.round(asset.opacity * 100)}
+                  onChange={(e) =>
+                    onOpacityChange(Number(e.target.value) / 100)
+                  }
+                  className="accent-[var(--cinnabar)] w-[88px] h-1"
+                />
+                <span className="tabular-nums w-[28px] text-right text-[var(--ink-soft)]">
+                  {Math.round(asset.opacity * 100)}%
+                </span>
+              </label>
+
+              <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+
+              <button
+                type="button"
+                onClick={pickFile}
+                disabled={busy !== null}
+                className="text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-soft)] hover:text-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
+              >
+                Replace
+              </button>
+              <button
+                type="button"
+                onClick={onRemove}
+                disabled={busy !== null}
+                className="text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
+              >
+                Remove
+              </button>
+            </>
+          ) : null}
+        </>
+      ) : canEdit ? (
+        <button
+          type="button"
+          onClick={pickFile}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-1.5 text-[10.5px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] disabled:opacity-50 transition-colors px-1.5 h-6 rounded-full"
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+            <path d="M6 2 V10 M2 6 H10" />
+          </svg>
+          Upload plan
+        </button>
+      ) : null}
+
+      {busy ? (
+        <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--cinnabar)] shrink-0">
+          {busy === "uploading"
+            ? "Uploading…"
+            : busy === "saving"
+              ? "Saving…"
+              : "Removing…"}
+        </span>
+      ) : null}
+
+      {error ? (
+        <span
+          className="text-[10px] tracking-[0.04em] shrink-0"
+          style={{ color: "#B91C1C" }}
+          title={error}
+        >
+          {error.length > 36 ? error.slice(0, 36) + "…" : error}
+        </span>
+      ) : null}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        onChange={onFileChange}
+        className="hidden"
+      />
     </div>
   );
 }

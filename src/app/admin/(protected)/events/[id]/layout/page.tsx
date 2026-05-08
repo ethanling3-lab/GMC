@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceClient,
+} from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 import { LayoutEditor } from "@/components/admin/layout/LayoutEditor";
 import type {
+  FloorPlanAsset,
   GroupClassKey,
   GroupRoster,
   GroupRosterMember,
@@ -82,7 +86,16 @@ export default async function LayoutPage({
     role: SeatRole;
   };
 
-  const [evRes, shapeRes, groupRes, assignmentRes] = await Promise.all([
+  type AssetRow = {
+    id: string;
+    storage_path: string;
+    opacity: number | string;
+    width_px: number | null;
+    height_px: number | null;
+    original_filename: string | null;
+  };
+
+  const [evRes, shapeRes, groupRes, assignmentRes, assetRes] = await Promise.all([
     supabase
       .from("events")
       .select(
@@ -109,6 +122,12 @@ export default async function LayoutPage({
       .select("participant_id, group_id, role")
       .eq("event_id", eventId)
       .returns<AssignmentRow[]>(),
+    supabase
+      .from("event_floor_plan_assets")
+      .select("id, storage_path, opacity, width_px, height_px, original_filename")
+      .eq("event_id", eventId)
+      .eq("kind", "background_image")
+      .maybeSingle<AssetRow>(),
   ]);
 
   if (evRes.error) throw new Error(evRes.error.message);
@@ -200,6 +219,30 @@ export default async function LayoutPage({
     };
   });
 
+  // Background plan asset — sign URL for the private bucket. createSignedUrl
+  // is allowed only with the service role (the SSR user client doesn't have
+  // the bucket-level read grant). The TTL covers a long admin session; the
+  // editor refetches by reloading the page if the URL ever 401s.
+  let initialAsset: FloorPlanAsset | null = null;
+  if (assetRes.data) {
+    const a = assetRes.data;
+    const service = createSupabaseServiceClient();
+    const { data: signed } = await service.storage
+      .from("event-floor-plans")
+      .createSignedUrl(a.storage_path, 60 * 60);
+    if (signed?.signedUrl) {
+      initialAsset = {
+        id: a.id,
+        storage_path: a.storage_path,
+        opacity: typeof a.opacity === "number" ? a.opacity : Number(a.opacity),
+        width_px: a.width_px,
+        height_px: a.height_px,
+        original_filename: a.original_filename,
+        url: signed.signedUrl,
+      };
+    }
+  }
+
   const title =
     ev.title_en || ev.title_cn
       ? `${ev.title_en ?? ""}${ev.title_en && ev.title_cn ? " · " : ""}${ev.title_cn ?? ""}`
@@ -224,6 +267,7 @@ export default async function LayoutPage({
         initialShapes={shapes}
         groups={groups}
         canEdit={canEdit}
+        initialAsset={initialAsset}
       />
     </>
   );

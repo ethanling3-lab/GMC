@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShapeNode } from "./ShapeNode";
 import { VB_H, VB_W, isSeatedKind } from "./types";
-import type { GroupRoster, Shape } from "./types";
+import type { FloorPlanAsset, GroupRoster, Shape } from "./types";
 
 type Props = {
   shapes: Shape[];
@@ -45,6 +45,10 @@ type Props = {
   // When true, drag positions snap to a 5-unit grid AND to other shapes'
   // edge / center alignments within a tolerance (smart guides).
   gridSnap: boolean;
+  // Optional background floor-plan image rendered under the shapes layer.
+  // Null = no upload yet. The url is a fresh signed URL from the page
+  // loader (1h TTL).
+  asset: FloorPlanAsset | null;
   groupsById: Map<string, GroupRoster>;
   // View is lifted so the LayoutEditor toolbar can show + adjust the scale.
   view: View;
@@ -121,6 +125,7 @@ export function FloorPlanCanvas({
   canEdit,
   revealNames,
   gridSnap,
+  asset,
   groupsById,
   view,
   onViewChange,
@@ -737,10 +742,12 @@ export function FloorPlanCanvas({
     <div
       className={`relative rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-2)] overflow-hidden gmc-density-${density}`}
       style={{
-        // Pass 4 — full-bleed canvas. Reserves only enough for AdminShell's
-        // py-10 (~40px top) + a small bottom margin. Floating overlays
-        // (palette, inspector, top chip) sit on top inside this card.
-        height: "calc(100vh - 80px)",
+        // Full-bleed canvas sized to fit the viewport with no scroll. Reserves
+        // AdminShell's TopBar (h-16 = 64px) + main py-10 (40 + 40 = 80px) so
+        // the card hugs the bottom of the viewport exactly. Floating overlays
+        // (palette, inspector, top + background chips) sit on top inside this
+        // card.
+        height: "calc(100dvh - 144px)",
         minHeight: "560px",
       }}
     >
@@ -824,6 +831,26 @@ export function FloorPlanCanvas({
           opacity="0.5"
           pointerEvents="none"
         />
+
+        {/* Background floor-plan asset — rendered between the page tint and
+            the printable boundary stroke so the page outline stays visible.
+            preserveAspectRatio="xMidYMid meet" stretches the image to fit
+            within the page bounding box without distortion. pointer-events
+            disabled so it never intercepts shape clicks. */}
+        {asset ? (
+          <image
+            href={asset.url}
+            x={0}
+            y={0}
+            width={VB_W}
+            height={VB_H}
+            opacity={asset.opacity}
+            preserveAspectRatio="xMidYMid meet"
+            pointerEvents="none"
+            className="gmc-floor-bg-asset"
+          />
+        ) : null}
+
         <rect
           x="0.2"
           y="0.2"
