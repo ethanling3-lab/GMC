@@ -21,8 +21,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShapeNode } from "./ShapeNode";
-import { VB_H, VB_W, isSeatedKind } from "./types";
-import type { FloorPlanAsset, GroupRoster, Shape } from "./types";
+import { VB_H, VB_W, isSeatedKind, mapDetectedCandidate } from "./types";
+import type {
+  DetectedCandidate,
+  FloorPlanAsset,
+  GroupRoster,
+  Shape,
+} from "./types";
 
 type Props = {
   shapes: Shape[];
@@ -49,6 +54,14 @@ type Props = {
   // Null = no upload yet. The url is a fresh signed URL from the page
   // loader (1h TTL).
   asset: FloorPlanAsset | null;
+  // Image natural dimensions — used for letterbox-aware mapping of vision
+  // candidates into user-space. Null until the image finishes loading.
+  imageNatural: { w: number; h: number } | null;
+  // Vision-detected candidates from the auto-detect route. Null = no
+  // detection run yet; empty array = run completed with zero results.
+  candidates: DetectedCandidate[] | null;
+  onAcceptCandidate: (c: DetectedCandidate) => void;
+  onRejectCandidate: (id: string) => void;
   groupsById: Map<string, GroupRoster>;
   // View is lifted so the LayoutEditor toolbar can show + adjust the scale.
   view: View;
@@ -113,6 +126,26 @@ type DragState =
       startClientX: number;
       startClientY: number;
       moved: boolean;
+    }
+  | {
+      // Multi-select group resize — drag any of the 4 bbox corner handles
+      // to scale every selected shape together. Anchor stays put; the
+      // member array captures each shape's start position + size so we
+      // can rebuild positions independently of the running setShapes
+      // state.
+      kind: "multi_resize";
+      anchorX: number;
+      anchorY: number;
+      bboxW0: number;
+      bboxH0: number;
+      uniform: boolean;
+      members: Array<{
+        id: string;
+        x0: number;
+        y0: number;
+        w0: number;
+        h0: number;
+      }>;
     };
 
 export function FloorPlanCanvas({
@@ -126,6 +159,10 @@ export function FloorPlanCanvas({
   revealNames,
   gridSnap,
   asset,
+  imageNatural,
+  candidates,
+  onAcceptCandidate,
+  onRejectCandidate,
   groupsById,
   view,
   onViewChange,
@@ -396,6 +433,78 @@ export function FloorPlanCanvas({
     }
   }, []);
 
+  // Start a multi-select bbox resize. The opposite-corner anchor stays
+  // pinned; member positions get rebuilt each pointermove relative to it.
+  const startMultiResize = useCallback(
+    (
+      e: React.PointerEvent,
+      handle: "tl" | "tr" | "bl" | "br",
+      bbox: { x: number; y: number; width: number; height: number },
+    ) => {
+      if (!canEdit) return;
+      e.stopPropagation();
+      const left = bbox.x;
+      const top = bbox.y;
+      const right = bbox.x + bbox.width;
+      const bottom = bbox.y + bbox.height;
+      let anchorX = left;
+      let anchorY = top;
+      if (handle === "br") {
+        anchorX = left;
+        anchorY = top;
+      } else if (handle === "tr") {
+        anchorX = left;
+        anchorY = bottom;
+      } else if (handle === "bl") {
+        anchorX = right;
+        anchorY = top;
+      } else if (handle === "tl") {
+        anchorX = right;
+        anchorY = bottom;
+      }
+      const members: Array<{
+        id: string;
+        x0: number;
+        y0: number;
+        w0: number;
+        h0: number;
+      }> = [];
+      for (const s of shapes) {
+        if (!selectedIdsRef.current.has(s.id)) continue;
+        if (s.locked) continue;
+        members.push({
+          id: s.id,
+          x0: s.x_pct,
+          y0: s.y_pct,
+          w0: s.width_pct,
+          h0: s.height_pct,
+        });
+      }
+      if (members.length === 0) return;
+      // If any selected shape is a round_table, lock to uniform scaling so
+      // circles don't get stretched into ovals. Shift held = uniform too.
+      const hasRound = shapes.some(
+        (s) => selectedIdsRef.current.has(s.id) && s.kind === "round_table",
+      );
+      dragRef.current = {
+        kind: "multi_resize",
+        anchorX,
+        anchorY,
+        bboxW0: Math.max(0.001, bbox.width),
+        bboxH0: Math.max(0.001, bbox.height),
+        uniform: hasRound || e.shiftKey,
+        members,
+      };
+      setDragKind("resize");
+      try {
+        svgRef.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    },
+    [canEdit, shapes],
+  );
+
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
       const drag = dragRef.current;
@@ -468,6 +577,33 @@ export function FloorPlanCanvas({
           });
         }
         setGuides(snap.guides);
+        return;
+      }
+
+      if (drag.kind === "multi_resize") {
+        // Compute new bbox dimensions from the anchor → pointer delta. A
+        // minimum size protects against degenerate scale factors when the
+        // pointer crosses the anchor.
+        const minSize = 1;
+        const newW = Math.max(minSize, Math.abs(p.x - drag.anchorX));
+        const newH = Math.max(minSize, Math.abs(p.y - drag.anchorY));
+        let scaleX = newW / drag.bboxW0;
+        let scaleY = newH / drag.bboxH0;
+        if (drag.uniform || e.shiftKey) {
+          const m = Math.min(scaleX, scaleY);
+          scaleX = m;
+          scaleY = m;
+        }
+        for (const member of drag.members) {
+          const relX = member.x0 - drag.anchorX;
+          const relY = member.y0 - drag.anchorY;
+          onUpdate(member.id, {
+            x_pct: drag.anchorX + relX * scaleX,
+            y_pct: drag.anchorY + relY * scaleY,
+            width_pct: Math.max(minSize, member.w0 * scaleX),
+            height_pct: Math.max(minSize, member.h0 * scaleY),
+          });
+        }
         return;
       }
 
@@ -720,6 +856,36 @@ export function FloorPlanCanvas({
     [shapes],
   );
 
+  // Multi-select bounding box — union of every selected shape's bounding
+  // rect. Drives the dashed selection rect + 4 corner handles when the
+  // selection size is 2+. Returns null for single (or empty) selections;
+  // single-shape selection keeps its per-shape handles inside ShapeNode.
+  const selectionBBox = useMemo<
+    null | { x: number; y: number; width: number; height: number }
+  >(() => {
+    if (selectedIds.size < 2) return null;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const s of shapes) {
+      if (!selectedIds.has(s.id)) continue;
+      if (s.x_pct < minX) minX = s.x_pct;
+      if (s.y_pct < minY) minY = s.y_pct;
+      const right = s.x_pct + s.width_pct;
+      const bottom = s.y_pct + s.height_pct;
+      if (right > maxX) maxX = right;
+      if (bottom > maxY) maxY = bottom;
+    }
+    if (!Number.isFinite(minX)) return null;
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }, [shapes, selectedIds]);
+
   // Background grid pad — extend the dotted/grid pattern past the page so
   // panning around shows context, not a void.
   const padX = VB_W * 1.5;
@@ -871,6 +1037,9 @@ export function FloorPlanCanvas({
           // primary gets handles to avoid 50 handle rings on Cmd+A.
           const isSelected = selectedIds.has(s.id);
           const isPrimary = s.id === selectedId;
+          // When N>1 selected we surface bbox handles instead of per-shape
+          // handles, so admin sees one transform target for the whole group.
+          const singleSelected = selectedIds.size === 1;
           return (
             <ShapeNode
               key={s.id}
@@ -882,12 +1051,65 @@ export function FloorPlanCanvas({
               onPointerDownHandle={(e, handle) => startDrag(e, s.id, handle)}
               showResizeHandles={
                 isPrimary
+                && singleSelected
                 && (isSeatedKind(s.kind) || nonSeatedResizable(s.kind))
               }
-              showRotateHandle={isPrimary && rotatableKind(s.kind)}
+              showRotateHandle={
+                isPrimary && singleSelected && rotatableKind(s.kind)
+              }
             />
           );
         })}
+
+        {/* Multi-select bbox + corner resize handles — drawn whenever 2+
+            shapes are selected. Renders above shapes so admins can grab
+            handles without the underlying shape stealing the pointer. */}
+        {selectionBBox && canEdit ? (
+          <g pointerEvents="none">
+            <rect
+              x={selectionBBox.x}
+              y={selectionBBox.y}
+              width={selectionBBox.width}
+              height={selectionBBox.height}
+              fill="none"
+              stroke="var(--cinnabar)"
+              strokeWidth={0.32 / view.scale}
+              strokeDasharray={`${1.2 / view.scale} ${0.7 / view.scale}`}
+            />
+          </g>
+        ) : null}
+        {selectionBBox && canEdit ? (
+          <>
+            <BBoxHandle
+              x={selectionBBox.x}
+              y={selectionBBox.y}
+              viewScale={view.scale}
+              cursor="nwse-resize"
+              onDown={(e) => startMultiResize(e, "tl", selectionBBox)}
+            />
+            <BBoxHandle
+              x={selectionBBox.x + selectionBBox.width}
+              y={selectionBBox.y}
+              viewScale={view.scale}
+              cursor="nesw-resize"
+              onDown={(e) => startMultiResize(e, "tr", selectionBBox)}
+            />
+            <BBoxHandle
+              x={selectionBBox.x}
+              y={selectionBBox.y + selectionBBox.height}
+              viewScale={view.scale}
+              cursor="nesw-resize"
+              onDown={(e) => startMultiResize(e, "bl", selectionBBox)}
+            />
+            <BBoxHandle
+              x={selectionBBox.x + selectionBBox.width}
+              y={selectionBBox.y + selectionBBox.height}
+              viewScale={view.scale}
+              cursor="nwse-resize"
+              onDown={(e) => startMultiResize(e, "br", selectionBBox)}
+            />
+          </>
+        ) : null}
 
         {/* Marquee rect — drawn during drag-rect selection. */}
         {marquee ? (
@@ -904,6 +1126,26 @@ export function FloorPlanCanvas({
             pointerEvents="none"
           />
         ) : null}
+
+        {/* Vision-detected candidates — dashed cinnabar overlays with
+            inline accept ✓ / reject ✕ buttons. Each candidate's coords are
+            mapped from normalized image-relative space into user-space via
+            the imageNatural letterbox math. Always above shapes so admin
+            can act on them; below guides so a drag-snap line still wins
+            visually. */}
+        {candidates && candidates.length > 0
+          ? candidates.map((c) => (
+              <CandidateNode
+                key={c.id}
+                candidate={c}
+                imageNatural={imageNatural}
+                viewScale={view.scale}
+                canEdit={canEdit}
+                onAccept={() => onAcceptCandidate(c)}
+                onReject={() => onRejectCandidate(c.id)}
+              />
+            ))
+          : null}
 
         {/* Smart-alignment guides — gold hairlines across the full
             pannable area, only visible while a snap is active. */}
@@ -944,6 +1186,167 @@ export function FloorPlanCanvas({
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+// Small square handle for the multi-select bounding box. Sized in user-
+// space but the visible footprint scales with the inverse of view.scale
+// so it always reads as ~6px on screen regardless of zoom. Cinnabar fill
+// matches the dashed bbox stroke.
+function BBoxHandle({
+  x,
+  y,
+  viewScale,
+  cursor,
+  onDown,
+}: {
+  x: number;
+  y: number;
+  viewScale: number;
+  cursor: string;
+  onDown: (e: React.PointerEvent) => void;
+}) {
+  const half = 0.85 / viewScale;
+  const stroke = 0.18 / viewScale;
+  return (
+    <rect
+      x={x - half}
+      y={y - half}
+      width={half * 2}
+      height={half * 2}
+      fill="var(--paper)"
+      stroke="var(--cinnabar)"
+      strokeWidth={stroke}
+      style={{ cursor }}
+      onPointerDown={onDown}
+    />
+  );
+}
+
+// Single vision-detected candidate — dashed bounding box with inline
+// accept ✓ / reject ✕ controls. round_table candidates render with a
+// circle inset; square_table renders the rect outline. Accept button
+// nudges adoption (cinnabar-filled), reject is the X to dismiss.
+function CandidateNode({
+  candidate,
+  imageNatural,
+  viewScale,
+  canEdit,
+  onAccept,
+  onReject,
+}: {
+  candidate: DetectedCandidate;
+  imageNatural: { w: number; h: number } | null;
+  viewScale: number;
+  canEdit: boolean;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  const m = mapDetectedCandidate(candidate, imageNatural);
+  const stroke = 0.32 / viewScale;
+  const dash = `${1.6 / viewScale} ${1.0 / viewScale}`;
+  // Action buttons live just above the candidate; size scales with view so
+  // they stay tappable at every zoom.
+  const btnY = m.y - 4 / viewScale;
+  const btnSize = 3.2 / viewScale;
+  return (
+    <g>
+      {candidate.kind === "round_table" ? (
+        <circle
+          cx={m.x + m.width / 2}
+          cy={m.y + m.height / 2}
+          r={Math.max(m.width, m.height) / 2}
+          fill="var(--cinnabar-wash)"
+          fillOpacity="0.18"
+          stroke="var(--cinnabar)"
+          strokeWidth={stroke}
+          strokeDasharray={dash}
+          pointerEvents="none"
+        />
+      ) : (
+        <rect
+          x={m.x}
+          y={m.y}
+          width={m.width}
+          height={m.height}
+          fill="var(--cinnabar-wash)"
+          fillOpacity="0.18"
+          stroke="var(--cinnabar)"
+          strokeWidth={stroke}
+          strokeDasharray={dash}
+          pointerEvents="none"
+        />
+      )}
+      {candidate.label ? (
+        <text
+          x={m.x + m.width / 2}
+          y={m.y + m.height / 2 + 0.6}
+          fontSize={Math.max(2.4, Math.min(m.width, m.height) * 0.32)}
+          textAnchor="middle"
+          fill="var(--cinnabar-deep)"
+          fontFamily="var(--font-display), serif"
+          pointerEvents="none"
+        >
+          {candidate.label}
+        </text>
+      ) : null}
+      {canEdit ? (
+        <>
+          {/* Accept ✓ — cinnabar pill, sits to the LEFT of the box top edge */}
+          <g
+            onClick={onAccept}
+            style={{ cursor: "pointer" }}
+            role="button"
+            aria-label="Accept candidate"
+          >
+            <rect
+              x={m.x}
+              y={btnY}
+              width={btnSize}
+              height={btnSize}
+              rx={btnSize * 0.2}
+              fill="var(--cinnabar)"
+              stroke="var(--cinnabar-deep)"
+              strokeWidth={stroke}
+            />
+            <path
+              d={`M ${m.x + btnSize * 0.22} ${btnY + btnSize * 0.55} L ${m.x + btnSize * 0.42} ${btnY + btnSize * 0.75} L ${m.x + btnSize * 0.78} ${btnY + btnSize * 0.3}`}
+              fill="none"
+              stroke="var(--paper)"
+              strokeWidth={stroke * 2.2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </g>
+          {/* Reject ✕ — paper pill, sits to the RIGHT of accept */}
+          <g
+            onClick={onReject}
+            style={{ cursor: "pointer" }}
+            role="button"
+            aria-label="Reject candidate"
+            transform={`translate(${btnSize * 1.2} 0)`}
+          >
+            <rect
+              x={m.x}
+              y={btnY}
+              width={btnSize}
+              height={btnSize}
+              rx={btnSize * 0.2}
+              fill="var(--paper)"
+              stroke="var(--paper-shadow)"
+              strokeWidth={stroke}
+            />
+            <path
+              d={`M ${m.x + btnSize * 0.28} ${btnY + btnSize * 0.28} L ${m.x + btnSize * 0.72} ${btnY + btnSize * 0.72} M ${m.x + btnSize * 0.72} ${btnY + btnSize * 0.28} L ${m.x + btnSize * 0.28} ${btnY + btnSize * 0.72}`}
+              fill="none"
+              stroke="var(--ink-soft)"
+              strokeWidth={stroke * 2.2}
+              strokeLinecap="round"
+            />
+          </g>
+        </>
+      ) : null}
+    </g>
+  );
 }
 
 // Snap math — applies during a body drag. When `gridSnap` is on, look for

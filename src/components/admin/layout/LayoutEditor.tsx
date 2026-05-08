@@ -25,11 +25,13 @@ import { ShapeInspector } from "./ShapeInspector";
 import {
   clampShape,
   defaultsForKind,
+  mapDetectedCandidate,
   paletteForMode,
   VB_H,
   VB_W,
 } from "./types";
 import type {
+  DetectedCandidate,
   FloorPlanAsset,
   GroupRoster,
   LayoutEditorProps,
@@ -122,6 +124,41 @@ export function LayoutEditor({
   const opacitySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  // Image natural dimensions — needed to undo the xMidYMid meet letterbox
+  // when mapping vision-detected candidates into user-space. Loaded via an
+  // off-DOM Image() because SVGImageElement doesn't expose natural sizes.
+  const [imageNatural, setImageNatural] = useState<
+    null | { w: number; h: number }
+  >(null);
+  useEffect(() => {
+    if (!asset) {
+      setImageNatural(null);
+      return;
+    }
+    const img = new window.Image();
+    let cancelled = false;
+    img.onload = () => {
+      if (!cancelled) {
+        setImageNatural({ w: img.naturalWidth, h: img.naturalHeight });
+      }
+    };
+    img.onerror = () => {
+      if (!cancelled) setImageNatural(null);
+    };
+    img.src = asset.url;
+    return () => {
+      cancelled = true;
+    };
+  }, [asset]);
+
+  // Vision auto-detect — candidate boxes returned by Opus 4.7. Each carries
+  // normalized image-relative coords; render time we map to user-space via
+  // mapDetectedCandidate(imageNatural).
+  const [candidates, setCandidates] = useState<DetectedCandidate[] | null>(
+    null,
+  );
+  const [detectionBusy, setDetectionBusy] = useState<boolean>(false);
+  const [detectionError, setDetectionError] = useState<string | null>(null);
 
   const setRevealNames = useCallback(
     (next: boolean) => {
@@ -243,12 +280,59 @@ export function LayoutEditor({
         throw new Error(json.detail ?? json.error ?? `HTTP ${res.status}`);
       }
       setAsset(null);
+      // Drop any candidates from a prior detection — they refer to coords
+      // on the now-removed image.
+      setCandidates(null);
     } catch (err) {
       setAssetError(err instanceof Error ? err.message : "remove failed");
     } finally {
       setAssetBusy(null);
     }
   }, [canEdit, asset, event.id]);
+
+  const runAutoDetect = useCallback(async () => {
+    if (!canEdit || !asset || detectionBusy) return;
+    setDetectionError(null);
+    setDetectionBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${event.id}/floor-plan-asset/auto-detect`,
+        { method: "POST" },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        candidates?: Array<Omit<DetectedCandidate, "id">>;
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        throw new Error(json.detail ?? json.error ?? `HTTP ${res.status}`);
+      }
+      const stamped: DetectedCandidate[] = (json.candidates ?? []).map(
+        (c, i) => ({ ...c, id: `cand-${Date.now()}-${i}` }),
+      );
+      setCandidates(stamped);
+      if (stamped.length === 0) {
+        setDetectionError("No tables detected in this image.");
+      }
+    } catch (err) {
+      setDetectionError(err instanceof Error ? err.message : "detect failed");
+    } finally {
+      setDetectionBusy(false);
+    }
+  }, [canEdit, asset, event.id, detectionBusy]);
+
+  const rejectCandidate = useCallback((id: string) => {
+    setCandidates((prev) =>
+      prev ? prev.filter((c) => c.id !== id) : prev,
+    );
+  }, []);
+
+  const clearCandidates = useCallback(() => {
+    setCandidates(null);
+  }, []);
+
+  // (acceptCandidate / acceptAllCandidates defined below the persistence
+  // helpers, since they need maybePushHistory + scheduleSave + dirtyRef.)
 
   // Track which shapes need to be sent to the server. Cleared on save.
   const dirtyRef = useRef<Set<string>>(new Set());
@@ -524,6 +608,72 @@ export function LayoutEditor({
     },
     [canEdit, shapes, scheduleSave, maybePushHistory, selectOnly],
   );
+
+  // Accept a vision candidate by spawning a real shape with its mapped
+  // geometry. Mirrors spawnShape but takes geometry from the candidate
+  // instead of the kind defaults; pulls seat_count from the candidate
+  // when provided, else from kind defaults.
+  const acceptCandidate = useCallback(
+    (candidate: DetectedCandidate) => {
+      if (!canEdit) return;
+      maybePushHistory();
+      const mapped = mapDetectedCandidate(candidate, imageNatural);
+      const d = defaultsForKind(candidate.kind);
+      const id = uuid();
+      const z =
+        shapesRef.current.length === 0
+          ? 0
+          : Math.max(...shapesRef.current.map((s) => s.z_order)) + 1;
+      const seatCount =
+        candidate.seat_count !== null && candidate.seat_count > 0
+          ? candidate.seat_count
+          : d.seat_count;
+      // Vision tends to draw the bounding box right at the chair perimeter,
+      // so accepted candidates end up rim-to-rim with their neighbors. Shrink
+      // around the candidate's center so seat-name labels have breathing
+      // room when a group is assigned. Center matches the floor plan; rim
+      // is tighter so adjacent tables get a natural gap. At 0.55 the gap
+      // between centers-2R-apart neighbors works out to a full table-
+      // diameter of empty space around each table — enough headroom for
+      // labels to render outside the rim without colliding with neighbors.
+      const ACCEPT_SHRINK = 0.55;
+      const cx = mapped.x + mapped.width / 2;
+      const cy = mapped.y + mapped.height / 2;
+      const w = Math.max(2, mapped.width * ACCEPT_SHRINK);
+      const h = Math.max(2, mapped.height * ACCEPT_SHRINK);
+      const shape: Shape = clampShape({
+        id,
+        kind: candidate.kind,
+        x_pct: cx - w / 2,
+        y_pct: cy - h / 2,
+        width_pct: w,
+        height_pct: h,
+        rotation_deg: 0,
+        seat_count: seatCount,
+        seats_per_side: d.seats_per_side,
+        label_en: candidate.label,
+        label_cn: null,
+        group_id: null,
+        locked: false,
+        z_order: z,
+      });
+      setShapes((prev) => [...prev, shape]);
+      // Don't steal selection during a bulk-accept run — admin may still
+      // be reviewing other candidates. Just persist the new shape.
+      dirtyRef.current.add(id);
+      scheduleSave();
+      // Drop the candidate from the review list.
+      setCandidates((prev) =>
+        prev ? prev.filter((c) => c.id !== candidate.id) : prev,
+      );
+    },
+    [canEdit, imageNatural, maybePushHistory, scheduleSave],
+  );
+
+  const acceptAllCandidates = useCallback(() => {
+    if (!candidates || candidates.length === 0) return;
+    for (const c of candidates) acceptCandidate(c);
+  }, [candidates, acceptCandidate]);
 
   const updateShape = useCallback(
     (id: string, patch: Partial<Shape>) => {
@@ -871,6 +1021,10 @@ export function LayoutEditor({
           revealNames={revealNames}
           gridSnap={gridSnap}
           asset={asset}
+          imageNatural={imageNatural}
+          candidates={candidates}
+          onAcceptCandidate={acceptCandidate}
+          onRejectCandidate={rejectCandidate}
           groupsById={groupsById}
           view={view}
           onViewChange={setView}
@@ -911,6 +1065,12 @@ export function LayoutEditor({
           onUpload={uploadAsset}
           onOpacityChange={setAssetOpacity}
           onRemove={removeAsset}
+          onDetect={runAutoDetect}
+          detectionBusy={detectionBusy}
+          detectionError={detectionError}
+          candidateCount={candidates?.length ?? 0}
+          onAcceptAll={acceptAllCandidates}
+          onClearCandidates={clearCandidates}
         />
 
         <ShapeInspector
@@ -1122,6 +1282,12 @@ function FloatingBackgroundChip({
   onUpload,
   onOpacityChange,
   onRemove,
+  onDetect,
+  detectionBusy,
+  detectionError,
+  candidateCount,
+  onAcceptAll,
+  onClearCandidates,
 }: {
   asset: FloorPlanAsset | null;
   busy: null | "uploading" | "saving" | "removing";
@@ -1130,6 +1296,12 @@ function FloatingBackgroundChip({
   onUpload: (file: File) => void;
   onOpacityChange: (opacity: number) => void;
   onRemove: () => void;
+  onDetect: () => void;
+  detectionBusy: boolean;
+  detectionError: string | null;
+  candidateCount: number;
+  onAcceptAll: () => void;
+  onClearCandidates: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1147,7 +1319,7 @@ function FloatingBackgroundChip({
   if (!canEdit && !asset) return null;
 
   return (
-    <div className="gmc-print-hide absolute left-3 bottom-3 z-10 inline-flex items-center gap-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] pl-2 pr-3 py-1.5 max-w-[440px]">
+    <div className="gmc-print-hide absolute left-3 bottom-3 z-10 inline-flex items-center gap-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] pl-2 pr-3 py-1.5 whitespace-nowrap max-w-[calc(100%-1.5rem)]">
       <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--cinnabar)] shrink-0">
         Background · 底图
       </span>
@@ -1216,6 +1388,65 @@ function FloatingBackgroundChip({
               >
                 Remove
               </button>
+
+              <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+
+              {candidateCount > 0 ? (
+                <>
+                  <span
+                    className="inline-flex items-center gap-1 text-[10.5px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)] tabular-nums"
+                    title={`${candidateCount} table candidate${candidateCount === 1 ? "" : "s"} from vision`}
+                  >
+                    {candidateCount} found
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onAcceptAll}
+                    disabled={busy !== null}
+                    className="px-2 h-6 rounded-full text-[10.5px] tracking-[0.16em] uppercase text-[var(--paper)] bg-[var(--cinnabar)] hover:bg-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
+                  >
+                    Accept all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClearCandidates}
+                    className="text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
+                  >
+                    Clear
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onDetect}
+                  disabled={busy !== null || detectionBusy}
+                  title="Use Claude vision to detect tables"
+                  className="inline-flex items-center gap-1 px-2 h-6 rounded-full text-[10.5px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] disabled:opacity-50 transition-colors"
+                >
+                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="5" cy="5" r="3" />
+                    <path d="M7.2 7.2 L 10 10" />
+                  </svg>
+                  Detect tables
+                </button>
+              )}
+
+              {detectionBusy ? (
+                <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--cinnabar)] shrink-0">
+                  Detecting…
+                </span>
+              ) : null}
+              {detectionError && !detectionBusy ? (
+                <span
+                  className="text-[10px] tracking-[0.04em] shrink-0"
+                  style={{ color: "#B91C1C" }}
+                  title={detectionError}
+                >
+                  {detectionError.length > 32
+                    ? detectionError.slice(0, 32) + "…"
+                    : detectionError}
+                </span>
+              ) : null}
             </>
           ) : null}
         </>

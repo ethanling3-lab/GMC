@@ -100,6 +100,76 @@ export type GroupRoster = {
   members: GroupRosterMember[];
 };
 
+// Vision-detected table candidate — produced by /floor-plan-asset/auto-detect
+// (Opus 4.7 vision). Server returns normalized image-relative coords; client
+// converts to user-space via mapDetectedCandidate() below using the image's
+// natural dimensions to undo the xMidYMid meet letterbox.
+export type DetectedCandidate = {
+  // Stable client-side id so React key + accept/reject can target one of N.
+  id: string;
+  kind: "round_table" | "square_table";
+  // Normalized image-relative coords (0..1 of natural image dimensions).
+  x_norm: number;
+  y_norm: number;
+  width_norm: number;
+  height_norm: number;
+  label: string | null;
+  seat_count: number | null;
+  confidence: "high" | "medium" | "low" | null;
+};
+
+// Map a detected candidate's normalized image-relative coords into the
+// canvas's user-space (0..VB_W, 0..VB_H), undoing the xMidYMid meet
+// letterbox the SVG <image> applies. If natural dimensions are unknown
+// (image not yet loaded), assumes the image fills the page exactly.
+export function mapDetectedCandidate(
+  c: DetectedCandidate,
+  natural: { w: number; h: number } | null,
+): { x: number; y: number; width: number; height: number } {
+  const x = clampUnit(c.x_norm);
+  const y = clampUnit(c.y_norm);
+  const w = clampUnit(c.width_norm);
+  const h = clampUnit(c.height_norm);
+  if (!natural || natural.w <= 0 || natural.h <= 0) {
+    return {
+      x: x * VB_W,
+      y: y * VB_H,
+      width: w * VB_W,
+      height: h * VB_H,
+    };
+  }
+  const imageAspect = natural.w / natural.h;
+  const pageAspect = VB_W / VB_H;
+  let renderW: number;
+  let renderH: number;
+  let xOff: number;
+  let yOff: number;
+  if (imageAspect >= pageAspect) {
+    // Image is wider than the page — fills width, letterbox top/bottom.
+    renderW = VB_W;
+    renderH = VB_W / imageAspect;
+    xOff = 0;
+    yOff = (VB_H - renderH) / 2;
+  } else {
+    // Image is narrower than the page — fills height, letterbox sides.
+    renderH = VB_H;
+    renderW = VB_H * imageAspect;
+    xOff = (VB_W - renderW) / 2;
+    yOff = 0;
+  }
+  return {
+    x: xOff + x * renderW,
+    y: yOff + y * renderH,
+    width: w * renderW,
+    height: h * renderH,
+  };
+}
+
+function clampUnit(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(1, v));
+}
+
 // Background-image asset rendered under the shapes layer in the editor.
 // Stored in the private `event-floor-plans` bucket; `url` is a fresh signed
 // URL produced by the layout page loader (1h TTL). Width/height are kept
