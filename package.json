@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "seed-admin": "node scripts/seed-admin.mjs",
+    "seed-test-dummies": "tsx scripts/seed-test-dummies.ts",
     "migrate-wa-templates": "node --env-file=scripts/.migration.env scripts/migrate-whatsapp-templates.mjs",
     "migrate-wa-templates:dry": "node --env-file=scripts/.migration.env scripts/migrate-whatsapp-templates.mjs --dry-run"
   },

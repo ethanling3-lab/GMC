@@ -26,6 +26,27 @@ export const runtime = "nodejs";
 type RouteCtx = { params: Promise<{ id: string }> };
 
 export async function POST(_req: Request, { params }: RouteCtx) {
+  try {
+    return await runGenerate(_req, { params });
+  } catch (err) {
+    // Surface the full stack so we can debug from the network panel +
+    // server log without playing detective.
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error("[generate] uncaught error", { message, stack });
+    return NextResponse.json(
+      {
+        error: message,
+        // Only the first 6 stack lines — enough to identify the source
+        // without dumping the whole trace into the response body.
+        stack_top: stack?.split("\n").slice(0, 6) ?? null,
+      },
+      { status: 500 },
+    );
+  }
+}
+
+async function runGenerate(_req: Request, { params }: RouteCtx) {
   const admin = await requireAdmin();
   if (admin.role !== "super_admin") {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });

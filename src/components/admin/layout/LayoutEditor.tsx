@@ -160,6 +160,14 @@ export function LayoutEditor({
   const [detectionBusy, setDetectionBusy] = useState<boolean>(false);
   const [detectionError, setDetectionError] = useState<string | null>(null);
 
+  // Auto-place / auto-seat — bulk pairs un-locked groups with tables and
+  // assigns seat_no around each table's rim. Result message lives here so
+  // the chip can show a toast after the run.
+  const [autoPlaceBusy, setAutoPlaceBusy] = useState<boolean>(false);
+  const [autoPlaceMessage, setAutoPlaceMessage] = useState<
+    null | { tone: "ok" | "error"; text: string }
+  >(null);
+
   const setRevealNames = useCallback(
     (next: boolean) => {
       setRevealNamesState(next);
@@ -675,6 +683,61 @@ export function LayoutEditor({
     for (const c of candidates) acceptCandidate(c);
   }, [candidates, acceptCandidate]);
 
+  const runAutoPlace = useCallback(async () => {
+    if (!canEdit || autoPlaceBusy) return;
+    if (
+      !window.confirm(
+        "Auto-place every group onto a table? Locked groups stay put; unlocked groups get reshuffled.",
+      )
+    ) {
+      return;
+    }
+    setAutoPlaceMessage(null);
+    setAutoPlaceBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${event.id}/layout/auto-place`,
+        { method: "POST" },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        placements?: Array<unknown>;
+        unplaced_groups?: Array<{ reason: string }>;
+        seat_writes?: number;
+        unused_tables?: number;
+        preserved_locked?: number;
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        throw new Error(json.detail ?? json.error ?? `HTTP ${res.status}`);
+      }
+      const placed = json.placements?.length ?? 0;
+      const unplaced =
+        json.unplaced_groups?.filter((u) => u.reason !== "locked_kept").length
+        ?? 0;
+      const seats = json.seat_writes ?? 0;
+      const parts = [
+        `${placed} group${placed === 1 ? "" : "s"} placed`,
+        `${seats} seat${seats === 1 ? "" : "s"} written`,
+      ];
+      if (unplaced > 0) parts.push(`${unplaced} unplaced`);
+      setAutoPlaceMessage({ tone: "ok", text: parts.join(" · ") });
+      // Full reload so the server loader re-pulls groups + assignments
+      // and the canvas re-renders the new seat names. Slight delay so
+      // admin sees the success message first.
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 400);
+    } catch (err) {
+      setAutoPlaceMessage({
+        tone: "error",
+        text: err instanceof Error ? err.message : "auto-place failed",
+      });
+    } finally {
+      setAutoPlaceBusy(false);
+    }
+  }, [canEdit, event.id, autoPlaceBusy]);
+
   const updateShape = useCallback(
     (id: string, patch: Partial<Shape>) => {
       if (!canEdit) return;
@@ -1055,6 +1118,10 @@ export function LayoutEditor({
           gridSnap={gridSnap}
           onGridSnapChange={setGridSnap}
           canEdit={canEdit}
+          seatingMode={event.seating_mode}
+          autoPlaceBusy={autoPlaceBusy}
+          autoPlaceMessage={autoPlaceMessage}
+          onAutoPlace={runAutoPlace}
         />
 
         <FloatingBackgroundChip
@@ -1154,6 +1221,10 @@ function FloatingTopChip({
   gridSnap,
   onGridSnapChange,
   canEdit,
+  seatingMode,
+  autoPlaceBusy,
+  autoPlaceMessage,
+  onAutoPlace,
 }: {
   saveState: SaveState;
   saveError: string | null;
@@ -1164,6 +1235,10 @@ function FloatingTopChip({
   gridSnap: boolean;
   onGridSnapChange: (n: boolean) => void;
   canEdit: boolean;
+  seatingMode: "tables" | "cushions";
+  autoPlaceBusy: boolean;
+  autoPlaceMessage: null | { tone: "ok" | "error"; text: string };
+  onAutoPlace: () => void;
 }) {
   function zoomBy(factor: number) {
     const next = Math.max(0.25, Math.min(6, view.scale * factor));
@@ -1226,6 +1301,39 @@ function FloatingTopChip({
           </svg>
           Grid
         </button>
+      ) : null}
+
+      {canEdit && seatingMode === "tables" ? (
+        <>
+          <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+          <button
+            type="button"
+            onClick={onAutoPlace}
+            disabled={autoPlaceBusy}
+            title="Auto-pair groups with tables + assign seats"
+            className="inline-flex items-center gap-1.5 px-2 h-6 rounded-full text-[10.5px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] disabled:opacity-50 transition-colors"
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="6" cy="6" r="3.2" />
+              <path d="M2 2 L 4 4 M10 2 L 8 4 M2 10 L 4 8 M10 10 L 8 8" />
+            </svg>
+            {autoPlaceBusy ? "Placing…" : "Auto-place"}
+          </button>
+          {autoPlaceMessage ? (
+            <span
+              className="text-[10px] tracking-[0.06em] tabular-nums shrink-0 max-w-[260px] truncate"
+              style={{
+                color:
+                  autoPlaceMessage.tone === "ok"
+                    ? "var(--ink-soft)"
+                    : "#B91C1C",
+              }}
+              title={autoPlaceMessage.text}
+            >
+              {autoPlaceMessage.text}
+            </span>
+          ) : null}
+        </>
       ) : null}
 
       <span className="w-px h-4 bg-[var(--paper-shadow)]" />

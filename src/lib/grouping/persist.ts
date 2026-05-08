@@ -144,7 +144,7 @@ export async function persistGroupingResult(
   const groupIdByRenumberedNo = new Map<number, string>();
   for (const g of insertedGroups) groupIdByRenumberedNo.set(g.group_no, g.id);
 
-  const assignmentRows = result.groups.flatMap((g) => {
+  const rawAssignmentRows = result.groups.flatMap((g) => {
     const renumbered = renumber.get(g.group_no);
     if (!renumbered) return [];
     const gid = groupIdByRenumberedNo.get(renumbered);
@@ -156,8 +156,55 @@ export async function persistGroupingResult(
       participant_id: m.participant_id,
       role: m.role,
       group_id: gid,
+      // Carry the source group_no for the dedup log below so we can spot
+      // the algorithm bug that put one participant in two groups.
+      _src_group_no: g.group_no,
     }));
   });
+
+  // Defensive dedup — the unique constraint event_seat_assignments_event_
+  // participant_key blocks the same participant landing twice. The algo +
+  // validator should already prevent this, but at large pax counts (300+)
+  // we've seen one slip through; keep the role with higher priority
+  // (zu_zhang > fu_zu_zhang > pai_zhang > participant) and log the rest.
+  const ROLE_RANK: Record<string, number> = {
+    zu_zhang: 0,
+    fu_zu_zhang: 1,
+    pai_zhang: 2,
+    participant: 3,
+  };
+  const bestByPid = new Map<string, (typeof rawAssignmentRows)[number]>();
+  const dropped: Array<{ pid: string; kept: number; dropped: number; role: string }> = [];
+  for (const row of rawAssignmentRows) {
+    const prev = bestByPid.get(row.participant_id);
+    if (!prev) {
+      bestByPid.set(row.participant_id, row);
+      continue;
+    }
+    const prevRank = ROLE_RANK[prev.role] ?? 99;
+    const curRank = ROLE_RANK[row.role] ?? 99;
+    const winner = curRank < prevRank ? row : prev;
+    const loser = winner === row ? prev : row;
+    bestByPid.set(row.participant_id, winner);
+    dropped.push({
+      pid: row.participant_id,
+      kept: winner._src_group_no,
+      dropped: loser._src_group_no,
+      role: loser.role,
+    });
+  }
+  if (dropped.length > 0) {
+    console.warn(
+      `[persist] dedup'd ${dropped.length} duplicate participant assignment${dropped.length === 1 ? "" : "s"}:`,
+      dropped.slice(0, 10),
+    );
+  }
+  const assignmentRows = Array.from(bestByPid.values()).map(
+    ({ _src_group_no, ...rest }) => {
+      void _src_group_no;
+      return rest;
+    },
+  );
 
   if (assignmentRows.length === 0) {
     return {

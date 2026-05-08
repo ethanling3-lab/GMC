@@ -284,35 +284,64 @@ export async function loadGroupBuilder(
   // loader (src/lib/grouping/load.ts) so the detail row shows the same
   // family chain the algorithm would respect. Resolves to region_ids for
   // display.
+  //
+  // Chunked into 100-id batches so a single `.or(a.in.(...),b.in.(...))`
+  // URL never overflows PostgREST's ~8 KB request line limit. With 306+
+  // UUIDs in one .or() clause, the URL hit ~12 KB and the fetch fell
+  // over with `TypeError: fetch failed`.
   const familyAdj = new Map<string, Set<string>>();
   const conflictAdj = new Map<string, Set<string>>();
   if (allParticipantIds.length > 0) {
-    const inList = `(${allParticipantIds.join(",")})`;
-    const { data: links, error: lErr } = await supabase
-      .from("participant_family_links")
-      .select("a_id, b_id")
-      .or(`a_id.in.${inList},b_id.in.${inList}`)
-      .returns<FamilyLinkRow[]>();
-    if (lErr) return { error: lErr.message };
-    for (const l of links ?? []) {
-      if (!familyAdj.has(l.a_id)) familyAdj.set(l.a_id, new Set());
-      if (!familyAdj.has(l.b_id)) familyAdj.set(l.b_id, new Set());
-      familyAdj.get(l.a_id)!.add(l.b_id);
-      familyAdj.get(l.b_id)!.add(l.a_id);
-    }
+    const CHUNK = 100;
+    const seenLink = new Set<string>();
+    const seenConflict = new Set<string>();
+    for (let i = 0; i < allParticipantIds.length; i += CHUNK) {
+      const chunk = allParticipantIds.slice(i, i + CHUNK);
 
-    // Same shape for conflict pairs (migration 030).
-    const { data: conflicts, error: confErr } = await supabase
-      .from("participant_conflict_pairs")
-      .select("a_id, b_id")
-      .or(`a_id.in.${inList},b_id.in.${inList}`)
-      .returns<FamilyLinkRow[]>();
-    if (confErr) return { error: confErr.message };
-    for (const l of conflicts ?? []) {
-      if (!conflictAdj.has(l.a_id)) conflictAdj.set(l.a_id, new Set());
-      if (!conflictAdj.has(l.b_id)) conflictAdj.set(l.b_id, new Set());
-      conflictAdj.get(l.a_id)!.add(l.b_id);
-      conflictAdj.get(l.b_id)!.add(l.a_id);
+      const linkAResp = await supabase
+        .from("participant_family_links")
+        .select("a_id, b_id")
+        .in("a_id", chunk)
+        .returns<FamilyLinkRow[]>();
+      if (linkAResp.error) return { error: linkAResp.error.message };
+      const linkBResp = await supabase
+        .from("participant_family_links")
+        .select("a_id, b_id")
+        .in("b_id", chunk)
+        .returns<FamilyLinkRow[]>();
+      if (linkBResp.error) return { error: linkBResp.error.message };
+      for (const l of [...(linkAResp.data ?? []), ...(linkBResp.data ?? [])]) {
+        const key = `${l.a_id}|${l.b_id}`;
+        if (seenLink.has(key)) continue;
+        seenLink.add(key);
+        if (!familyAdj.has(l.a_id)) familyAdj.set(l.a_id, new Set());
+        if (!familyAdj.has(l.b_id)) familyAdj.set(l.b_id, new Set());
+        familyAdj.get(l.a_id)!.add(l.b_id);
+        familyAdj.get(l.b_id)!.add(l.a_id);
+      }
+
+      // Same shape for conflict pairs (migration 030).
+      const confAResp = await supabase
+        .from("participant_conflict_pairs")
+        .select("a_id, b_id")
+        .in("a_id", chunk)
+        .returns<FamilyLinkRow[]>();
+      if (confAResp.error) return { error: confAResp.error.message };
+      const confBResp = await supabase
+        .from("participant_conflict_pairs")
+        .select("a_id, b_id")
+        .in("b_id", chunk)
+        .returns<FamilyLinkRow[]>();
+      if (confBResp.error) return { error: confBResp.error.message };
+      for (const l of [...(confAResp.data ?? []), ...(confBResp.data ?? [])]) {
+        const key = `${l.a_id}|${l.b_id}`;
+        if (seenConflict.has(key)) continue;
+        seenConflict.add(key);
+        if (!conflictAdj.has(l.a_id)) conflictAdj.set(l.a_id, new Set());
+        if (!conflictAdj.has(l.b_id)) conflictAdj.set(l.b_id, new Set());
+        conflictAdj.get(l.a_id)!.add(l.b_id);
+        conflictAdj.get(l.b_id)!.add(l.a_id);
+      }
     }
   }
   // Fold in legacy single-edge column.

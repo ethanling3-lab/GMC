@@ -82,7 +82,7 @@ export async function loadGroupingInputs(
     .select("id, seating_mode, group_size_min, group_size_max")
     .eq("id", eventId)
     .maybeSingle<EventRow>();
-  if (evErr) return { error: evErr.message };
+  if (evErr) return { error: `events:${evErr.message}` };
   if (!event) return { error: "event_not_found" };
 
   const { data: enrolments, error: enErr } = await supabase
@@ -102,7 +102,7 @@ export async function loadGroupingInputs(
     .eq("event_id", eventId)
     .in("status", ["approved", "paid"])
     .returns<EnrolmentRow[]>();
-  if (enErr) return { error: enErr.message };
+  if (enErr) return { error: `enrollments:${enErr.message}` };
 
   let enrolmentRows = (enrolments ?? []).filter((e) => e.participant);
 
@@ -115,7 +115,7 @@ export async function loadGroupingInputs(
     .eq("event_id", eventId)
     .eq("locked", true)
     .returns<Array<{ id: string; group_no: number }>>();
-  if (lgErr) return { error: lgErr.message };
+  if (lgErr) return { error: `locked_groups:${lgErr.message}` };
   const lockedGroupIds = (lockedGroups ?? []).map((g) => g.id);
   const lockedGroupNos = (lockedGroups ?? [])
     .map((g) => g.group_no)
@@ -127,7 +127,7 @@ export async function loadGroupingInputs(
       .select("participant_id")
       .in("group_id", lockedGroupIds)
       .returns<Array<{ participant_id: string }>>();
-    if (laErr) return { error: laErr.message };
+    if (laErr) return { error: `locked_assignments:${laErr.message}` };
     for (const a of lockedAssigns ?? []) lockedPids.add(a.participant_id);
   }
   if (lockedPids.size > 0) {
@@ -137,40 +137,70 @@ export async function loadGroupingInputs(
   }
 
   // Pull the family-link join table for everyone in this event so the
-  // algorithm sees the full multi-edge graph. Filter to event members
-  // server-side via two `or` clauses (a_id or b_id in the set).
+  // algorithm sees the full multi-edge graph. With large events (~300+),
+  // a single `.or(a.in.(...),b.in.(...))` URL would overflow PostgREST's
+  // request line limit (~8 KB), so we batch the participant id list into
+  // 100-id chunks per axis and union the results client-side.
   const eventPids = enrolmentRows.map((e) => e.participant!.id);
   const familyByPid = new Map<string, Set<string>>();
   const conflictByPid = new Map<string, Set<string>>();
   if (eventPids.length > 0) {
-    const inList = `(${eventPids.join(",")})`;
-    const { data: links, error: linkErr } = await supabase
-      .from("participant_family_links")
-      .select("a_id, b_id")
-      .or(`a_id.in.${inList},b_id.in.${inList}`);
-    if (linkErr) return { error: linkErr.message };
-    for (const l of links ?? []) {
-      if (!familyByPid.has(l.a_id)) familyByPid.set(l.a_id, new Set());
-      if (!familyByPid.has(l.b_id)) familyByPid.set(l.b_id, new Set());
-      familyByPid.get(l.a_id)!.add(l.b_id);
-      familyByPid.get(l.b_id)!.add(l.a_id);
-    }
+    const CHUNK = 100;
+    const seenLink = new Set<string>();
+    const seenConflict = new Set<string>();
+    for (let i = 0; i < eventPids.length; i += CHUNK) {
+      const chunk = eventPids.slice(i, i + CHUNK);
 
-    // Same shape for conflict pairs (migration 030). Hard split — same
-    // hardness as family. Note pairs that are conflict-flagged AND
-    // family-linked (rare but possible — bad-blood relatives) get both
-    // adjacencies; the algorithm enforces both rules so the effect is
-    // the same regardless.
-    const { data: conflicts, error: confErr } = await supabase
-      .from("participant_conflict_pairs")
-      .select("a_id, b_id")
-      .or(`a_id.in.${inList},b_id.in.${inList}`);
-    if (confErr) return { error: confErr.message };
-    for (const l of conflicts ?? []) {
-      if (!conflictByPid.has(l.a_id)) conflictByPid.set(l.a_id, new Set());
-      if (!conflictByPid.has(l.b_id)) conflictByPid.set(l.b_id, new Set());
-      conflictByPid.get(l.a_id)!.add(l.b_id);
-      conflictByPid.get(l.b_id)!.add(l.a_id);
+      // Two queries per chunk (a_id IN chunk, b_id IN chunk) — each fits
+      // well under the URL limit and PostgREST de-dups the union for us.
+      const linkAResp = await supabase
+        .from("participant_family_links")
+        .select("a_id, b_id")
+        .in("a_id", chunk);
+      if (linkAResp.error) {
+        return { error: `family_links_a:${linkAResp.error.message}` };
+      }
+      const linkBResp = await supabase
+        .from("participant_family_links")
+        .select("a_id, b_id")
+        .in("b_id", chunk);
+      if (linkBResp.error) {
+        return { error: `family_links_b:${linkBResp.error.message}` };
+      }
+      for (const l of [...(linkAResp.data ?? []), ...(linkBResp.data ?? [])]) {
+        const key = `${l.a_id}|${l.b_id}`;
+        if (seenLink.has(key)) continue;
+        seenLink.add(key);
+        if (!familyByPid.has(l.a_id)) familyByPid.set(l.a_id, new Set());
+        if (!familyByPid.has(l.b_id)) familyByPid.set(l.b_id, new Set());
+        familyByPid.get(l.a_id)!.add(l.b_id);
+        familyByPid.get(l.b_id)!.add(l.a_id);
+      }
+
+      // Same shape for conflict pairs.
+      const confAResp = await supabase
+        .from("participant_conflict_pairs")
+        .select("a_id, b_id")
+        .in("a_id", chunk);
+      if (confAResp.error) {
+        return { error: `conflict_pairs_a:${confAResp.error.message}` };
+      }
+      const confBResp = await supabase
+        .from("participant_conflict_pairs")
+        .select("a_id, b_id")
+        .in("b_id", chunk);
+      if (confBResp.error) {
+        return { error: `conflict_pairs_b:${confBResp.error.message}` };
+      }
+      for (const l of [...(confAResp.data ?? []), ...(confBResp.data ?? [])]) {
+        const key = `${l.a_id}|${l.b_id}`;
+        if (seenConflict.has(key)) continue;
+        seenConflict.add(key);
+        if (!conflictByPid.has(l.a_id)) conflictByPid.set(l.a_id, new Set());
+        if (!conflictByPid.has(l.b_id)) conflictByPid.set(l.b_id, new Set());
+        conflictByPid.get(l.a_id)!.add(l.b_id);
+        conflictByPid.get(l.b_id)!.add(l.a_id);
+      }
     }
   }
 
