@@ -239,6 +239,19 @@ a  { color: inherit; text-decoration: none; }
   display: none;
 }
 
+/* During an active pan / zoom / drag the canvas root carries
+   gmc-density-hidden. Beyond suppressing seat-name text (above), also
+   hide the grid pattern fills and the background floor-plan image —
+   the grid re-tiles on every transform frame, and the background image's
+   opacity blend forces a per-frame composite. Both reappear ~180ms after
+   motion stops via the same density tier transition. */
+.gmc-density-hidden .gmc-floor-grid-fill {
+  display: none;
+}
+.gmc-density-hidden .gmc-floor-bg-asset {
+  display: none;
+}
+
 /* ==========================================================================
    Floor plan print surface (实名桌位图 · Named Seating Chart).
    Cmd+P from /admin/events/[id]/layout produces a clean printout — page

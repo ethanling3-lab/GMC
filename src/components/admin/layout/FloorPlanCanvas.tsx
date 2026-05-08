@@ -205,13 +205,40 @@ export function FloorPlanCanvas({
   }, [gridSnap]);
 
   // Density tier — drives label visibility via CSS class on the canvas root.
-  const density: "hidden" | "compact" | "detailed" =
-    view.scale < 0.6 ? "hidden" : view.scale < 1.25 ? "compact" : "detailed";
+  // Interaction mode: while admin is actively panning / zooming / dragging,
+  // we force the "hidden" tier so the browser doesn't repaint hundreds of
+  // seat-name text nodes on every frame. Restored 180ms after the last
+  // motion event. At 300-pax scale (24+ tables × 12 seats) this is the
+  // difference between janky pan and buttery pan.
+  const [isInteracting, setIsInteracting] = useState<boolean>(false);
+  const interactingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const bumpInteracting = useCallback(() => {
+    setIsInteracting(true);
+    if (interactingTimerRef.current) clearTimeout(interactingTimerRef.current);
+    interactingTimerRef.current = setTimeout(() => {
+      setIsInteracting(false);
+    }, 180);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (interactingTimerRef.current) clearTimeout(interactingTimerRef.current);
+    };
+  }, []);
 
-  // ViewBox derives directly from view state.
-  const vbw = VB_W / view.scale;
-  const vbh = VB_H / view.scale;
-  const viewBox = `${view.x} ${view.y} ${vbw} ${vbh}`;
+  const baseDensity: "hidden" | "compact" | "detailed" =
+    view.scale < 0.6 ? "hidden" : view.scale < 1.25 ? "compact" : "detailed";
+  const density = isInteracting ? "hidden" : baseDensity;
+
+  // SVG viewBox is FIXED at the page extents; pan + zoom are applied as
+  // a CSS transform on a wrapper <g> instead. Browsers GPU-accelerate the
+  // transform, while viewBox changes force a full repaint of every node
+  // inside (with 24 tables × 12 seats that's ~600 SVG text repaints per
+  // frame). Math is equivalent to the previous viewBox approach — see
+  // clientToVB below for the mapping.
+  const viewBox = `0 0 ${VB_W} ${VB_H}`;
+  const stageTransform = `translate(${-view.x * view.scale} ${-view.y * view.scale}) scale(${view.scale})`;
 
   // ---------------------------------------------------------------------------
   // Coord helpers — client coords → user-space, accounting for current view.
@@ -269,6 +296,37 @@ export function FloorPlanCanvas({
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
+    // RAF-coalesced wheel — trackpads + high-DPI mice fire wheel events at
+    // 100+Hz; without coalescing each one would trigger a full React render
+    // of the canvas. We accumulate deltas + zoom factors per frame and
+    // dispatch a single setView in the RAF callback.
+    let pendingPan = { dx: 0, dy: 0 };
+    let pendingZoom: { factor: number; clientX: number; clientY: number } | null = null;
+    let rafId: number | null = null;
+
+    const flush = () => {
+      rafId = null;
+      const v = viewRef.current;
+      // Apply zoom first (so pan accumulates against the zoomed view).
+      if (pendingZoom) {
+        zoomAt(pendingZoom.clientX, pendingZoom.clientY, pendingZoom.factor);
+        pendingZoom = null;
+      }
+      if (pendingPan.dx !== 0 || pendingPan.dy !== 0) {
+        const rect = el.getBoundingClientRect();
+        const cur = viewRef.current; // may have changed via zoomAt
+        const userPerPxX = (VB_W / cur.scale) / rect.width;
+        const userPerPxY = (VB_H / cur.scale) / rect.height;
+        onViewChange({
+          x: cur.x + pendingPan.dx * userPerPxX,
+          y: cur.y + pendingPan.dy * userPerPxY,
+          scale: cur.scale,
+        });
+        pendingPan = { dx: 0, dy: 0 };
+      }
+      void v;
+    };
+
     const onWheel = (e: WheelEvent) => {
       // Don't hijack while a shape is being manipulated.
       if (
@@ -277,29 +335,35 @@ export function FloorPlanCanvas({
       ) {
         return;
       }
+      bumpInteracting();
       // Cmd/Ctrl held = zoom (or trackpad pinch which sets ctrlKey).
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         // Tighter zoom curve so wheel feels responsive but not dizzying.
         const factor = Math.exp(-e.deltaY * 0.0035);
-        zoomAt(e.clientX, e.clientY, factor);
-        return;
+        if (pendingZoom) {
+          // Multiply factors so consecutive wheel events compound.
+          pendingZoom.factor *= factor;
+          pendingZoom.clientX = e.clientX;
+          pendingZoom.clientY = e.clientY;
+        } else {
+          pendingZoom = { factor, clientX: e.clientX, clientY: e.clientY };
+        }
+      } else {
+        e.preventDefault();
+        pendingPan.dx += e.deltaX;
+        pendingPan.dy += e.deltaY;
       }
-      // Bare wheel / two-finger trackpad swipe → 2D pan.
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const v = viewRef.current;
-      const userPerPxX = (VB_W / v.scale) / rect.width;
-      const userPerPxY = (VB_H / v.scale) / rect.height;
-      onViewChange({
-        x: v.x + e.deltaX * userPerPxX,
-        y: v.y + e.deltaY * userPerPxY,
-        scale: v.scale,
-      });
+      if (rafId === null) {
+        rafId = requestAnimationFrame(flush);
+      }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomAt, onViewChange]);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [zoomAt, onViewChange, bumpInteracting]);
 
   // ---------------------------------------------------------------------------
   // Pointer state machine — shape drag (move / resize / rotate) + canvas pan.
@@ -416,6 +480,16 @@ export function FloorPlanCanvas({
     [canEdit, shapes, spaceHeld, clientToVB, onSelect],
   );
 
+  // Stable adapter passed to every <ShapeNode> so React.memo's referential
+  // prop check actually works. ShapeNode emits the shape id as the third
+  // arg; we re-route to the existing startDrag(e, id, handle) signature.
+  const shapePointerDown = useCallback(
+    (e: React.PointerEvent, handle: DragHandle, shapeId: string) => {
+      startDrag(e, shapeId, handle);
+    },
+    [startDrag],
+  );
+
   const startPan = useCallback((e: React.PointerEvent) => {
     const v = viewRef.current;
     dragRef.current = {
@@ -509,6 +583,9 @@ export function FloorPlanCanvas({
     (e: React.PointerEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
+      // Mark interaction so the canvas can drop seat labels (CSS density)
+      // until 180ms after motion stops. Cheap — just a setState + timer.
+      bumpInteracting();
 
       if (drag.kind === "pan") {
         const svg = svgRef.current;
@@ -654,7 +731,7 @@ export function FloorPlanCanvas({
         onUpdate(drag.id, { rotation_deg: next });
       }
     },
-    [shapes, clientToVB, onUpdate, onViewChange],
+    [shapes, clientToVB, onUpdate, onViewChange, bumpInteracting],
   );
 
   const endDrag = useCallback(
@@ -962,6 +1039,16 @@ export function FloorPlanCanvas({
           </pattern>
         </defs>
 
+        {/* Stage — a single transformed <g> wraps every visible piece so
+            pan/zoom is one GPU-accelerated transform update instead of
+            forcing the browser to repaint every shape, seat, and label
+            on every frame. willChange hints the compositor to promote
+            this layer. */}
+        <g
+          transform={stageTransform}
+          style={{ willChange: "transform" }}
+        >
+
         {/* Off-page background — paper-warm tint, grid pattern fills the
             full pannable area so the canvas feels infinite. */}
         <rect
@@ -977,6 +1064,7 @@ export function FloorPlanCanvas({
           width={padX * 2 + VB_W}
           height={padY * 2 + VB_H}
           fill="url(#gmc-floor-grid)"
+          className="gmc-floor-grid-fill"
         />
         <rect
           x={-padX}
@@ -984,6 +1072,7 @@ export function FloorPlanCanvas({
           width={padX * 2 + VB_W}
           height={padY * 2 + VB_H}
           fill="url(#gmc-floor-grid-strong)"
+          className="gmc-floor-grid-fill"
         />
 
         {/* Page (printable area) — slight paper tint over the grid so the
@@ -1048,7 +1137,7 @@ export function FloorPlanCanvas({
               revealNames={revealNames}
               selected={isSelected}
               canEdit={canEdit}
-              onPointerDownHandle={(e, handle) => startDrag(e, s.id, handle)}
+              onPointerDownHandle={shapePointerDown}
               showResizeHandles={
                 isPrimary
                 && singleSelected
@@ -1178,6 +1267,7 @@ export function FloorPlanCanvas({
               ),
             )
           : null}
+        </g>
       </svg>
 
     </div>

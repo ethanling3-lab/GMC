@@ -2,6 +2,13 @@
 
 // ShapeNode — pure-render component for one floor-plan shape.
 //
+// Wrapped in React.memo at module export so pan/zoom-induced parent
+// re-renders skip ShapeNode reconciliation when a shape's own props are
+// stable. With 24+ tables × 30+ children each, this is the difference
+// between React reconciling 700+ nodes per frame vs. zero during pan.
+
+import { memo } from "react";
+//
 // Geometry comes from the parent. Pointer events are emitted upward via
 // `onPointerDownHandle(e, handle)`; the parent's drag state machine
 // translates those into shape geometry updates.
@@ -42,12 +49,22 @@ type Props = {
   revealNames: boolean;
   selected: boolean;
   canEdit: boolean;
-  onPointerDownHandle: (e: React.PointerEvent, handle: DragHandle) => void;
+  // Pointer down handler — receives the shape id as the third arg so the
+  // parent can pass a SINGLE stable callback to every ShapeNode (React.memo
+  // would otherwise see a fresh inline arrow on every render and re-render
+  // every shape on every pan/zoom).
+  onPointerDownHandle: (
+    e: React.PointerEvent,
+    handle: DragHandle,
+    shapeId: string,
+  ) => void;
   showResizeHandles: boolean;
   showRotateHandle: boolean;
 };
 
-export function ShapeNode({
+export const ShapeNode = memo(ShapeNodeInner);
+
+function ShapeNodeInner({
   shape,
   roster,
   revealNames,
@@ -66,7 +83,7 @@ export function ShapeNode({
     // Locked shapes still propagate so admin can select + unlock them via
     // the inspector. The parent's startDrag respects the lock and selects
     // without entering drag state.
-    onPointerDownHandle(e, "body");
+    onPointerDownHandle(e, "body", shape.id);
   };
 
   return (
@@ -100,25 +117,25 @@ export function ShapeNode({
               <Handle
                 x={r(shape.x_pct)}
                 y={r(shape.y_pct)}
-                onDown={(e) => onPointerDownHandle(e, "tl")}
+                onDown={(e) => onPointerDownHandle(e, "tl", shape.id)}
                 cursor="nwse-resize"
               />
               <Handle
                 x={r(shape.x_pct + shape.width_pct)}
                 y={r(shape.y_pct)}
-                onDown={(e) => onPointerDownHandle(e, "tr")}
+                onDown={(e) => onPointerDownHandle(e, "tr", shape.id)}
                 cursor="nesw-resize"
               />
               <Handle
                 x={r(shape.x_pct)}
                 y={r(shape.y_pct + shape.height_pct)}
-                onDown={(e) => onPointerDownHandle(e, "bl")}
+                onDown={(e) => onPointerDownHandle(e, "bl", shape.id)}
                 cursor="nesw-resize"
               />
               <Handle
                 x={r(shape.x_pct + shape.width_pct)}
                 y={r(shape.y_pct + shape.height_pct)}
-                onDown={(e) => onPointerDownHandle(e, "br")}
+                onDown={(e) => onPointerDownHandle(e, "br", shape.id)}
                 cursor="nwse-resize"
               />
             </>
@@ -127,7 +144,7 @@ export function ShapeNode({
             <RotateHandle
               cx={cx}
               top={r(shape.y_pct)}
-              onDown={(e) => onPointerDownHandle(e, "rotate")}
+              onDown={(e) => onPointerDownHandle(e, "rotate", shape.id)}
             />
           ) : null}
           {shape.locked ? (
