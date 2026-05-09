@@ -147,13 +147,7 @@ export function FloatingExportChip({
   const busy = state.phase === "busy";
 
   return (
-    <div className="gmc-print-hide absolute right-3 bottom-3 z-10 inline-flex items-center gap-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] pl-2 pr-3 py-1.5 whitespace-nowrap">
-      <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--cinnabar)] shrink-0">
-        Export · 导出
-      </span>
-
-      <span className="w-px h-4 bg-[var(--paper-shadow)]" />
-
+    <div className="gmc-print-hide absolute right-3 bottom-3 z-10 inline-flex items-center gap-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] px-2 py-1.5 whitespace-nowrap">
       {/* Quality picker — three pills, one selected. */}
       <span
         className="inline-flex items-center rounded-[var(--radius-pill)] bg-[var(--paper-deep)]/60 p-0.5"

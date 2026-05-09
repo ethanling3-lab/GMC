@@ -1465,41 +1465,33 @@ function FloatingBackgroundChip({
   if (!canEdit && !asset) return null;
 
   return (
-    <div className="gmc-print-hide absolute left-3 bottom-3 z-10 inline-flex items-center gap-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] pl-2 pr-3 py-1.5 whitespace-nowrap max-w-[calc(100%-1.5rem)]">
-      <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--cinnabar)] shrink-0">
-        Background · 底图
-      </span>
-
-      <span className="w-px h-4 bg-[var(--paper-shadow)]" />
-
+    <div className="gmc-print-hide absolute left-3 bottom-3 z-10 inline-flex items-center gap-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] px-2 py-1.5 whitespace-nowrap max-w-[calc(100%-1.5rem)]">
       {asset ? (
         <>
-          {/* Thumbnail. <img> not <Image> — the URL is signed + per-event,
-              not amenable to Next's optimizer. */}
-          <span className="inline-flex items-center justify-center shrink-0 w-7 h-7 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--paper-shadow)] bg-[var(--paper)]">
+          {/* Thumbnail doubles as Replace affordance — clicking it opens the
+              file picker. <img> not <Image>: the URL is a signed per-event
+              link, not amenable to Next's optimizer. */}
+          <button
+            type="button"
+            onClick={canEdit ? pickFile : undefined}
+            disabled={!canEdit || busy !== null}
+            title={`${asset.original_filename ?? "background plan"} · click to replace`}
+            className="inline-flex items-center justify-center shrink-0 w-7 h-7 rounded-[var(--radius-sm)] overflow-hidden border border-[var(--paper-shadow)] bg-[var(--paper)] hover:border-[var(--cinnabar)]/40 disabled:cursor-default disabled:opacity-100 transition-colors"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={asset.url}
               alt=""
               className="w-full h-full object-cover"
             />
-          </span>
-
-          <span
-            className="text-[11px] text-[var(--ink-soft)] truncate max-w-[120px]"
-            title={asset.original_filename ?? "background plan"}
-          >
-            {asset.original_filename ?? "uploaded plan"}
-          </span>
+          </button>
 
           {canEdit ? (
             <>
-              <span className="w-px h-4 bg-[var(--paper-shadow)]" />
               <label
-                className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)] shrink-0"
-                title="Background opacity"
+                className="inline-flex items-center gap-1 shrink-0"
+                title={`Opacity · 透明度 · ${Math.round(asset.opacity * 100)}%`}
               >
-                <span>透</span>
                 <input
                   type="range"
                   min={5}
@@ -1509,30 +1501,22 @@ function FloatingBackgroundChip({
                   onChange={(e) =>
                     onOpacityChange(Number(e.target.value) / 100)
                   }
-                  className="accent-[var(--cinnabar)] w-[88px] h-1"
+                  className="accent-[var(--cinnabar)] w-[72px] h-1"
                 />
-                <span className="tabular-nums w-[28px] text-right text-[var(--ink-soft)]">
+                <span className="tabular-nums w-[28px] text-right text-[10.5px] text-[var(--ink-faint)]">
                   {Math.round(asset.opacity * 100)}%
                 </span>
               </label>
 
-              <span className="w-px h-4 bg-[var(--paper-shadow)]" />
-
-              <button
-                type="button"
-                onClick={pickFile}
-                disabled={busy !== null}
-                className="text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-soft)] hover:text-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
-              >
-                Replace
-              </button>
               <button
                 type="button"
                 onClick={onRemove}
                 disabled={busy !== null}
-                className="text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
+                title="Remove background · 移除底图"
+                aria-label="Remove background"
+                className="inline-flex items-center justify-center w-6 h-6 rounded-full text-[var(--ink-faint)] hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors text-[12px] leading-none"
               >
-                Remove
+                ✕
               </button>
 
               <span className="w-px h-4 bg-[var(--paper-shadow)]" />
@@ -1566,14 +1550,14 @@ function FloatingBackgroundChip({
                   type="button"
                   onClick={onDetect}
                   disabled={busy !== null || detectionBusy}
-                  title="Use Claude vision to detect tables"
-                  className="inline-flex items-center gap-1 px-2 h-6 rounded-full text-[10.5px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] disabled:opacity-50 transition-colors"
+                  title="Detect tables · 检测桌位 (Claude vision)"
+                  aria-label="Detect tables with vision"
+                  className="inline-flex items-center justify-center w-6 h-6 rounded-full text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] disabled:opacity-50 transition-colors"
                 >
-                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="5" cy="5" r="3" />
                     <path d="M7.2 7.2 L 10 10" />
                   </svg>
-                  Detect tables
                 </button>
               )}
 
