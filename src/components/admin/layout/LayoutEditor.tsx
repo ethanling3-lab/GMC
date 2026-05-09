@@ -22,6 +22,7 @@ import { ShapePalette } from "./ShapePalette";
 import { FIT_VIEW, FloorPlanCanvas } from "./FloorPlanCanvas";
 import type { View } from "./FloorPlanCanvas";
 import { ShapeInspector } from "./ShapeInspector";
+import { FloatingExportChip } from "./FloatingExportChip";
 import {
   clampShape,
   defaultsForKind,
@@ -167,6 +168,28 @@ export function LayoutEditor({
   const [autoPlaceMessage, setAutoPlaceMessage] = useState<
     null | { tone: "ok" | "error"; text: string }
   >(null);
+
+  // Mirrors the live <svg> from FloorPlanCanvas so PNG/PDF/PPT export can
+  // serialize it without weaving forwardRef through the canvas component.
+  // The canvas writes into this ref every render (see FloorPlanCanvas).
+  const exportSvgRef = useRef<SVGSVGElement | null>(null);
+
+  const onExported = useCallback(
+    (format: "png" | "pdf" | "pptx") => {
+      // Fire-and-forget audit ping. We don't block the download UX on this.
+      void fetch(`/api/admin/events/${event.id}/layout/exported`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          format,
+          reveal: revealNames ? "names" : "region_ids",
+        }),
+      }).catch(() => {
+        // Silent — audit failure shouldn't surface to admin.
+      });
+    },
+    [event.id, revealNames],
+  );
 
   const setRevealNames = useCallback(
     (next: boolean) => {
@@ -1091,6 +1114,7 @@ export function LayoutEditor({
           groupsById={groupsById}
           view={view}
           onViewChange={setView}
+          exportSvgRef={exportSvgRef}
         />
 
         <FloatingPageChip
@@ -1138,6 +1162,20 @@ export function LayoutEditor({
           candidateCount={candidates?.length ?? 0}
           onAcceptAll={acceptAllCandidates}
           onClearCandidates={clearCandidates}
+        />
+
+        <FloatingExportChip
+          getSvg={() => exportSvgRef.current}
+          eventMeta={{
+            slug: event.slug,
+            title_en: event.title_en,
+            title_cn: event.title_cn,
+            seating_mode: event.seating_mode,
+          }}
+          groups={groups}
+          revealNames={revealNames}
+          onRevealChange={setRevealNames}
+          onExported={onExported}
         />
 
         <ShapeInspector

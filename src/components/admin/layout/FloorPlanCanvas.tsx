@@ -66,6 +66,10 @@ type Props = {
   // View is lifted so the LayoutEditor toolbar can show + adjust the scale.
   view: View;
   onViewChange: (v: View) => void;
+  // Optional external ref the editor uses to grab the live <svg> for PNG/PDF/PPT
+  // export. Mirrors the internal svgRef each render so callers always see the
+  // current node.
+  exportSvgRef?: { current: SVGSVGElement | null };
 };
 
 export type View = { x: number; y: number; scale: number };
@@ -166,6 +170,7 @@ export function FloorPlanCanvas({
   groupsById,
   view,
   onViewChange,
+  exportSvgRef,
 }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<DragState>(null);
@@ -173,6 +178,12 @@ export function FloorPlanCanvas({
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+  // Mirror the live SVG node into the parent's export ref every render so the
+  // export helpers can serialize it without weaving forwardRef through the
+  // entire canvas component.
+  useEffect(() => {
+    if (exportSvgRef) exportSvgRef.current = svgRef.current;
+  });
 
   // UI-only flags for cursor styling.
   const [dragKind, setDragKind] = useState<
@@ -1045,6 +1056,7 @@ export function FloorPlanCanvas({
             on every frame. willChange hints the compositor to promote
             this layer. */}
         <g
+          data-export-stage="true"
           transform={stageTransform}
           style={{ willChange: "transform" }}
         >

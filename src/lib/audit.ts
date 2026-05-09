@@ -76,6 +76,7 @@ export type AuditAction =
   | "floor_plan.auto_detected"
   | "floor_plan.shape_accepted"
   | "floor_plan.shape_rejected"
+  | "floor_plan.exported"
   | "seating.auto_placed"
   | "seating.swapped"
   | "groups.class_changed"
