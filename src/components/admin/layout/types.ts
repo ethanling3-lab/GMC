@@ -81,6 +81,15 @@ export const PROGRAMME_ABBREV: Record<ProgrammeTier, string> = {
   glorious_cultural_heritage: "耀",
 };
 
+export type StudentQualificationKey =
+  | "basic"
+  | "rising"
+  | "elite"
+  | "excellence"
+  | "strategic";
+
+export type UpgradePotentialKey = "low" | "medium" | "high";
+
 export type GroupRosterMember = {
   participant_id: string;
   region_id: string | null;
@@ -89,6 +98,12 @@ export type GroupRosterMember = {
   role: SeatRole;
   programme_tier: ProgrammeTier | null;
   is_old_student: boolean;
+  // M6.6 chip-cluster signals (added 2026-05-09): drive the seat-name
+  // chip row — gender (男/女), priority (战/卓 for excellence+), and
+  // 高潜能 (潜) for sales attention. Loader can leave any null.
+  gender: string | null;
+  student_qualification: StudentQualificationKey | null;
+  upgrade_potential: UpgradePotentialKey | null;
 };
 
 export type GroupRoster = {

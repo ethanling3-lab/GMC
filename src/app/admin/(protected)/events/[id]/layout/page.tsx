@@ -166,6 +166,9 @@ export default async function LayoutPage({
     name_cn: string | null;
     programme_tier: ProgrammeTier | null;
     is_old_student: boolean | null;
+    gender: string | null;
+    student_qualification: "basic" | "rising" | "elite" | "excellence" | "strategic" | null;
+    upgrade_potential: "low" | "medium" | "high" | null;
   };
   const groupRows = groupRes.data ?? [];
   const assignments = assignmentRes.data ?? [];
@@ -176,7 +179,9 @@ export default async function LayoutPage({
   if (participantIds.length > 0) {
     const { data: parts, error: pErr } = await supabase
       .from("participants")
-      .select("id, region_id, name_en, name_cn, programme_tier, is_old_student")
+      .select(
+        "id, region_id, name_en, name_cn, programme_tier, is_old_student, gender, student_qualification, upgrade_potential",
+      )
       .in("id", participantIds)
       .returns<ParticipantLite[]>();
     if (pErr) throw new Error(pErr.message);
@@ -202,6 +207,9 @@ export default async function LayoutPage({
           role: a.role,
           programme_tier: p?.programme_tier ?? null,
           is_old_student: p?.is_old_student === true,
+          gender: p?.gender ?? null,
+          student_qualification: p?.student_qualification ?? null,
+          upgrade_potential: p?.upgrade_potential ?? null,
         };
       })
       .sort((a, b) => {

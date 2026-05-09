@@ -241,13 +241,161 @@ function memberSeatTone(role: GroupRosterMember["role"] | undefined): {
   };
 }
 
-// Render-side helper — flag chips line under a name. Strings only; the
-// caller decides positioning + sizing.
-function memberFlags(member: GroupRosterMember): string[] {
-  const out: string[] = [];
-  if (!member.is_old_student) out.push("新");
+// Chip cluster spec — single-character SVG chips rendered under a seat
+// name. Each chip has a tone that drives fill/stroke/text color via
+// chipColors(). Order is priority-first (战/卓 → 新 → 潜 → 已购 → 性别)
+// so the most operationally useful signal sits closest to the name.
+type ChipTone =
+  | "key-solid" // 战 / 卓 — solid cinnabar (excellence+ qualification)
+  | "key-soft" // 新 — cinnabar wash (new student)
+  | "premium-solid" // 贵 / 耀 — gold fill (premium programme tier purchased)
+  | "premium-outline" // 潜 — gold stroke only (high upgrade potential)
+  | "neutral-fill" // 男 / 丰 / 精 — paper-deep (informational metadata)
+  | "neutral-line"; // 女 — paper-warm with paper-shadow stroke
+
+type MemberChip = { char: string; tone: ChipTone };
+
+function chipColors(tone: ChipTone): {
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  text: string;
+} {
+  switch (tone) {
+    case "key-solid":
+      return {
+        fill: "var(--cinnabar)",
+        stroke: "none",
+        strokeWidth: 0,
+        text: "var(--paper)",
+      };
+    case "key-soft":
+      return {
+        fill: "var(--cinnabar-wash)",
+        stroke: "none",
+        strokeWidth: 0,
+        text: "var(--cinnabar-deep)",
+      };
+    case "premium-solid":
+      return {
+        fill: "var(--gold)",
+        stroke: "none",
+        strokeWidth: 0,
+        text: "var(--cinnabar-deep)",
+      };
+    case "premium-outline":
+      return {
+        fill: "var(--paper)",
+        stroke: "var(--gold)",
+        strokeWidth: 0.08,
+        text: "var(--cinnabar-deep)",
+      };
+    case "neutral-fill":
+      return {
+        fill: "var(--paper-deep)",
+        stroke: "none",
+        strokeWidth: 0,
+        text: "var(--ink-mute)",
+      };
+    case "neutral-line":
+      return {
+        fill: "var(--paper-warm)",
+        stroke: "var(--paper-shadow)",
+        strokeWidth: 0.06,
+        text: "var(--ink-mute)",
+      };
+  }
+}
+
+// Compute the chip array for one member. Hidden when the underlying
+// data is null/unknown — silence beats noise.
+function memberFlags(member: GroupRosterMember): MemberChip[] {
+  const out: MemberChip[] = [];
+  // 1. 重点学员 — qualification = excellence (卓) or strategic (战).
+  if (member.student_qualification === "strategic") {
+    out.push({ char: "战", tone: "key-solid" });
+  } else if (member.student_qualification === "excellence") {
+    out.push({ char: "卓", tone: "key-solid" });
+  }
+  // 2. 新生
+  if (!member.is_old_student) out.push({ char: "新", tone: "key-soft" });
+  // 3. 高报课潜能
+  if (member.upgrade_potential === "high") {
+    out.push({ char: "潜", tone: "premium-outline" });
+  }
+  // 4. 已购 programme tier — 贵 / 耀 are premium (gold solid), 丰 / 精
+  //    are entry-level (informational neutral).
   if (member.programme_tier) {
-    out.push(PROGRAMME_ABBREV[member.programme_tier]);
+    const isPremium =
+      member.programme_tier === "glorious_family" ||
+      member.programme_tier === "glorious_cultural_heritage";
+    out.push({
+      char: PROGRAMME_ABBREV[member.programme_tier],
+      tone: isPremium ? "premium-solid" : "neutral-fill",
+    });
+  }
+  // 5. 性别 — gender field is free-form text; accept several common
+  //    encodings. Unknown values render no chip rather than guessing.
+  const g = (member.gender ?? "").trim().toLowerCase();
+  if (g === "m" || g === "male" || g === "男" || g === "男性") {
+    out.push({ char: "男", tone: "neutral-fill" });
+  } else if (g === "f" || g === "female" || g === "女" || g === "女性") {
+    out.push({ char: "女", tone: "neutral-line" });
+  }
+  return out;
+}
+
+// Render-side helper — lay out chip cluster horizontally centered on
+// (cx, cy). Each chip is a tight rounded rectangle around one Chinese
+// character, sized in proportion to `charSize` (which is the font-size
+// of the chip TEXT — the surrounding rectangle is computed from it).
+function renderMemberChips(
+  chips: MemberChip[],
+  cx: number,
+  cy: number,
+  charSize: number,
+  keyPrefix: string,
+): ReactNode[] {
+  if (chips.length === 0) return [];
+  // Tight proportions — 1 CJK char + breathing room. Font-weight 600
+  // compensates for the smaller perceived size of light-on-light fills.
+  const chipW = charSize * 1.3;
+  const chipH = charSize * 1.1;
+  const gap = charSize * 0.16;
+  const radius = charSize * 0.18;
+  const totalW = chips.length * chipW + (chips.length - 1) * gap;
+  const startX = cx - totalW / 2;
+  const out: ReactNode[] = [];
+  for (let i = 0; i < chips.length; i++) {
+    const x = startX + i * (chipW + gap);
+    const colors = chipColors(chips[i].tone);
+    out.push(
+      <g key={`${keyPrefix}-${i}`}>
+        <rect
+          x={r(x)}
+          y={r(cy - chipH / 2)}
+          width={r(chipW)}
+          height={r(chipH)}
+          rx={r(radius)}
+          ry={r(radius)}
+          fill={colors.fill}
+          stroke={colors.stroke}
+          strokeWidth={colors.strokeWidth}
+        />
+        <text
+          x={r(x + chipW / 2)}
+          y={r(cy + charSize * 0.04)}
+          fontSize={r(charSize * 0.92)}
+          fontFamily="var(--font-cjk), sans-serif"
+          fontWeight={700}
+          fill={colors.text}
+          textAnchor="middle"
+          dominantBaseline="middle"
+        >
+          {chips[i].char}
+        </text>
+      </g>,
+    );
   }
   return out;
 }
@@ -601,20 +749,17 @@ function SeatsAroundCircle({
       );
     }
     if (flags.length > 0) {
+      // Chip cluster centered horizontally on (lx, ly + flagDy). Font
+      // size matches the existing flag baseline so the row height is
+      // comparable to the previous text-only flag line.
       out.push(
-        <text
-          key={`f-${i}`}
-          x={lx}
-          y={r(ly + flagDy)}
-          fontSize={r(seatR * 0.7)}
-          fontFamily="var(--font-cjk), sans-serif"
-          fill="var(--ink-faint)"
-          textAnchor="middle"
-          dominantBaseline="middle"
-          letterSpacing="0.22em"
-        >
-          {flags.join(" ")}
-        </text>,
+        ...renderMemberChips(
+          flags,
+          lx,
+          r(ly + flagDy),
+          r(seatR * 0.62),
+          `f-${i}`,
+        ),
       );
     }
   }
@@ -728,19 +873,13 @@ function SeatsAroundSquare({
     }
     if (flags.length > 0) {
       out.push(
-        <text
-          key={`${key}-f`}
-          x={r(lx)}
-          y={r(ly + flagDy)}
-          fontSize={r(seatSize * 0.42)}
-          fontFamily="var(--font-cjk), sans-serif"
-          fill="var(--ink-faint)"
-          textAnchor="middle"
-          dominantBaseline="middle"
-          letterSpacing="0.22em"
-        >
-          {flags.join(" ")}
-        </text>,
+        ...renderMemberChips(
+          flags,
+          r(lx),
+          r(ly + flagDy),
+          r(seatSize * 0.4),
+          `${key}-f`,
+        ),
       );
     }
   }
