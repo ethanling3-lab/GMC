@@ -105,7 +105,21 @@ export async function persistGroupingResult(
 
   // Table mode — insert groups, capture ids, then insert one
   // event_seat_assignments per draft member with NULL shape/seat.
-  if (result.groups.length === 0) {
+  //
+  // Drop empty groups before insert. The algorithm can emit class quota
+  // slots (strategic / key / growth) that no actual participant fills —
+  // e.g. an event whose attendees are all maintenance-tier still gets
+  // strategic slots allocated. Persisting them produces "no_members"
+  // ghosts that auto-place correctly skips, but they clutter the floor
+  // plan UI and look like a bug.
+  const populatedGroups = result.groups.filter((g) => g.members.length > 0);
+  const droppedEmpty = result.groups.length - populatedGroups.length;
+  if (droppedEmpty > 0) {
+    console.warn(
+      `[persist] dropped ${droppedEmpty} empty group${droppedEmpty === 1 ? "" : "s"} before insert (algo emitted quota slots with no members)`,
+    );
+  }
+  if (populatedGroups.length === 0) {
     return {
       groups_inserted: 0,
       assignments_inserted: 0,
@@ -113,12 +127,13 @@ export async function persistGroupingResult(
     };
   }
 
-  // Renumber fresh groups to skip locked group_no values. The result
-  // arrives with group_no 1..k; map each fresh slot to the next
+  // Renumber fresh groups to skip locked group_no values. The filtered
+  // list arrives with possibly-sparse group_no values (1, 3, 5...) if
+  // some originals were dropped; we hand each surviving slot the next
   // available number that isn't held by a locked group.
   const renumber = new Map<number, number>();
   let nextNo = 1;
-  for (const g of result.groups) {
+  for (const g of populatedGroups) {
     while (lockedNos.has(nextNo)) nextNo += 1;
     renumber.set(g.group_no, nextNo);
     nextNo += 1;
@@ -127,7 +142,7 @@ export async function persistGroupingResult(
   const { data: insertedGroups, error: groupInsErr } = await service
     .from("event_groups")
     .insert(
-      result.groups.map((g) => ({
+      populatedGroups.map((g) => ({
         event_id: eventId,
         group_no: renumber.get(g.group_no)!,
         group_class: g.group_class,
@@ -144,7 +159,7 @@ export async function persistGroupingResult(
   const groupIdByRenumberedNo = new Map<number, string>();
   for (const g of insertedGroups) groupIdByRenumberedNo.set(g.group_no, g.id);
 
-  const rawAssignmentRows = result.groups.flatMap((g) => {
+  const rawAssignmentRows = populatedGroups.flatMap((g) => {
     const renumbered = renumber.get(g.group_no);
     if (!renumbered) return [];
     const gid = groupIdByRenumberedNo.get(renumbered);
