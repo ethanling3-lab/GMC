@@ -213,6 +213,15 @@ type DummyRow = {
   is_old_student: boolean;
   financial_score: number;
   influence_score: number;
+  // Drives the 战 / 卓 chip on the floor plan when set to strategic /
+  // excellence; otherwise null lets the renderer skip it.
+  student_qualification:
+    | "basic"
+    | "rising"
+    | "elite"
+    | "excellence"
+    | "strategic";
+  upgrade_potential: "low" | "medium" | "high";
   motivation_tag: (typeof MOTIVATIONS)[number];
   goal_dimensions: string[];
   programme_tier: (typeof PROGRAMME_TIERS)[number];
@@ -278,6 +287,34 @@ function buildDummies(): DummyRow[] {
         grade = randInt(1, 3);
         timesLed = randInt(0, 4);
       }
+      // Qualification mirrors the class taxonomy so the floor plan chip
+      // row reflects something operationally meaningful. Top 30% of the
+      // strategic class get tier "strategic" (战 chip); the rest of the
+      // strategic class get "excellence" (卓 chip). Lower classes still
+      // populate qualification (so the field isn't null) but render no
+      // chip — they're below the "key person" threshold.
+      const qualForCls = (() => {
+        if (cls === "strategic") {
+          return inClass < target * 0.3 ? "strategic" : "excellence";
+        }
+        if (cls === "key") return "elite";
+        if (cls === "growth") return "rising";
+        return "basic";
+      })() as
+        | "basic"
+        | "rising"
+        | "elite"
+        | "excellence"
+        | "strategic";
+      // 20% high / 50% medium / 30% low — high renders the 潜 chip.
+      const upgradeRoll = rand();
+      const upgradePotential = (
+        upgradeRoll < 0.2
+          ? "high"
+          : upgradeRoll < 0.7
+          ? "medium"
+          : "low"
+      ) as "low" | "medium" | "high";
       dummies.push({
         name_en,
         name_cn,
@@ -290,6 +327,8 @@ function buildDummies(): DummyRow[] {
         is_old_student: rand() < 0.3,
         financial_score: fin,
         influence_score: inf,
+        student_qualification: qualForCls,
+        upgrade_potential: upgradePotential,
         motivation_tag: pick(MOTIVATIONS),
         goal_dimensions: pickN(DIMENSIONS, randInt(1, 3)),
         programme_tier: pick(PROGRAMME_TIERS),
@@ -358,6 +397,8 @@ async function insertParticipants(
       is_old_student: d.is_old_student,
       financial_score: d.financial_score,
       influence_score: d.influence_score,
+      student_qualification: d.student_qualification,
+      upgrade_potential: d.upgrade_potential,
       motivation_tag: d.motivation_tag,
       goal_dimensions: d.goal_dimensions,
       programme_tier: d.programme_tier,

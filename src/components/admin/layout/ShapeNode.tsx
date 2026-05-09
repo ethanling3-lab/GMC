@@ -261,8 +261,13 @@ function chipColors(tone: ChipTone): {
   strokeWidth: number;
   text: string;
 } {
+  // Hierarchy via fill density: saturated solid > mid-saturation solid >
+  // pale-fill-with-stroke > outlined > flat tinted. Lightness alone wasn't
+  // enough to differentiate at table-fit zoom because the rebranded blue
+  // palette compresses into a narrow lightness band.
   switch (tone) {
     case "key-solid":
+      // 战 / 卓 — top priority. Saturated cinnabar reads at a glance.
       return {
         fill: "var(--cinnabar)",
         stroke: "none",
@@ -270,39 +275,48 @@ function chipColors(tone: ChipTone): {
         text: "var(--paper)",
       };
     case "key-soft":
+      // 新 — secondary signal. Mid-saturation blue still reads as "noted"
+      // without competing with the key-solid VIPs.
       return {
-        fill: "var(--cinnabar-wash)",
+        fill: "var(--cinnabar-soft)",
         stroke: "none",
         strokeWidth: 0,
-        text: "var(--cinnabar-deep)",
+        text: "var(--paper)",
       };
     case "premium-solid":
+      // 贵 / 耀 — premium tier purchased. Pale gold with a thin cinnabar-
+      // soft border so it doesn't dissolve into the neutral chips.
       return {
         fill: "var(--gold)",
-        stroke: "none",
-        strokeWidth: 0,
+        stroke: "var(--cinnabar-soft)",
+        strokeWidth: 0.07,
         text: "var(--cinnabar-deep)",
       };
     case "premium-outline":
+      // 潜 — high upgrade potential. Outlined treatment makes it look like
+      // a "watchlist" tag — visually distinct from filled chips.
       return {
         fill: "var(--paper)",
-        stroke: "var(--gold)",
-        strokeWidth: 0.08,
-        text: "var(--cinnabar-deep)",
+        stroke: "var(--cinnabar)",
+        strokeWidth: 0.12,
+        text: "var(--cinnabar)",
       };
     case "neutral-fill":
+      // 男 / 丰 / 精 — informational. Quiet but still legible.
       return {
         fill: "var(--paper-deep)",
         stroke: "none",
         strokeWidth: 0,
-        text: "var(--ink-mute)",
+        text: "var(--ink-soft)",
       };
     case "neutral-line":
+      // 女 — same quiet bucket as 男 but mirrored treatment so a
+      // gender-mixed cluster reads as paired information.
       return {
         fill: "var(--paper-warm)",
         stroke: "var(--paper-shadow)",
-        strokeWidth: 0.06,
-        text: "var(--ink-mute)",
+        strokeWidth: 0.08,
+        text: "var(--ink-soft)",
       };
   }
 }
