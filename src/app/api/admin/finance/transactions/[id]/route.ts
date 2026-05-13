@@ -8,6 +8,7 @@ import {
 } from "@/lib/enrollment-notifications";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
+import { participantEmailLocale } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -160,7 +161,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const { data: row, error: enrollErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, participant:participants(id, region_id, name_en, name_cn, email, phone, language), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
     )
     .eq("id", enrollmentId)
     .maybeSingle();
@@ -248,7 +249,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
           name_cn: string | null;
           email: string | null;
           phone: string | null;
-          language: string | null;
+          language_fluency: string | null;
         } | null;
       }).participant;
       const event = (row as unknown as {
@@ -263,7 +264,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         } | null;
       }).event;
       if (participant && event) {
-        const locale = (participant.language === "zh" ? "zh" : "en") as "zh" | "en";
+        const locale = participantEmailLocale(participant);
         await notifyPaymentReceived({
           enrollment: {
             id: row.id,

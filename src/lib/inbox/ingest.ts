@@ -210,13 +210,18 @@ async function processInboundMessage(
   if (storedAttachments.length === 0 && msg.body_text && msg.body_text.trim()) {
     const { data: conv } = await service
       .from("conversations")
-      .select("ai_enabled, participant:participants(language)")
+      .select("ai_enabled, participant:participants(language_fluency)")
       .eq("id", conversationId)
       .maybeSingle();
     if (conv?.ai_enabled) {
-      const participantLang = (
-        (conv as { participant?: { language?: string | null } | null }).participant?.language ?? null
+      // Map fluency enum back to the tier1 reply's expected 2-letter hint:
+      // cn / both → "zh", en → "en", null → null.
+      const fluency = (
+        (conv as { participant?: { language_fluency?: string | null } | null })
+          .participant?.language_fluency ?? null
       ) as string | null;
+      const participantLang: string | null =
+        fluency === "cn" || fluency === "both" ? "zh" : fluency === "en" ? "en" : null;
       try {
         await runTier1Reply({
           conversationId,

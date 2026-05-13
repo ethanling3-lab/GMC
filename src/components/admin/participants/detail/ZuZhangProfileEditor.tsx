@@ -24,8 +24,10 @@ import { useParticipantPatch } from "./useParticipantPatch";
 //   * zu_zhang_tier — global eligibility tag (4 tiers + "Not eligible")
 //   * zu_zhang_dimensions — growth dimensions this leader excels in
 //     (rendered as "Group Leader Key Strengths · 组长核心优势")
-//   * has_special_contribution — flag for 重点感召型 eligibility
 //   * zu_zhang_core_traits — multi-select of the 5 trait categories
+//
+// `has_special_contribution` moved to the Programme & Scoring card —
+// it's a soft scoring signal, not a leader-role attribute.
 //
 // Read-only:
 //   * times_led_groups — cached counter from zu_zhang_history
@@ -43,7 +45,6 @@ export type ZuZhangProfileData = {
   zu_zhang_grade: number | null;
   zu_zhang_dimensions: GrowthDimension[];
   zu_zhang_core_traits: ZuZhangCoreTrait[];
-  has_special_contribution: boolean;
   times_led_groups: number;
 };
 
@@ -77,7 +78,6 @@ function eligibilityHint(
   tier: ZuZhangTier | null,
   qualification: StudentQualification | null,
   timesLed: number,
-  hasSpecial: boolean,
 ): string | null {
   if (!tier) return null;
   const qScore = qualification
@@ -85,8 +85,7 @@ function eligibilityHint(
     : 0;
   if (tier === "key_recruitment") {
     if (timesLed >= 20 && qScore >= 4) return null;
-    if (hasSpecial) return null;
-    return `重点感召型 typically requires 带组 ≥20 + 卓越级+, OR 区域负责人, OR 特殊贡献. This person has 带组 ${timesLed}${qualification ? ` + ${STUDENT_QUALIFICATION_LABEL[qualification].cn}` : ""}${hasSpecial ? " + 特殊贡献" : ""} — confirm before saving.`;
+    return `重点感召型 typically requires 带组 ≥20 + 卓越级+, OR 区域负责人, OR 特殊贡献 (now tracked on Programme & Scoring card). This person has 带组 ${timesLed}${qualification ? ` + ${STUDENT_QUALIFICATION_LABEL[qualification].cn}` : ""} — confirm before saving.`;
   }
   if (tier === "recruitment") {
     if (timesLed >= 10 && qScore >= 3) return null;
@@ -128,7 +127,6 @@ export function ZuZhangProfileEditor({
       zu_zhang_grade: draft.zu_zhang_tier ? draft.zu_zhang_grade : null,
       zu_zhang_dimensions: draft.zu_zhang_dimensions,
       zu_zhang_core_traits: draft.zu_zhang_core_traits,
-      has_special_contribution: draft.has_special_contribution,
     };
     const ok = await patch(payload);
     if (ok) setEditing(false);
@@ -168,7 +166,6 @@ export function ZuZhangProfileEditor({
         draft.zu_zhang_tier,
         computedQualification,
         initial.times_led_groups,
-        draft.has_special_contribution,
       )
     : null;
 
@@ -288,22 +285,6 @@ export function ZuZhangProfileEditor({
                 </div>
               </div>
 
-              {/* Special contribution flag */}
-              <label className="flex items-center gap-2 text-[12px] text-[var(--ink-mute)]">
-                <input
-                  type="checkbox"
-                  checked={draft.has_special_contribution}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      has_special_contribution: e.target.checked,
-                    })
-                  }
-                  className="accent-[var(--cinnabar)]"
-                />
-                对 GMC 有特殊贡献者 · Has special contribution to GMC
-              </label>
-
               {/* Core Traits — categorical multi-select. */}
               <div>
                 <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
@@ -383,11 +364,6 @@ export function ZuZhangProfileEditor({
                         .join(" · ")
                 }
               />
-              {initial.has_special_contribution ? (
-                <div className="text-[12px] text-[var(--cinnabar)]">
-                  ✓ 对 GMC 有特殊贡献者 · Has special contribution
-                </div>
-              ) : null}
             </>
           ) : null}
 

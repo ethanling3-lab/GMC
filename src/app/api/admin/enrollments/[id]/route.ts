@@ -18,6 +18,7 @@ import {
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
+import { participantEmailLocale } from "@/lib/i18n";
 import { ensureRegionId } from "@/lib/region-id";
 
 export const dynamic = "force-dynamic";
@@ -109,7 +110,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const { data: row, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
     )
     .eq("id", enrollmentId)
     .maybeSingle();
@@ -370,9 +371,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         amount_paid: update.amount_paid ?? row.amount_paid,
         payment_method: (update.payment_method as string) ?? row.payment_method,
       };
-      const locale = (participant.language === "zh" ? "zh" : "en") as
-        | "zh"
-        | "en";
+      const locale = participantEmailLocale(participant);
       const amountLabel = fmtAmount(
         action === "mark_paid" ? enr.amount_paid ?? event.price : event.price,
         event.currency,
@@ -423,7 +422,7 @@ type ParticipantShape = {
   name_cn: string | null;
   email: string | null;
   phone: string | null;
-  language: string | null;
+  language_fluency: string | null;
 };
 
 type EventShape = {

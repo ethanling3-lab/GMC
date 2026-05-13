@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -89,19 +88,23 @@ export function PhotoUploader({ participantId, initialUrl, initials }: Props) {
 
   return (
     <div className="relative rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] overflow-hidden">
-      <div className="relative aspect-[4/5] bg-[var(--paper-deep)]">
+      {/*
+        Photo area takes the uploaded image's NATIVE aspect ratio — the
+        cell adapts to the photo, not the other way around. No cropping,
+        no padding around the image. When there's no photo, fall back
+        to a fixed 4:7 placeholder so the empty state has a known size.
+      */}
+      <div className="relative">
         {url ? (
-          <Image
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
             src={url}
             alt="Participant photo"
-            fill
-            sizes="(max-width: 1024px) 100vw, 420px"
-            className="object-cover"
-            unoptimized
+            className="block w-full h-auto"
           />
         ) : (
           <div
-            className="absolute inset-0 flex flex-col items-center justify-center gap-4"
+            className="relative aspect-[4/7] flex flex-col items-center justify-center gap-4"
             style={{
               backgroundImage:
                 "radial-gradient(540px 340px at 50% 20%, rgba(37,99,235,0.08), transparent 65%)," +

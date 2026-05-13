@@ -5,6 +5,11 @@ import { CardShell } from "./CardShell";
 import { Field, Empty } from "./Field";
 import { Textarea } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
+import {
+  ConflictPairsEditor,
+  ConflictPartnersDisplay,
+  type ConflictPartner,
+} from "./ConflictPairsEditor";
 
 // Relationships card.
 //
@@ -32,6 +37,9 @@ export type RelationshipsData = {
   referrer_name: string | null;
   referrer_contact: string | null;
   referred_by_this: RelatedParticipant[];
+  // Negative relationships — algorithm enforces a hard split (no two
+  // participants linked here may share a table).
+  conflict_partners: ConflictPartner[];
 };
 
 type SearchHit = RelatedParticipant & {
@@ -66,6 +74,9 @@ export function RelationshipsEditor({
   const [referrerContact, setReferrerContact] = useState(
     initial.referrer_contact ?? "",
   );
+  const [conflictPartners, setConflictPartners] = useState<ConflictPartner[]>(
+    initial.conflict_partners,
+  );
   const { saving, error, setError, patch } = useParticipantPatch(participantId);
 
   function cancel() {
@@ -73,6 +84,7 @@ export function RelationshipsEditor({
     setReferrer(initial.referrer);
     setReferrerName(initial.referrer_name ?? "");
     setReferrerContact(initial.referrer_contact ?? "");
+    setConflictPartners(initial.conflict_partners);
     setEditing(false);
     setError(null);
   }
@@ -88,6 +100,12 @@ export function RelationshipsEditor({
     const nameChanged = (initial.referrer_name ?? "") !== referrerName;
     const contactChanged = (initial.referrer_contact ?? "") !== referrerContact;
 
+    const initialConflicts = new Set(initial.conflict_partners.map((p) => p.id));
+    const draftConflicts = new Set(conflictPartners.map((p) => p.id));
+    const conflictsChanged =
+      initialConflicts.size !== draftConflicts.size ||
+      [...draftConflicts].some((id) => !initialConflicts.has(id));
+
     const payload: Record<string, unknown> = {};
     if (familyChanged) {
       payload.family_member_ids = familyMembers.map((m) => m.id);
@@ -102,6 +120,9 @@ export function RelationshipsEditor({
       payload.referrer_contact = referrerContact.trim()
         ? referrerContact.trim()
         : null;
+    }
+    if (conflictsChanged) {
+      payload.conflict_member_ids = conflictPartners.map((p) => p.id);
     }
 
     if (Object.keys(payload).length === 0) {
@@ -238,6 +259,24 @@ export function RelationshipsEditor({
             </div>
           </div>
 
+          {/* Conflict pairs — algorithm hard-split */}
+          <div className="pt-5 border-t border-[var(--paper-shadow)]">
+            <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
+              Conflicts · 不可同桌
+            </span>
+            <div className="mt-3">
+              <ConflictPairsEditor
+                participantId={participantId}
+                partners={conflictPartners}
+                onChange={setConflictPartners}
+              />
+            </div>
+            <p className="mt-2 text-[11.5px] leading-[1.55] text-[var(--ink-faint)]">
+              Hard split — the grouping algorithm will never put two
+              participants linked here on the same table.
+            </p>
+          </div>
+
           {/* Referred by this participant — read-only even in edit mode */}
           {initial.referred_by_this.length > 0 ? (
             <div className="pt-5 border-t border-[var(--paper-shadow)]">
@@ -288,6 +327,13 @@ export function RelationshipsEditor({
               </span>
             ) : (
               <Empty />
+            )}
+          </Field>
+          <Field label="Conflicts" labelZh="不可同桌">
+            {initial.conflict_partners.length === 0 ? (
+              <Empty />
+            ) : (
+              <ConflictPartnersDisplay partners={initial.conflict_partners} />
             )}
           </Field>
           <Field label="Referred by this participant" labelZh="介绍">

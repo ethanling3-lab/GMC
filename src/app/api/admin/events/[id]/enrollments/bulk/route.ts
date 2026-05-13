@@ -20,6 +20,7 @@ import {
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLogBatch, type AuditAction } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
+import { participantEmailLocale } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -80,7 +81,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const { data: rows, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
     )
     .eq("event_id", eventId)
     .in("id", body.ids);
@@ -226,7 +227,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
     const amountLabel = fmtAmount(
       body.action === "mark_paid" ? r.amount_paid ?? event.price : event.price,
       currency,
-      (p.language === "zh" ? "zh" : "en") as "zh" | "en",
+      participantEmailLocale(p),
     );
     try {
       if (body.action === "approve") {
@@ -286,7 +287,7 @@ type EnrichedRow = {
     name_cn: string | null;
     email: string | null;
     phone: string | null;
-    language: string | null;
+    language_fluency: string | null;
   } | null;
   event: {
     id: string;

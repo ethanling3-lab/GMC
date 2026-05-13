@@ -131,7 +131,12 @@ export function ManualEnrollmentForm({
                   email: newDraft.email.trim(),
                   phone: newDraft.phone.trim(),
                   region: newDraft.region.trim(),
-                  language: newDraft.language.trim() || undefined,
+                  language_fluency:
+                    (newDraft.language.trim() || undefined) as
+                      | "cn"
+                      | "en"
+                      | "both"
+                      | undefined,
                   referrer_name: newDraft.referrer_name.trim() || undefined,
                   referrer_contact: newDraft.referrer_contact.trim() || undefined,
                   is_old_student: newDraft.is_old_student,
@@ -392,11 +397,12 @@ function NewParticipantFields({
       <Field label="Region / country" required>
         <input className={TEXTINPUT_CLASS} value={draft.region} onChange={(e) => set("region", e.target.value)} disabled={disabled} placeholder="MY · SG · TW · HK · CN · …" />
       </Field>
-      <Field label="Preferred language">
+      <Field label="Language fluency · 上课语种">
         <select className={TEXTINPUT_CLASS} value={draft.language} onChange={(e) => set("language", e.target.value)} disabled={disabled}>
           <option value="">—</option>
-          <option value="zh">中文</option>
+          <option value="cn">中文 · Chinese</option>
           <option value="en">English</option>
+          <option value="both">中英文 · Both</option>
         </select>
       </Field>
       <Field label="Referrer · 感召人姓名">

@@ -9,8 +9,9 @@ import {
   type ParticipantStatus,
 } from "@/lib/participants-query";
 import { IdentityEditor } from "@/components/admin/participants/detail/IdentityEditor";
+import { ProfileEditor } from "@/components/admin/participants/detail/ProfileEditor";
+import type { AttendedCourse } from "@/components/admin/participants/detail/ProfileEditor";
 import { ScoringEditor } from "@/components/admin/participants/detail/ScoringEditor";
-import { StudentCategoryEditor } from "@/components/admin/participants/detail/StudentCategoryEditor";
 import { ZuZhangProfileEditor } from "@/components/admin/participants/detail/ZuZhangProfileEditor";
 import { EnrichmentEditor } from "@/components/admin/participants/detail/EnrichmentEditor";
 import { FaceReadingCard } from "@/components/admin/participants/detail/FaceReadingCard";
@@ -23,7 +24,6 @@ import type {
   ZuZhangCoreTrait,
   ZuZhangTier,
 } from "@/lib/grouping/types";
-import { NotesEditor } from "@/components/admin/participants/detail/NotesEditor";
 import { RelationshipsEditor } from "@/components/admin/participants/detail/RelationshipsEditor";
 import { PhotoUploader } from "@/components/admin/participants/detail/PhotoUploader";
 import {
@@ -45,7 +45,6 @@ type Participant = {
   email: string | null;
   phone: string | null;
   region: string | null;
-  language: string | null;
   gender: string | null;
   birth_date: string | null;
   occupation: string | null;
@@ -64,6 +63,21 @@ type Participant = {
   upgrade_potential: UpgradePotential | null;
   times_led_groups: number;
   programme_tier: ProgrammeTier | null;
+  dharma_name: string | null;
+  religion: string | null;
+  attended_courses: AttendedCourse[] | null;
+  // Migration 032 — full briefing card fields.
+  sub_region: string | null;
+  training_level: string | null;
+  health_status: string | null;
+  family_situation: string | null;
+  dietary_needs: string | null;
+  interaction_notes: string | null;
+  course_needs: string | null;
+  suggested_group_leader_notes: string | null;
+  recommended_courses: string | null;
+  forbidden_courses: string | null;
+  cs_evaluation: string | null;
   is_old_student: boolean;
   energy_profile: "high" | "medium" | "quiet" | null;
   language_fluency: "en" | "cn" | "both" | null;
@@ -352,19 +366,16 @@ export default async function ParticipantDetailPage({ params }: Props) {
               email: p.email,
               phone: p.phone,
               region: p.region,
-              language: p.language,
+              sub_region: p.sub_region,
+              language_fluency: p.language_fluency,
               gender: p.gender,
               birth_date: p.birth_date,
               occupation: p.occupation,
               industry: p.industry,
-            }}
-          />
-
-          <StudentCategoryEditor
-            participantId={p.id}
-            initial={{
-              programme_tier: p.programme_tier,
-              upgrade_potential: p.upgrade_potential,
+              dharma_name: p.dharma_name,
+              religion: p.religion,
+              training_level: p.training_level,
+              is_old_student: p.is_old_student,
             }}
           />
 
@@ -375,6 +386,9 @@ export default async function ParticipantDetailPage({ params }: Props) {
               influence_score: p.influence_score,
               overall_score: p.overall_score,
               student_qualification: p.student_qualification,
+              programme_tier: p.programme_tier,
+              upgrade_potential: p.upgrade_potential,
+              has_special_contribution: p.has_special_contribution ?? false,
             }}
           />
 
@@ -387,8 +401,27 @@ export default async function ParticipantDetailPage({ params }: Props) {
               zu_zhang_grade: p.zu_zhang_grade,
               zu_zhang_dimensions: p.zu_zhang_dimensions ?? [],
               zu_zhang_core_traits: p.zu_zhang_core_traits ?? [],
-              has_special_contribution: p.has_special_contribution ?? false,
               times_led_groups: p.times_led_groups ?? 0,
+            }}
+          />
+
+          <ProfileEditor
+            participantId={p.id}
+            initial={{
+              health_status: p.health_status,
+              family_situation: p.family_situation,
+              dietary_needs: p.dietary_needs,
+              interaction_notes: p.interaction_notes,
+              course_needs: p.course_needs,
+              suggested_group_leader_notes: p.suggested_group_leader_notes,
+              recommended_courses: p.recommended_courses,
+              forbidden_courses: p.forbidden_courses,
+              cs_evaluation: p.cs_evaluation,
+              personality: p.personality,
+              face_type: p.face_type,
+              parameter_framework: p.parameter_framework,
+              attended_courses: p.attended_courses ?? [],
+              cs_notes: p.cs_notes,
             }}
           />
 
@@ -396,14 +429,8 @@ export default async function ParticipantDetailPage({ params }: Props) {
             participantId={p.id}
             initial={{
               motivation_tag: p.motivation_tag,
-              is_old_student: p.is_old_student,
-              personality: p.personality,
-              face_type: p.face_type,
-              parameter_framework: p.parameter_framework,
               goal_dimensions: p.goal_dimensions ?? [],
               energy_profile: p.energy_profile ?? null,
-              language_fluency: p.language_fluency ?? null,
-              conflict_partners: conflictPartners,
             }}
           />
 
@@ -420,8 +447,6 @@ export default async function ParticipantDetailPage({ params }: Props) {
             }}
           />
 
-          <NotesEditor participantId={p.id} initial={p.cs_notes} />
-
           <RelationshipsEditor
             participantId={p.id}
             initial={{
@@ -430,6 +455,7 @@ export default async function ParticipantDetailPage({ params }: Props) {
               referrer_name: p.referrer_name,
               referrer_contact: p.referrer_contact,
               referred_by_this: referred,
+              conflict_partners: conflictPartners,
             }}
           />
         </div>

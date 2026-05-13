@@ -95,7 +95,8 @@ export type AuditAction =
   | "participant.referrer_changed"
   | "participant.energy_profile_changed"
   | "participant.language_fluency_changed"
-  | "participant.conflict_pairs_changed";
+  | "participant.conflict_pairs_changed"
+  | "profile_deck.exported";
 
 export type WriteAuditLog = {
   actor_id: string | null;

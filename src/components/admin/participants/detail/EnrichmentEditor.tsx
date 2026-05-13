@@ -2,30 +2,34 @@
 
 import { useState } from "react";
 import { CardShell } from "./CardShell";
-import { Field, Empty } from "./Field";
-import { LabelRow, Select, Textarea, Toggle } from "./FormControls";
+import { Empty } from "./Field";
+import { LabelRow } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
-import {
-  ConflictPairsEditor,
-  ConflictPartnersDisplay,
-  type ConflictPartner,
-} from "./ConflictPairsEditor";
 import { MOTIVATIONS } from "@/lib/participant-import-schema";
 import type { MotivationTag } from "@/lib/participants-query";
 import { GROWTH_DIMENSION_LABEL } from "@/lib/grouping/types";
 import type { GrowthDimension } from "@/lib/grouping/types";
 
+// Algorithm Signals — the narrow set of fields the grouping algorithm
+// reads. Three fields total:
+//
+//   motivation_tag   — categorical (clean / insurance / direct_sales /
+//                      spiritual / other). LLM uses for profiling.
+//   goal_dimensions  — ordered array of 1-4 growth dimensions; first =
+//                      primary. balance.ts matches participants' primary
+//                      goal to 组长 dimension strengths.
+//   energy_profile   — soft balance (high / medium / quiet). Spread
+//                      across groups so no table is all-quiet or all-loud.
+//
+// Other algorithm-readable fields live elsewhere:
+//   - language_fluency, is_old_student → Identity card
+//   - conflict_member_ids              → Relationships card
+//   - student_qualification + scores   → Programme & Scoring card
+
 export type EnrichmentData = {
   motivation_tag: MotivationTag | null;
-  is_old_student: boolean;
-  personality: string | null;
-  face_type: string | null;
-  parameter_framework: string | null;
   goal_dimensions: GrowthDimension[];
-  // Migration 030 — grouping signals.
   energy_profile: "high" | "medium" | "quiet" | null;
-  language_fluency: "en" | "cn" | "both" | null;
-  conflict_partners: ConflictPartner[];
 };
 
 const DIMENSIONS: GrowthDimension[] = [
@@ -48,55 +52,14 @@ const MOTIVATION_OPTIONS = (MOTIVATIONS as readonly MotivationTag[]).map((m) => 
   label: `${MOTIVATION_LABEL[m].en} · ${MOTIVATION_LABEL[m].zh}`,
 }));
 
-const ENERGY_LABEL: Record<"high" | "medium" | "quiet", { cn: string; en: string }> = {
+const ENERGY_LABEL: Record<
+  "high" | "medium" | "quiet",
+  { cn: string; en: string }
+> = {
   high: { cn: "高能", en: "High" },
   medium: { cn: "中等", en: "Medium" },
   quiet: { cn: "安静", en: "Quiet" },
 };
-
-const LANGUAGE_LABEL: Record<"en" | "cn" | "both", { cn: string; en: string }> = {
-  en: { cn: "英语", en: "EN" },
-  cn: { cn: "中文", en: "CN" },
-  both: { cn: "双语", en: "Both" },
-};
-
-// Inline tag — sits next to a field label so admin sees which fields
-// the algorithm reads.
-function FeedsBuilder() {
-  return (
-    <span
-      title="This field feeds the GroupBuilder algorithm."
-      className="ml-2 inline-flex items-center px-1.5 h-[15px] rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/30 bg-[var(--cinnabar-wash)]/40 text-[8.5px] tracking-[0.18em] uppercase text-[var(--cinnabar-deep)] align-middle"
-    >
-      feeds groupBuilder
-    </span>
-  );
-}
-
-function SectionHeader({
-  eyebrow,
-  eyebrowZh,
-  tone,
-}: {
-  eyebrow: string;
-  eyebrowZh: string;
-  tone: "cinnabar" | "paper";
-}) {
-  const color =
-    tone === "cinnabar"
-      ? "text-[var(--cinnabar)]"
-      : "text-[var(--ink-faint)]";
-  return (
-    <div
-      className={`inline-flex items-center gap-2 text-[10px] tracking-[0.22em] uppercase ${color}`}
-    >
-      <span className={tone === "cinnabar" ? "w-4 h-px bg-current" : "w-4 h-px bg-current opacity-60"} />
-      <span>{eyebrow}</span>
-      <span className="opacity-70">·</span>
-      <span>{eyebrowZh}</span>
-    </div>
-  );
-}
 
 export function EnrichmentEditor({
   participantId,
@@ -116,47 +79,31 @@ export function EnrichmentEditor({
   }
 
   async function save() {
-    // Send only fields the schema accepts. conflict_partners is the
-    // hydrated UI shape; the PATCH route wants conflict_member_ids.
     const ok = await patch({
       motivation_tag: draft.motivation_tag,
-      is_old_student: draft.is_old_student,
-      personality: draft.personality,
-      face_type: draft.face_type,
-      parameter_framework: draft.parameter_framework,
       goal_dimensions: draft.goal_dimensions,
       energy_profile: draft.energy_profile,
-      language_fluency: draft.language_fluency,
-      conflict_member_ids: draft.conflict_partners.map((p) => p.id),
     });
     if (ok) setEditing(false);
   }
 
-  function toggleGoalDimension(d: GrowthDimension) {
-    const has = draft.goal_dimensions.includes(d);
-    if (has) {
-      setDraft({
-        ...draft,
-        goal_dimensions: draft.goal_dimensions.filter((x) => x !== d),
-      });
-    } else {
-      setDraft({ ...draft, goal_dimensions: [...draft.goal_dimensions, d] });
-    }
+  function toggleGoal(d: GrowthDimension) {
+    const next = draft.goal_dimensions.includes(d)
+      ? draft.goal_dimensions.filter((x) => x !== d)
+      : [...draft.goal_dimensions, d];
+    setDraft({ ...draft, goal_dimensions: next });
   }
 
-  function moveGoalToFront(d: GrowthDimension) {
-    if (!draft.goal_dimensions.includes(d)) return;
-    setDraft({
-      ...draft,
-      goal_dimensions: [d, ...draft.goal_dimensions.filter((x) => x !== d)],
-    });
+  function promoteGoal(d: GrowthDimension) {
+    const next = [d, ...draft.goal_dimensions.filter((x) => x !== d)];
+    setDraft({ ...draft, goal_dimensions: next });
   }
 
   return (
     <CardShell
-      eyebrow="CS Enrichment"
-      eyebrowZh="资料"
-      title="Qualitative profile"
+      eyebrow="Algorithm signals"
+      eyebrowZh="算法信号"
+      title="The three fields that tune the grouping algorithm"
       editing={editing}
       saving={saving}
       error={error}
@@ -165,323 +112,157 @@ export function EnrichmentEditor({
       onSave={save}
     >
       {editing ? (
-        <div className="flex flex-col gap-7">
-          {/* SECTION A — GROUPING SIGNALS */}
-          <div className="flex flex-col gap-5">
-            <SectionHeader
-              eyebrow="Grouping signals"
-              eyebrowZh="编排信号"
-              tone="cinnabar"
-            />
-
-            <div>
-              <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
-                Goal Dimensions · 成长方向 (first = primary)
-                <FeedsBuilder />
-              </span>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {DIMENSIONS.map((d) => {
-                  const idx = draft.goal_dimensions.indexOf(d);
-                  const on = idx >= 0;
-                  const isPrimary = idx === 0;
-                  const lab = GROWTH_DIMENSION_LABEL[d];
-                  return (
-                    <button
-                      type="button"
-                      key={d}
-                      onClick={() => toggleGoalDimension(d)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        moveGoalToFront(d);
-                      }}
-                      title={
-                        on
-                          ? "Click to remove · right-click to make primary"
-                          : "Click to add"
-                      }
-                      className={`px-3 py-1.5 rounded-full text-[12px] tracking-[0.04em] border transition-colors duration-[var(--dur-fast)] ${
-                        isPrimary
-                          ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper)]"
-                          : on
-                            ? "border-[var(--cinnabar)]/60 bg-[var(--cinnabar)]/10 text-[var(--cinnabar)]"
-                            : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)]"
-                      }`}
-                    >
-                      {isPrimary ? "★ " : ""}
-                      {lab.icon} {lab.cn}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="mt-2 text-[11px] text-[var(--ink-faint)]">
-                Right-click a chip to make it primary. The algorithm matches each
-                participant's primary goal to a 组长's strengths.
-              </p>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
-              <LabelRow
-                label="Motivation"
-                labelZh="动机"
-                trailing={<FeedsBuilder />}
-              >
-                <Select
-                  value={draft.motivation_tag}
-                  onChange={(v) => setDraft({ ...draft, motivation_tag: v })}
-                  options={MOTIVATION_OPTIONS}
-                />
-              </LabelRow>
-              <LabelRow
-                label="Old student"
-                labelZh="老学员"
-                trailing={<FeedsBuilder />}
-              >
-                <Toggle
-                  value={draft.is_old_student}
-                  onChange={(v) => setDraft({ ...draft, is_old_student: v })}
-                />
-              </LabelRow>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
-              <div>
-                <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
-                  Energy profile · 能量
-                  <FeedsBuilder />
-                </span>
-                <div className="mt-2 flex gap-2">
-                  {(["high", "medium", "quiet"] as const).map((v) => {
-                    const on = draft.energy_profile === v;
-                    const lab = ENERGY_LABEL[v];
-                    return (
-                      <button
-                        type="button"
-                        key={v}
-                        onClick={() =>
-                          setDraft({
-                            ...draft,
-                            energy_profile: on ? null : v,
-                          })
-                        }
-                        className={`px-3 py-1.5 rounded-full text-[12px] tracking-[0.04em] border transition-colors duration-[var(--dur-fast)] ${
-                          on
-                            ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper)]"
-                            : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)]"
-                        }`}
-                      >
-                        {lab.cn} · {lab.en}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="mt-2 text-[11px] text-[var(--ink-faint)]">
-                  Algorithm spreads energy levels evenly across groups.
-                </p>
-              </div>
-
-              <div>
-                <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
-                  Language fluency · 语言
-                  <FeedsBuilder />
-                </span>
-                <div className="mt-2 flex gap-2">
-                  {(["cn", "en", "both"] as const).map((v) => {
-                    const on = draft.language_fluency === v;
-                    const lab = LANGUAGE_LABEL[v];
-                    return (
-                      <button
-                        type="button"
-                        key={v}
-                        onClick={() =>
-                          setDraft({
-                            ...draft,
-                            language_fluency: on ? null : v,
-                          })
-                        }
-                        className={`px-3 py-1.5 rounded-full text-[12px] tracking-[0.04em] border transition-colors duration-[var(--dur-fast)] ${
-                          on
-                            ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper)]"
-                            : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)]"
-                        }`}
-                      >
-                        {lab.en} · {lab.cn}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="mt-2 text-[11px] text-[var(--ink-faint)]">
-                  Each group needs ≥1 speaker of each language present.
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
-                Conflict pairs · 冲突
-                <FeedsBuilder />
-              </span>
-              <ConflictPairsEditor
-                participantId={participantId}
-                partners={draft.conflict_partners}
-                onChange={(next) =>
-                  setDraft({ ...draft, conflict_partners: next })
-                }
-              />
-            </div>
-          </div>
-
-          {/* SECTION B — QUALITATIVE NOTES */}
-          <div className="flex flex-col gap-5 pt-4 border-t border-[var(--paper-shadow)]/60">
-            <SectionHeader
-              eyebrow="Qualitative notes"
-              eyebrowZh="资料备注"
-              tone="paper"
-            />
-
-            <LabelRow label="Personality" labelZh="性格">
-              <Textarea
-                rows={3}
-                value={draft.personality ?? ""}
-                onChange={(v) => setDraft({ ...draft, personality: v })}
-                placeholder="Observations on temperament, decision style, energy…"
-              />
-            </LabelRow>
-            <LabelRow
-              label="Face type"
-              labelZh="面相"
-              hint="Free-text notes. Distinct from the auto-classified 面相 archetype in the Face reading card below."
+        <div className="flex flex-col gap-6">
+          {/* Motivation */}
+          <LabelRow
+            label="Motivation tag · 报名动机"
+            hint="Categorical reason — used by the LLM to profile groups."
+          >
+            <select
+              value={draft.motivation_tag ?? ""}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  motivation_tag:
+                    (e.target.value || null) as MotivationTag | null,
+                })
+              }
+              className="h-9 w-full px-3 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[13px] text-[var(--ink)] focus:border-[var(--cinnabar)]/50 focus:outline-none focus:shadow-[var(--shadow-focus)]"
             >
-              <Textarea
-                rows={3}
-                value={draft.face_type ?? ""}
-                onChange={(v) => setDraft({ ...draft, face_type: v })}
-                placeholder="Qualitative notes per Dr Wu's framework"
-              />
-            </LabelRow>
-            <LabelRow label="Parameter framework" labelZh="参数体系">
-              <Textarea
-                rows={3}
-                value={draft.parameter_framework ?? ""}
-                onChange={(v) =>
-                  setDraft({ ...draft, parameter_framework: v })
-                }
-                placeholder="Framework-specific parameters"
-              />
-            </LabelRow>
-          </div>
+              <option value="">—</option>
+              {MOTIVATION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </LabelRow>
+
+          {/* Goal dimensions */}
+          <LabelRow
+            label="Goal dimensions · 成长维度"
+            hint="Click to toggle. First selected = primary. Right-click to promote to primary."
+          >
+            <div className="grid grid-cols-2 gap-2">
+              {DIMENSIONS.map((d) => {
+                const idx = draft.goal_dimensions.indexOf(d);
+                const isPrimary = idx === 0;
+                const isSelected = idx >= 0;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => toggleGoal(d)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      promoteGoal(d);
+                    }}
+                    className={`flex items-center justify-between h-9 px-3 rounded-[var(--radius-md)] border text-[13px] transition-[background-color,border-color,color] duration-[var(--dur-fast)]
+                      ${
+                        isPrimary
+                          ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper-warm)]"
+                          : isSelected
+                            ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                            : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)] hover:border-[var(--cinnabar)]/30"
+                      }`}
+                  >
+                    <span>
+                      {GROWTH_DIMENSION_LABEL[d].icon}{" "}
+                      {GROWTH_DIMENSION_LABEL[d].cn} · {GROWTH_DIMENSION_LABEL[d].en}
+                    </span>
+                    {isSelected ? (
+                      <span className="text-[10px] tabular-nums opacity-80">
+                        {isPrimary ? "PRIMARY" : `#${idx + 1}`}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </LabelRow>
+
+          {/* Energy profile */}
+          <LabelRow
+            label="Energy profile · 能量水平"
+            hint="Spread across groups so no table is all-quiet or all-loud."
+          >
+            <div className="grid grid-cols-3 gap-2">
+              {(["high", "medium", "quiet"] as const).map((level) => {
+                const active = draft.energy_profile === level;
+                return (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        energy_profile: active ? null : level,
+                      })
+                    }
+                    className={`h-9 px-3 rounded-[var(--radius-md)] border text-[13px] transition-[background-color,border-color,color] duration-[var(--dur-fast)]
+                      ${
+                        active
+                          ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper-warm)]"
+                          : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-mute)] hover:border-[var(--cinnabar)]/30"
+                      }`}
+                  >
+                    {ENERGY_LABEL[level].cn} · {ENERGY_LABEL[level].en}
+                  </button>
+                );
+              })}
+            </div>
+          </LabelRow>
         </div>
       ) : (
-        <div className="flex flex-col gap-6">
-          {/* SECTION A — GROUPING SIGNALS (view) */}
-          <div className="flex flex-col gap-4">
-            <SectionHeader
-              eyebrow="Grouping signals"
-              eyebrowZh="编排信号"
-              tone="cinnabar"
-            />
-            <dl className="grid md:grid-cols-2 gap-x-8 gap-y-5">
-              <Field label="Goal dimensions" labelZh="成长方向">
-                {initial.goal_dimensions.length === 0 ? (
-                  <Empty />
-                ) : (
-                  <span className="inline-flex flex-wrap gap-1.5">
-                    {initial.goal_dimensions.map((d, i) => (
-                      <span
-                        key={d}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] ${
-                          i === 0
-                            ? "border-[var(--cinnabar)] bg-[var(--cinnabar)] text-[var(--paper)]"
-                            : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink)]"
-                        }`}
-                      >
-                        {i === 0 ? "★ " : ""}
-                        {GROWTH_DIMENSION_LABEL[d].icon} {GROWTH_DIMENSION_LABEL[d].cn}
-                      </span>
-                    ))}
-                  </span>
-                )}
-              </Field>
-              <Field label="Motivation" labelZh="动机">
-                {initial.motivation_tag ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11px] tracking-[0.1em] uppercase text-[var(--ink)]">
-                      {MOTIVATION_LABEL[initial.motivation_tag].en}
-                    </span>
-                    <span className="text-[var(--ink-mute)] text-[12px]">
-                      {MOTIVATION_LABEL[initial.motivation_tag].zh}
-                    </span>
-                  </span>
-                ) : (
-                  <Empty />
-                )}
-              </Field>
-              <Field label="Old student" labelZh="老学员">
-                {initial.is_old_student ? (
-                  <span className="inline-flex items-center gap-1.5 text-[var(--cinnabar-deep)]">
-                    <span
-                      className="w-1.5 h-1.5 rounded-full bg-[var(--cinnabar)]"
-                      aria-hidden="true"
-                    />
-                    Yes · 是
-                  </span>
-                ) : (
-                  <span className="text-[var(--ink-mute)]">No · 否</span>
-                )}
-              </Field>
-              <Field label="Energy profile" labelZh="能量">
-                {initial.energy_profile ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11px] tracking-[0.06em] text-[var(--ink)]">
-                      {ENERGY_LABEL[initial.energy_profile].en}
-                    </span>
-                    <span className="text-[var(--ink-mute)] text-[12px]">
-                      {ENERGY_LABEL[initial.energy_profile].cn}
-                    </span>
-                  </span>
-                ) : (
-                  <Empty />
-                )}
-              </Field>
-              <Field label="Language fluency" labelZh="语言">
-                {initial.language_fluency ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11px] tracking-[0.06em] text-[var(--ink)]">
-                      {LANGUAGE_LABEL[initial.language_fluency].en}
-                    </span>
-                    <span className="text-[var(--ink-mute)] text-[12px]">
-                      {LANGUAGE_LABEL[initial.language_fluency].cn}
-                    </span>
-                  </span>
-                ) : (
-                  <Empty />
-                )}
-              </Field>
-              <Field label="Conflict pairs" labelZh="冲突">
-                <ConflictPartnersDisplay partners={initial.conflict_partners} />
-              </Field>
-            </dl>
+        <dl className="grid md:grid-cols-3 gap-x-6 gap-y-5">
+          <div className="flex flex-col gap-2">
+            <dt className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
+              Motivation
+              <span className="ml-1.5 text-[var(--ink-faint)]/70 normal-case tracking-[0.14em]">报名动机</span>
+            </dt>
+            <dd className="text-[14px] text-[var(--ink)]">
+              {initial.motivation_tag
+                ? `${MOTIVATION_LABEL[initial.motivation_tag].en} · ${MOTIVATION_LABEL[initial.motivation_tag].zh}`
+                : <Empty />}
+            </dd>
           </div>
-
-          {/* SECTION B — QUALITATIVE NOTES (view) */}
-          <div className="flex flex-col gap-4 pt-4 border-t border-[var(--paper-shadow)]/60">
-            <SectionHeader
-              eyebrow="Qualitative notes"
-              eyebrowZh="资料备注"
-              tone="paper"
-            />
-            <dl className="grid md:grid-cols-2 gap-x-8 gap-y-5">
-              <Field label="Personality" labelZh="性格" multiline>
-                {initial.personality ?? <Empty />}
-              </Field>
-              <Field label="Face type" labelZh="面相" multiline>
-                {initial.face_type ?? <Empty />}
-              </Field>
-              <Field label="Parameter framework" labelZh="参数体系" multiline>
-                {initial.parameter_framework ?? <Empty />}
-              </Field>
-            </dl>
+          <div className="flex flex-col gap-2">
+            <dt className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
+              Goal dimensions
+              <span className="ml-1.5 text-[var(--ink-faint)]/70 normal-case tracking-[0.14em]">成长维度</span>
+            </dt>
+            <dd className="flex flex-wrap gap-1.5">
+              {initial.goal_dimensions.length === 0 ? (
+                <Empty />
+              ) : (
+                initial.goal_dimensions.map((d, i) => (
+                  <span
+                    key={d}
+                    className={`inline-flex items-center h-5 px-2 rounded-[var(--radius-pill)] text-[11px] tracking-[0.04em]
+                      ${
+                        i === 0
+                          ? "bg-[var(--cinnabar)] text-[var(--paper-warm)] font-medium"
+                          : "bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                      }`}
+                  >
+                    {GROWTH_DIMENSION_LABEL[d].icon} {GROWTH_DIMENSION_LABEL[d].cn}
+                  </span>
+                ))
+              )}
+            </dd>
           </div>
-        </div>
+          <div className="flex flex-col gap-2">
+            <dt className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
+              Energy
+              <span className="ml-1.5 text-[var(--ink-faint)]/70 normal-case tracking-[0.14em]">能量水平</span>
+            </dt>
+            <dd className="text-[14px] text-[var(--ink)]">
+              {initial.energy_profile
+                ? `${ENERGY_LABEL[initial.energy_profile].cn} · ${ENERGY_LABEL[initial.energy_profile].en}`
+                : <Empty />}
+            </dd>
+          </div>
+        </dl>
       )}
     </CardShell>
   );

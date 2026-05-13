@@ -170,7 +170,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
               (p?.name_en ?? p?.name_cn ?? "").trim() || undefined
             }
             defaultTemplateLanguage={
-              p?.language === "zh" ? "zh_CN" : "en_US"
+              p?.language_fluency === "cn" || p?.language_fluency === "both" ? "zh_CN" : "en_US"
             }
           />
         </section>

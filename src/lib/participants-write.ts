@@ -11,7 +11,7 @@ export type ParticipantInsertInput = {
   email: string;
   phone: string;
   region: string;
-  language?: string | null;
+  language_fluency?: "en" | "cn" | "both" | null;
   gender?: string | null;
   birth_date?: string | null;
   occupation?: string | null;
@@ -36,7 +36,7 @@ function buildPayload(input: ParticipantInsertInput): Record<string, unknown> {
     email: input.email,
     phone: input.phone,
     region: input.region,
-    language: input.language ?? null,
+    language_fluency: input.language_fluency ?? null,
     gender: input.gender ?? null,
     birth_date: input.birth_date || null,
     occupation: input.occupation || null,

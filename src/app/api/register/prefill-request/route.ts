@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   const { data: participant } = await supabase
     .from("participants")
-    .select("id, name_en, name_cn, language")
+    .select("id, name_en, name_cn, language_fluency")
     .eq("email", email)
     .maybeSingle();
 
@@ -47,7 +47,10 @@ export async function POST(req: NextRequest) {
   if (event_slug) params.set("event", event_slug);
   const link = `${baseUrl}/register?${params.toString()}`;
 
-  const locale = participant.language === "en" ? "en" : "zh";
+  const locale =
+    participant.language_fluency === "cn" || participant.language_fluency === "both"
+      ? "zh"
+      : "en";
   const displayName = participant.name_en || participant.name_cn || "";
 
   const emailRes = await sendEmail({

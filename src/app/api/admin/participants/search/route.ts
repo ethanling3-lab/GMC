@@ -34,7 +34,7 @@ export async function GET(req: Request) {
 
   let query = supabase
     .from("participants")
-    .select("id, region_id, name_en, name_cn, region, email, phone, language, is_old_student")
+    .select("id, region_id, name_en, name_cn, region, email, phone, language_fluency, is_old_student")
     .or(
       [
         `name_en.ilike.${needle}`,

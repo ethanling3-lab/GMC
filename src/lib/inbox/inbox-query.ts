@@ -33,7 +33,7 @@ export type ConversationListRow = {
     status: string;
     email: string | null;
     phone: string | null;
-    language: string | null;
+    language_fluency: string | null;
   } | null;
   assigned_admin: {
     id: string;
@@ -99,7 +99,7 @@ export async function loadConversations(
   let query = supabase
     .from("conversations")
     .select(
-      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, status, email, phone, language), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
+      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, status, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
     )
     .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(200);
@@ -154,7 +154,7 @@ export async function loadConversationDetail(
   const { data: conv, error: convErr } = await supabase
     .from("conversations")
     .select(
-      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, status, email, phone, language), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
+      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, status, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
     )
     .eq("id", id)
     .maybeSingle();

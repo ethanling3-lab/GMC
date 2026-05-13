@@ -9,6 +9,7 @@ import {
   notifyPaymentReceived,
 } from "@/lib/enrollment-notifications";
 import { writeAuditLog } from "@/lib/audit";
+import { participantEmailLocale } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -60,7 +61,7 @@ export async function POST(req: Request) {
   const { data: row, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, status, payment_status, amount_paid, payment_method, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone, language), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
+      "id, event_id, status, payment_status, amount_paid, payment_method, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
     )
     .eq("payment_provider_id", fields.payment_request_id)
     .maybeSingle();
@@ -169,7 +170,7 @@ export async function POST(req: Request) {
       name_cn: string | null;
       email: string | null;
       phone: string | null;
-      language: string | null;
+      language_fluency: string | null;
     } | null;
     type EventShape = {
       id: string;
@@ -183,7 +184,7 @@ export async function POST(req: Request) {
     const participant = (row as unknown as { participant: ParticipantShape }).participant;
     const event = (row as unknown as { event: EventShape }).event;
     if (participant && event) {
-      const locale = (participant.language === "zh" ? "zh" : "en") as "zh" | "en";
+      const locale = participantEmailLocale(participant);
       try {
         await notifyPaymentReceived({
           enrollment: {

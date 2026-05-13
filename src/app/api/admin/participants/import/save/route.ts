@@ -32,7 +32,10 @@ function columnsFrom(r: ExtractedRow) {
     email: r.email,
     phone: r.phone,
     region: r.region,
-    language: r.language,
+    // Import schema's `language` enum is zh / en / both; participants.language_fluency
+    // is cn / en / both. Map zh → cn at the boundary.
+    language_fluency:
+      r.language === "zh" ? "cn" : r.language ?? null,
     gender: r.gender,
     birth_date: r.birth_date,
     occupation: r.occupation,

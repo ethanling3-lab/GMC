@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   GENDERS,
-  LANGUAGES,
   MOTIVATIONS,
   REGIONS,
 } from "@/lib/participant-import-schema";
@@ -55,6 +54,20 @@ export const ZU_ZHANG_CORE_TRAITS = [
 
 export const ENERGY_PROFILES = ["high", "medium", "quiet"] as const;
 export const LANGUAGE_FLUENCIES = ["en", "cn", "both"] as const;
+
+// M6.8 — profile-deck fields. attended_courses is admin-maintained;
+// each entry can carry an optional programme_tier tag + free-form date
+// (year-month or full date string — kept as text to absorb partial
+// dates like "2024-03").
+const attendedCourseEntry = z.object({
+  course_name: z.string().trim().min(1).max(200),
+  programme_tier: z
+    .union([z.enum(PROGRAMME_TIERS), z.null()])
+    .optional(),
+  date: z
+    .union([z.string().trim().max(20), z.null()])
+    .optional(),
+});
 
 const optionalString = z
   .union([z.string().max(2000), z.null()])
@@ -116,7 +129,6 @@ export const ParticipantUpdateSchema = z
     email: optionalEmail,
     phone: optionalString,
     region: z.union([z.enum(REGIONS), z.null()]).optional(),
-    language: z.union([z.enum(LANGUAGES), z.null()]).optional(),
     gender: z.union([z.enum(GENDERS), z.null()]).optional(),
     birth_date: optionalDate,
     occupation: optionalString,
@@ -153,6 +165,24 @@ export const ParticipantUpdateSchema = z
     has_special_contribution: z.boolean().optional(),
     upgrade_potential: z.union([z.enum(UPGRADE_POTENTIALS), z.null()]).optional(),
     programme_tier: z.union([z.enum(PROGRAMME_TIERS), z.null()]).optional(),
+
+    // M6.8 profile-deck fields.
+    dharma_name: optionalString,
+    religion: optionalString,
+    attended_courses: z.array(attendedCourseEntry).max(50).optional(),
+
+    // Migration 032 — full briefing card (sectioned as 个人 / 上课 / 客服).
+    sub_region: optionalString,
+    training_level: optionalString,
+    health_status: optionalString,
+    family_situation: optionalString,
+    dietary_needs: optionalString,
+    interaction_notes: optionalString,
+    course_needs: optionalString,
+    suggested_group_leader_notes: optionalString,
+    recommended_courses: optionalString,
+    forbidden_courses: optionalString,
+    cs_evaluation: optionalString,
 
     assigned_region_lead_id: z.union([z.string().uuid(), z.null()]).optional(),
     assigned_cs_id: z.union([z.string().uuid(), z.null()]).optional(),
@@ -193,7 +223,6 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "name_cn",
   "email",
   "phone",
-  "language",
   "gender",
   "birth_date",
   "occupation",
@@ -216,6 +245,20 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "has_special_contribution",
   "upgrade_potential",
   "programme_tier",
+  "dharma_name",
+  "religion",
+  "attended_courses",
+  "sub_region",
+  "training_level",
+  "health_status",
+  "family_situation",
+  "dietary_needs",
+  "interaction_notes",
+  "course_needs",
+  "suggested_group_leader_notes",
+  "recommended_courses",
+  "forbidden_courses",
+  "cs_evaluation",
   "family_member_ids",
   "referrer_id",
   "referrer_name",

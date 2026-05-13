@@ -40,3 +40,17 @@ export function resolveLocale(
   if (v === "en" || v === "zh") return v;
   return DEFAULT_LOCALE;
 }
+
+// Resolve the email/notification locale for a participant based on their
+// declared language fluency. cn / both → Chinese template (GMC's primary
+// language); en or unknown → English fallback.
+//
+// This is the canonical mapping; all email-sending call sites should use
+// this helper rather than checking `participant.language_fluency` inline.
+export function participantEmailLocale(
+  p: { language_fluency: string | null | undefined },
+): Locale {
+  return p.language_fluency === "cn" || p.language_fluency === "both"
+    ? "zh"
+    : "en";
+}

@@ -108,9 +108,9 @@ export default async function EventEnrollmentsPage({
   // is_old_student so we can render the referrer pill and OLD chip inline.
   // If 009 hasn't been applied yet, the select falls back to the legacy set.
   const participantFull =
-    "id, region_id, name_en, name_cn, region, email, phone, language, is_old_student, referrer_id, referrer_name, referrer_contact, zu_zhang_tier";
+    "id, region_id, name_en, name_cn, region, email, phone, language_fluency, is_old_student, referrer_id, referrer_name, referrer_contact, zu_zhang_tier";
   const participantLegacy =
-    "id, region_id, name_en, name_cn, region, email, phone, language, is_old_student, referrer_id";
+    "id, region_id, name_en, name_cn, region, email, phone, language_fluency, is_old_student, referrer_id";
   // Enrolment selects come in four shapes (cross-product of: form_answers
   // shipped in 008, transfer_slip_* shipped in 011). Older databases
   // gracefully fall back via the attempt ladder below. Post-022 we also
@@ -347,6 +347,7 @@ export default async function EventEnrollmentsPage({
             tabs remain the visually primary control. */}
         <EnrollmentsToolbar
           eventId={event.id}
+          eventSlug={event.slug}
           initialQ={q}
           statusFilter={statusFilter}
           matched={rows.length}

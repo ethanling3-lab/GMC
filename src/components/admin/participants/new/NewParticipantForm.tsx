@@ -171,7 +171,8 @@ export function NewParticipantForm({
       payload.email = emptyToNull(form.email);
       payload.phone = emptyToNull(form.phone);
       payload.region = form.region || null;
-      payload.language = form.language || null;
+      payload.language_fluency =
+        form.language === "zh" ? "cn" : form.language || null;
       payload.gender = form.gender || null;
       payload.birth_date = emptyToNull(form.birth_date);
       payload.occupation = emptyToNull(form.occupation);

@@ -12,6 +12,7 @@ import {
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
+import { participantEmailLocale } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,7 +38,7 @@ type EnrichedRow = {
     name_cn: string | null;
     email: string | null;
     phone: string | null;
-    language: string | null;
+    language_fluency: string | null;
   } | null;
   event: {
     id: string;
@@ -66,7 +67,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   // Pull enrolment + participant + event. Fall back when migration 011
   // isn't applied yet (no reject_reason / reject_note columns).
   const baseSelect =
-    "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, participant:participants(id, region_id, name_en, name_cn, email, phone, language), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)";
+    "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)";
   const fullSelect = `${baseSelect}, reject_reason, reject_note`;
 
   let res = await service
@@ -101,7 +102,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     amount_paid: row.amount_paid,
     payment_method: row.payment_method,
   };
-  const locale = (row.participant.language === "zh" ? "zh" : "en") as "zh" | "en";
+  const locale = participantEmailLocale(row.participant);
 
   let template: string;
   try {

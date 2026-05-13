@@ -4,9 +4,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { EnrollmentStatus } from "@/lib/enrollments-shared";
 import { CurateZuZhangDialog } from "./CurateZuZhangDialog";
+import { ProfileDeckExportButton } from "./ProfileDeckExportButton";
 
 type Props = {
   eventId: string;
+  eventSlug: string;
   initialQ: string;
   statusFilter: EnrollmentStatus | null;
   matched: number;
@@ -15,6 +17,7 @@ type Props = {
 
 export function EnrollmentsToolbar({
   eventId,
+  eventSlug,
   initialQ,
   statusFilter,
   matched,
@@ -156,6 +159,8 @@ export function EnrollmentsToolbar({
           </button>
         )}
       />
+
+      <ProfileDeckExportButton eventId={eventId} eventSlug={eventSlug} />
 
       <button
         type="button"

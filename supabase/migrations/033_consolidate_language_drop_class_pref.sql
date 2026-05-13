@@ -1,0 +1,36 @@
+-- CS-enrichment refactor — consolidate language to a single canonical
+-- column (language_fluency, enum cn/en/both) and drop the two columns
+-- that became redundant:
+--
+--   participants.language                  text  — legacy free-text set
+--                                                  at registration time
+--                                                  ("zh" / "en" / "other"
+--                                                  / occasional free
+--                                                  text). Drives email
+--                                                  locale today.
+--   participants.class_language_preference text  — added in migration 032
+--                                                  for the profile deck;
+--                                                  immediately overlapped
+--                                                  with language_fluency.
+--                                                  Empty across all rows.
+--
+-- Backfill of language_fluency from language was already applied via a
+-- one-shot UPDATE on staging before this migration ran. The mapping was:
+--   zh / cn / 中*   → 'cn'
+--   en / english*   → 'en'
+--   both / 中英*    → 'both'
+--   anything else   → null
+--
+-- Email-locale callers + the registration form + the participants-write
+-- helper were updated to read/write `language_fluency` directly. After
+-- this migration:
+--
+--   - The registration form sends `language: "zh" | "en" | "other"` but
+--     the API maps it to `language_fluency: cn | en | null` at the
+--     boundary (see src/app/api/register/route.ts).
+--   - The shared participantEmailLocale(p) helper in src/lib/i18n.ts is
+--     the single source of truth for "which template locale do we send?"
+--     and reads p.language_fluency.
+
+alter table public.participants drop column if exists language;
+alter table public.participants drop column if exists class_language_preference;

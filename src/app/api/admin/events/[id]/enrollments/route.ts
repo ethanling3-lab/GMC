@@ -16,6 +16,7 @@ import {
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
+import { participantEmailLocale } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,7 +29,7 @@ const NewParticipant = z.object({
   email: z.string().trim().email().max(160),
   phone: z.string().trim().min(4).max(40),
   region: z.string().trim().min(1).max(80),
-  language: z.string().trim().max(40).optional(),
+  language_fluency: z.enum(["en", "cn", "both"]).optional().nullable(),
   gender: z.string().trim().max(40).optional(),
   birth_date: z.string().trim().max(40).optional(),
   occupation: z.string().trim().max(120).optional(),
@@ -131,7 +132,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
       email: body.participant.new.email,
       phone: body.participant.new.phone,
       region: body.participant.new.region,
-      language: body.participant.new.language ?? null,
+      language_fluency: body.participant.new.language_fluency ?? null,
       gender: body.participant.new.gender ?? null,
       birth_date: body.participant.new.birth_date ?? null,
       occupation: body.participant.new.occupation ?? null,
@@ -255,12 +256,12 @@ export async function POST(req: Request, { params }: RouteCtx) {
   // Fetch the participant for notification dispatch.
   const { data: pRow } = await service
     .from("participants")
-    .select("id, region_id, name_en, name_cn, email, phone, language")
+    .select("id, region_id, name_en, name_cn, email, phone, language_fluency")
     .eq("id", participantId)
     .maybeSingle();
 
   if (pRow) {
-    const locale = (pRow.language === "zh" ? "zh" : "en") as "zh" | "en";
+    const locale = participantEmailLocale(pRow);
     const enr = {
       id: enrollment.id,
       event_id: event.id,

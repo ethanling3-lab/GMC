@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServiceClient } from "./supabase";
 import { sendEmail } from "./email";
 import { sendWhatsAppTemplate } from "./whatsapp";
+import { participantEmailLocale } from "./i18n";
 
 // Enrollment-state notifications. Called from the bulk + per-row admin
 // routes whenever the journey stage changes. Follows the same bilingual
@@ -16,7 +17,7 @@ type Participant = {
   name_cn: string | null;
   email: string | null;
   phone: string | null;
-  language: string | null;
+  language_fluency: string | null;
 };
 
 type EventRow = {
@@ -37,10 +38,7 @@ type Enrollment = {
 };
 
 function pickLocale(participant: Participant): Locale {
-  // The participants.language column may contain zh/en/other/free-text. Only
-  // the first two map to a bilingual template — everything else falls back
-  // to English for safety.
-  return participant.language === "zh" ? "zh" : "en";
+  return participantEmailLocale(participant);
 }
 
 function participantName(p: Participant): string {
