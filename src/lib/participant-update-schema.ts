@@ -204,6 +204,11 @@ export const ParticipantUpdateSchema = z
     // set; PATCH route reconciles vs participant_conflict_pairs.
     conflict_member_ids: z.array(z.string().uuid()).max(50).optional(),
 
+    // M7.1c facial-recognition consent. Admin can flip on a participant's
+    // behalf if they later say yes verbally; defaults to whatever the
+    // participant set during registration.
+    facial_recognition_consent: z.boolean().optional(),
+
     status: z.enum(STATUSES).optional(),
   })
   .strict();
@@ -266,4 +271,5 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "energy_profile",
   "language_fluency",
   "conflict_member_ids",
+  "facial_recognition_consent",
 ];

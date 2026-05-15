@@ -20,6 +20,7 @@ export type ParticipantInsertInput = {
   referrer_name?: string | null;
   referrer_contact?: string | null;
   is_old_student?: boolean;
+  facial_recognition_consent?: boolean;
 };
 
 export type ParticipantUpsertResult = {
@@ -51,6 +52,9 @@ function buildPayload(input: ParticipantInsertInput): Record<string, unknown> {
   }
   if (typeof input.is_old_student === "boolean") {
     payload.is_old_student = input.is_old_student;
+  }
+  if (typeof input.facial_recognition_consent === "boolean") {
+    payload.facial_recognition_consent = input.facial_recognition_consent;
   }
   return payload;
 }

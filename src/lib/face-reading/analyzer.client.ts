@@ -35,7 +35,7 @@ const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
 const MODEL_URL_FALLBACK =
   "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js/weights";
 
-type FaceApi = typeof import("@vladmandic/face-api");
+export type FaceApi = typeof import("@vladmandic/face-api");
 
 type Globals = {
   __faceApi?: FaceApi;
@@ -55,6 +55,13 @@ async function importFaceApi(): Promise<FaceApi> {
   return (mod as { default?: FaceApi }).default ?? (mod as FaceApi);
 }
 
+// Accessor for the cached face-api instance — exposed so the
+// face-recognition pipeline can share the same module + model state
+// without re-importing. Callers must `await loadModels()` first.
+export function getLoadedFaceApi(): FaceApi | null {
+  return g().__faceApi ?? null;
+}
+
 export async function loadModels(): Promise<void> {
   const globals = g();
   if (globals.__faceApiReady) return;
@@ -67,6 +74,10 @@ export async function loadModels(): Promise<void> {
       try {
         await faceapi.nets.ssdMobilenetv1.loadFromUri(url);
         await faceapi.nets.faceLandmark68Net.loadFromUri(url);
+        // M7.1c — also load the 128-dim identity recognition model so
+        // shared callers (face-reading + check-in face-match) only pay
+        // the model-fetch cost once. Adds ~5MB to first-load weight.
+        await faceapi.nets.faceRecognitionNet.loadFromUri(url);
         globals.__faceApi = faceapi;
         globals.__faceApiReady = true;
         return;

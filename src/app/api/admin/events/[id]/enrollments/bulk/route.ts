@@ -21,6 +21,7 @@ import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLogBatch, type AuditAction } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
+import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -248,11 +249,13 @@ export async function POST(req: Request, { params }: RouteCtx) {
           note: resolvedRejectNote,
         });
       } else if (body.action === "mark_paid") {
+        const qrToken = await ensureQrToken(service, r.id);
         await notifyPaymentReceived({
           enrollment: enr,
           participant: p,
           event,
           amountLabel,
+          checkInUrl: qrToken ? buildCheckInUrl(qrToken) : null,
         });
       }
       // cancel + mark_unpaid are silent by design.

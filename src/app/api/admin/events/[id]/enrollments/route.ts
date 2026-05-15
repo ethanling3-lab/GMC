@@ -17,6 +17,7 @@ import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
+import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -287,11 +288,13 @@ export async function POST(req: Request, { params }: RouteCtx) {
           event.currency,
           locale,
         );
+        const qrToken = await ensureQrToken(service, enrollment.id);
         await notifyPaymentReceived({
           enrollment: enr,
           participant: pRow,
           event,
           amountLabel,
+          checkInUrl: qrToken ? buildCheckInUrl(qrToken) : null,
         });
       }
       // pending → no notification by design.

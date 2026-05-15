@@ -272,11 +272,13 @@ export async function notifyPaymentReceived({
   participant,
   event,
   amountLabel,
+  checkInUrl,
 }: {
   enrollment: Enrollment;
   participant: Participant;
   event: EventRow;
   amountLabel: string;
+  checkInUrl?: string | null;
 }): Promise<void> {
   if (!participant.email && !participant.phone) return;
   const locale = pickLocale(participant);
@@ -294,6 +296,7 @@ export async function notifyPaymentReceived({
     eventTitle: title,
     amountLabel,
     method: enrollment.payment_method,
+    checkInUrl: checkInUrl ?? null,
   });
 
   const emailRes = participant.email
@@ -513,12 +516,14 @@ function buildPaymentReceivedEmail({
   eventTitle,
   amountLabel,
   method,
+  checkInUrl,
 }: {
   locale: Locale;
   name: string;
   eventTitle: string;
   amountLabel: string;
   method: string | null;
+  checkInUrl: string | null;
 }): string {
   const isZh = locale === "zh";
   const heading = isZh ? `${name}，已收到您的付款` : `${name}, payment received`;
@@ -531,11 +536,24 @@ function buildPaymentReceivedEmail({
   const footer = isZh
     ? `活动前一周我们将再次联系您，提供行程与其他细节。如有任何疑问请随时联系 GMC 团队。`
     : `We'll be in touch closer to the event with travel + logistics details. Reach out any time.`;
+  const checkInBlock = checkInUrl
+    ? `
+    <div style="margin:24px 0 0;padding:18px 22px;border-radius:14px;background:#F4F1EA;border:1px solid #E3DCC8;">
+      <p style="margin:0 0 6px;font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase;color:#C84B3B;">${isZh ? "活动当天签到 · Check-in" : "Event-day check-in · 签到"}</p>
+      <p style="margin:0 0 12px;font-size:13.5px;line-height:1.7;color:#1E3A6B;">${
+        isZh
+          ? `活动当天请出示下方专属二维码：`
+          : `Please show the QR code at the door on the day of the event:`
+      }</p>
+      <a href="${checkInUrl}" style="display:inline-block;padding:10px 20px;border-radius:999px;background:#0B2954;color:#FBFCFF;text-decoration:none;letter-spacing:0.04em;font-size:12px;font-weight:500;">${isZh ? "打开我的签到二维码" : "Open my check-in QR"}</a>
+    </div>`
+    : "";
   return emailShell(`
     <h1 style="font-size:26px;line-height:1.25;margin:32px 0 16px;color:#0B2954;letter-spacing:-0.02em;">${heading}</h1>
     <p style="font-size:15px;line-height:1.75;margin:0 0 16px;color:#1E3A6B;">${body1}</p>
     <p style="font-size:15px;line-height:1.75;margin:0 0 24px;color:#1E3A6B;">${line}</p>
-    <p style="margin:0;font-size:13px;color:#5A6B8A;line-height:1.7;">${footer}</p>
+    ${checkInBlock}
+    <p style="margin:24px 0 0;font-size:13px;color:#5A6B8A;line-height:1.7;">${footer}</p>
   `);
 }
 

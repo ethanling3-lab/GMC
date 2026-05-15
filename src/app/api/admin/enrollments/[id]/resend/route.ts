@@ -13,6 +13,7 @@ import {
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
 import { participantEmailLocale } from "@/lib/i18n";
+import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -123,11 +124,13 @@ export async function POST(_req: Request, { params }: RouteCtx) {
         row.event.currency,
         locale,
       );
+      const qrToken = await ensureQrToken(service, row.id);
       await notifyPaymentReceived({
         enrollment: enr,
         participant: row.participant,
         event: row.event,
         amountLabel,
+        checkInUrl: qrToken ? buildCheckInUrl(qrToken) : null,
       });
       template = "payment_received";
     } else if (row.status === "rejected") {

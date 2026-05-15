@@ -87,6 +87,10 @@ type Participant = {
   face_type: string | null;
   parameter_framework: string | null;
   front_photo_url: string | null;
+  facial_recognition_consent: boolean;
+  face_embedding: number[] | null;
+  face_embedding_at: string | null;
+  face_embedding_error: string | null;
   face_archetype: string | null;
   face_archetype_suggested: string | null;
   face_measurements:
@@ -466,6 +470,17 @@ export default async function ParticipantDetailPage({ params }: Props) {
             participantId={p.id}
             initialUrl={p.front_photo_url}
             initials={initials(p)}
+            consent={p.facial_recognition_consent}
+            initialEmbeddingState={
+              !p.facial_recognition_consent
+                ? "skipped_no_consent"
+                : p.face_embedding && p.face_embedding.length > 0
+                  ? "computed"
+                  : p.face_embedding_error
+                    ? "failed"
+                    : "idle"
+            }
+            initialEmbeddingDetail={p.face_embedding_error}
           />
 
           <AssignmentEditor

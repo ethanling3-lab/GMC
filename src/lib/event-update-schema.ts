@@ -113,6 +113,9 @@ export const EventUpdateSchema = z
     group_size_min: z.number().int().min(1).max(64).optional(),
     group_size_max: z.number().int().min(1).max(64).optional(),
 
+    // M7.1d — per-event check-in method (migration 036).
+    check_in_method: z.enum(["qr", "face", "both"]).optional(),
+
     form_schema: FormSchema.optional(),
 
     bank_details: z

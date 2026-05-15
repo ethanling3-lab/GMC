@@ -108,6 +108,10 @@ export function buildRegistrationSchemaFor(
 
     prefill_token: z.string().max(200).optional(),
 
+    // M7.1c — opt-in for face-recognition check-in. Stored on the
+    // participant row; absence is treated as "no consent."
+    facial_recognition_consent: z.boolean().optional(),
+
     answers: buildAnswersSchema(formSchema),
   });
 

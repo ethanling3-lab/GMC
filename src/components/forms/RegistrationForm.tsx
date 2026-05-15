@@ -79,6 +79,7 @@ type RegistrationFormValues = {
   region_other?: string;
   language_other?: string;
   prefill_token?: string;
+  facial_recognition_consent?: boolean;
   answers: Record<string, unknown>;
 };
 
@@ -546,6 +547,37 @@ export function RegistrationForm({
           </div>
         </div>
       ) : null}
+
+      {/* M7.1c — facial recognition consent. Defaults to unchecked, so a
+          participant who skips this still registers; their door check-in
+          just falls back to the manual search by name. */}
+      <div className="mt-2 pt-8 border-t border-[var(--paper-shadow)]">
+        <span className="eyebrow">
+          {locale === "zh" ? "签到方式 · Check-in" : "Check-in · 签到方式"}
+        </span>
+        <label className="mt-5 flex items-start gap-3 cursor-pointer group">
+          <input
+            type="checkbox"
+            {...register("facial_recognition_consent")}
+            className="mt-1 w-4 h-4 rounded border-[var(--paper-shadow)] text-[var(--cinnabar)] focus:ring-[var(--cinnabar)]/30 cursor-pointer"
+          />
+          <span className="text-[13.5px] leading-[1.7] text-[var(--ink-soft)] group-hover:text-[var(--ink)] transition-colors">
+            {locale === "zh" ? (
+              <>
+                我同意 GMC 在活动签到时使用<strong className="text-[var(--ink)]">人脸识别</strong>验证我的身份。
+                我的照片仅用于现场识别，活动结束后保留以便复用。
+                如需撤回授权，请发邮件至 GMC 客服。
+              </>
+            ) : (
+              <>
+                I consent to GMC using <strong className="text-[var(--ink)]">facial recognition</strong> to verify my identity at event check-in.
+                My photo is used only for venue check-in and kept on file for reuse at future events.
+                I can withdraw consent any time by emailing the GMC team.
+              </>
+            )}
+          </span>
+        </label>
+      </div>
 
       {submitState.status === "error" ? (
         <div

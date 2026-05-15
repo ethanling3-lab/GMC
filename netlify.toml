@@ -10,3 +10,11 @@
 
 [functions."*"]
   timeout = 26
+
+# M7.2 — scheduled function pings /api/cron/reminders every hour. Schedule
+# is also declared inline via `export const config` in the function file,
+# but leaving it here as a fallback / documentation. Requires CRON_SECRET
+# env var set in the Netlify project's environment variables.
+[functions."cron-reminders"]
+  schedule = "@hourly"
+  timeout = 60

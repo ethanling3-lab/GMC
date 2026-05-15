@@ -59,6 +59,9 @@ export type EventFull = {
   seating_mode: "tables" | "cushions";
   group_size_min: number;
   group_size_max: number;
+  // M7.1d — per-event check-in method. Drives which scanner UI the
+  // /admin/events/[id]/check-in/scan page renders at the door.
+  check_in_method: "qr" | "face" | "both";
   created_at: string;
   updated_at: string;
 };
@@ -293,6 +296,7 @@ export function EventEditor({
         seating_mode: draft.seating_mode,
         group_size_min: draft.group_size_min,
         group_size_max: draft.group_size_max,
+        check_in_method: draft.check_in_method,
       });
       setSuccess("Saved");
       router.refresh();
@@ -404,6 +408,28 @@ export function EventEditor({
               Groups
               <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
                 小组
+              </span>
+            </Link>
+
+            {/* Check-in link — M7.1 QR + manual + live dashboard */}
+            <Link
+              href={`/admin/events/${event.id}/check-in`}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12.5px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="2.5" y="2.5" width="4" height="4" rx="0.5" />
+                <rect x="9.5" y="2.5" width="4" height="4" rx="0.5" />
+                <rect x="2.5" y="9.5" width="4" height="4" rx="0.5" />
+                <path d="M9.5 9.5h2v2M13.5 9.5v.01M9.5 13.5h.01M11.5 13.5h2" />
+              </svg>
+              Check-in
+              <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
+                签到
               </span>
             </Link>
 
@@ -778,6 +804,58 @@ export function EventEditor({
               Min must be ≤ max.
             </p>
           ) : null}
+        </div>
+
+        {/* M7.1d — Per-event check-in method picker. Drives which scanner UI
+            the /scan route renders at the door. */}
+        <div className="mt-2 pt-5 border-t border-dashed border-[var(--paper-shadow)]">
+          <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
+            <span className="w-4 h-px bg-current" />
+            Check-in method · 签到方式
+          </div>
+          <p className="mt-2 text-[12px] leading-[1.6] text-[var(--ink-soft)] max-w-[62ch]">
+            How the door scanner identifies attendees. <strong>Face</strong> uses the
+            participant&apos;s photo + face-api.js. <strong>QR</strong> reads the QR
+            code embedded in the post-payment email. <strong>Both</strong> runs both
+            detectors in parallel — whichever fires first wins.{" "}
+            <span className="text-[var(--ink-mute)]">
+              Face mode requires participants to opt in during registration + have a
+              photo on file. Staff can capture photos at the door if missing.
+            </span>
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(["face", "qr", "both"] as const).map((mode) => {
+              const checked = draft.check_in_method === mode;
+              return (
+                <label
+                  key={mode}
+                  className={`inline-flex items-center gap-2 h-9 px-3 rounded-[var(--radius-pill)] border text-[12px] tracking-[0.04em] cursor-pointer transition-[background-color,border-color,color] duration-[var(--dur-fast)]
+                              ${
+                                checked
+                                  ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                                  : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/30"
+                              }
+                              ${!canEdit ? "cursor-not-allowed opacity-70" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="check-in-method"
+                    checked={checked}
+                    onChange={() =>
+                      canEdit && update("check_in_method", mode)
+                    }
+                    disabled={!canEdit}
+                    className="accent-[var(--cinnabar)]"
+                  />
+                  {mode === "face"
+                    ? "Face · 人脸"
+                    : mode === "qr"
+                      ? "QR · 二维码"
+                      : "Both · 双模"}
+                </label>
+              );
+            })}
+          </div>
         </div>
       </Section>
 

@@ -2,23 +2,90 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { extractEmbeddingFromImage } from "@/lib/face-recognition/extract";
+
+type EmbeddingState =
+  | "idle"
+  | "extracting"
+  | "computed"
+  | "skipped_no_consent"
+  | "failed";
 
 type Props = {
   participantId: string;
   initialUrl: string | null;
   initials: string;
+  consent: boolean;
+  initialEmbeddingState: EmbeddingState;
+  initialEmbeddingDetail?: string | null;
 };
 
 const MAX_MB = 5;
 const ACCEPT = "image/jpeg,image/png,image/webp,image/heic,image/heif";
 
-export function PhotoUploader({ participantId, initialUrl, initials }: Props) {
+export function PhotoUploader({
+  participantId,
+  initialUrl,
+  initials,
+  consent,
+  initialEmbeddingState,
+  initialEmbeddingDetail = null,
+}: Props) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState<string | null>(initialUrl);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [embeddingState, setEmbeddingState] = useState<EmbeddingState>(
+    initialEmbeddingState,
+  );
+  const [embeddingDetail, setEmbeddingDetail] = useState<string | null>(
+    initialEmbeddingDetail,
+  );
+
+  // M7.1c — kick off face-embedding extraction whenever a fresh photo
+  // URL is available + the participant has consented. Failures are
+  // logged + surfaced in the embedding-status pill below the image; they
+  // never block the upload itself.
+  async function recomputeEmbedding(photoUrl: string) {
+    if (!consent) {
+      setEmbeddingState("skipped_no_consent");
+      return;
+    }
+    setEmbeddingState("extracting");
+    setEmbeddingDetail(null);
+    try {
+      const result = await extractEmbeddingFromImage(photoUrl);
+      const body = result.ok
+        ? { embedding: result.embedding, confidence: result.confidence }
+        : { error: result.error, detail: result.detail };
+      const res = await fetch(
+        `/api/admin/participants/${participantId}/face-embedding`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setEmbeddingState("failed");
+        setEmbeddingDetail(payload.error ?? `persist_failed_${res.status}`);
+        return;
+      }
+      if (result.ok) {
+        setEmbeddingState("computed");
+        setEmbeddingDetail(null);
+      } else {
+        setEmbeddingState("failed");
+        setEmbeddingDetail(result.error);
+      }
+    } catch (err) {
+      setEmbeddingState("failed");
+      setEmbeddingDetail(err instanceof Error ? err.message : "unknown");
+    }
+  }
 
   async function onFile(file: File | null) {
     if (!file) return;
@@ -48,6 +115,12 @@ export function PhotoUploader({ participantId, initialUrl, initials }: Props) {
       const data = (await res.json()) as { ok: true; url: string | null };
       setUrl(data.url);
       router.refresh();
+      if (data.url) {
+        // Fire-and-forget; the spinner already turned off but the
+        // embedding pill conveys ongoing state. Failure here is fine —
+        // admin can hit the re-compute button later.
+        void recomputeEmbedding(data.url);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Upload failed";
       setError(msg);
@@ -183,6 +256,100 @@ export function PhotoUploader({ participantId, initialUrl, initials }: Props) {
         <div className="px-5 pb-4 text-[12px] leading-[1.55] text-[var(--cinnabar-deep)]">
           {error}
         </div>
+      ) : null}
+
+      <EmbeddingPill
+        consent={consent}
+        state={embeddingState}
+        detail={embeddingDetail}
+        canRecompute={!!url && !uploading && !removing}
+        onRecompute={() => {
+          if (url) void recomputeEmbedding(url);
+        }}
+      />
+    </div>
+  );
+}
+
+function EmbeddingPill({
+  consent,
+  state,
+  detail,
+  canRecompute,
+  onRecompute,
+}: {
+  consent: boolean;
+  state: EmbeddingState;
+  detail: string | null;
+  canRecompute: boolean;
+  onRecompute: () => void;
+}) {
+  if (!consent) {
+    return (
+      <div className="px-5 pb-4 text-[11px] tracking-[0.04em] text-[var(--ink-faint)] flex items-center gap-1.5">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--paper-shadow)]" />
+        Face-match · 人脸识别: not consented
+      </div>
+    );
+  }
+  if (state === "extracting") {
+    return (
+      <div className="px-5 pb-4 text-[11px] tracking-[0.04em] text-[var(--ink-mute)] flex items-center gap-1.5">
+        <Spinner />
+        Face-match · 人脸识别: computing embedding
+      </div>
+    );
+  }
+  if (state === "computed") {
+    return (
+      <div className="px-5 pb-4 text-[11px] tracking-[0.04em] flex items-center gap-2 text-[var(--ink-mute)]">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--cinnabar)]" />
+        <span>Face-match · 人脸识别: ready</span>
+        {canRecompute ? (
+          <button
+            type="button"
+            onClick={onRecompute}
+            className="ml-auto text-[10.5px] tracking-[0.12em] uppercase text-[var(--ink-faint)] hover:text-[var(--cinnabar)] transition-colors"
+          >
+            Recompute
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+  if (state === "failed") {
+    return (
+      <div className="px-5 pb-4 text-[11px] tracking-[0.04em] flex items-center gap-2 text-[var(--cinnabar-deep)]">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--cinnabar-deep)]" />
+        <span>
+          Face-match · 人脸识别: failed{detail ? ` · ${detail}` : ""}
+        </span>
+        {canRecompute ? (
+          <button
+            type="button"
+            onClick={onRecompute}
+            className="ml-auto text-[10.5px] tracking-[0.12em] uppercase text-[var(--cinnabar)] hover:text-[var(--cinnabar-deep)] transition-colors"
+          >
+            Try again
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+  // idle / skipped_no_consent already covered above; this is "consented
+  // but never extracted" — surface a compute CTA.
+  return (
+    <div className="px-5 pb-4 text-[11px] tracking-[0.04em] flex items-center gap-2 text-[var(--ink-mute)]">
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--paper-shadow)]" />
+      <span>Face-match · 人脸识别: pending</span>
+      {canRecompute ? (
+        <button
+          type="button"
+          onClick={onRecompute}
+          className="ml-auto text-[10.5px] tracking-[0.12em] uppercase text-[var(--ink-faint)] hover:text-[var(--cinnabar)] transition-colors"
+        >
+          Compute now
+        </button>
       ) : null}
     </div>
   );

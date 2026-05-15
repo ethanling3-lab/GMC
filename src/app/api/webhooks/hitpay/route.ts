@@ -10,6 +10,7 @@ import {
 } from "@/lib/enrollment-notifications";
 import { writeAuditLog } from "@/lib/audit";
 import { participantEmailLocale } from "@/lib/i18n";
+import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -186,6 +187,7 @@ export async function POST(req: Request) {
     if (participant && event) {
       const locale = participantEmailLocale(participant);
       try {
+        const qrToken = await ensureQrToken(service, row.id);
         await notifyPaymentReceived({
           enrollment: {
             id: row.id,
@@ -201,6 +203,7 @@ export async function POST(req: Request) {
             event.currency,
             locale,
           ),
+          checkInUrl: qrToken ? buildCheckInUrl(qrToken) : null,
         });
       } catch (err) {
         console.warn("[webhooks.hitpay] notify failed", row.id, err);

@@ -20,6 +20,7 @@ import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
 import { participantEmailLocale } from "@/lib/i18n";
 import { ensureRegionId } from "@/lib/region-id";
+import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -395,11 +396,13 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
           note: resolvedRejectNote,
         });
       } else if (action === "mark_paid") {
+        const qrToken = await ensureQrToken(service, row.id);
         await notifyPaymentReceived({
           enrollment: enr,
           participant,
           event,
           amountLabel,
+          checkInUrl: qrToken ? buildCheckInUrl(qrToken) : null,
         });
       }
     }

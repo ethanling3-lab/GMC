@@ -96,7 +96,15 @@ export type AuditAction =
   | "participant.energy_profile_changed"
   | "participant.language_fluency_changed"
   | "participant.conflict_pairs_changed"
-  | "profile_deck.exported";
+  | "profile_deck.exported"
+  | "check_in.qr"
+  | "check_in.manual"
+  | "check_in.face_match"
+  | "check_in.undone"
+  | "check_in.duplicate_attempt"
+  | "participant.face_embedding_computed"
+  | "participant.face_embedding_failed"
+  | "participant.facial_recognition_consent_changed";
 
 export type WriteAuditLog = {
   actor_id: string | null;
