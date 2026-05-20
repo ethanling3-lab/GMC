@@ -10,11 +10,128 @@ import {
 } from "@/lib/inbox/format";
 import { ChannelGlyph } from "./ChannelGlyph";
 
-// A single row in the conversation list. Three-column layout:
-//   [channel glyph + initials] → [name/preview stack] → [time + status]
-// Kept as a server component — no interactivity beyond the wrapping link.
+// A single row in the conversation list. Two visual modes:
+//   - default: carded (border + shadow + per-item padding) — used in the
+//     `<xl` inline fallback rendered inside inbox/page.tsx.
+//   - compact: flat WhatsApp-style row (no border, no shadow, just
+//     vertical padding + hover/active bg tint) — used in the persistent
+//     `@list` slot column at xl+.
+//
+// Server component. Active-thread highlight derives from the `activePath`
+// prop (server-supplied via `x-pathname` header from @list/default.tsx).
 
-export function InboxListItem({ row }: { row: ConversationListRow }) {
+export function InboxListItem({
+  row,
+  activePath,
+  compact = false,
+}: {
+  row: ConversationListRow;
+  activePath?: string;
+  compact?: boolean;
+}) {
+  const isActive = activePath === `/admin/inbox/${row.id}`;
+  return compact ? (
+    <CompactItem row={row} isActive={isActive} />
+  ) : (
+    <CardedItem row={row} isActive={isActive} />
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Compact (WhatsApp-style)
+// -----------------------------------------------------------------------------
+
+function CompactItem({
+  row,
+  isActive,
+}: {
+  row: ConversationListRow;
+  isActive: boolean;
+}) {
+  const p = row.participant;
+  const displayName = participantDisplay(p);
+  const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
+  const isLead = p?.status === "lead";
+
+  return (
+    <li>
+      <Link
+        href={`/admin/inbox/${row.id}`}
+        aria-current={isActive ? "page" : undefined}
+        className={[
+          "group relative flex items-center gap-3 px-3 py-3",
+          "border-b border-[var(--paper-shadow)]/60",
+          "transition-[background-color] duration-[var(--dur-fast)]",
+          isActive
+            ? "bg-[var(--paper-deep)]"
+            : "bg-transparent hover:bg-[var(--paper-deep)]/60",
+        ].join(" ")}
+      >
+        <div className="flex-none relative">
+          <div
+            className="w-10 h-10 rounded-full bg-[var(--ink)] text-[var(--paper-warm)]
+                       flex items-center justify-center text-[11px] tracking-[0.06em] font-medium
+                       shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]"
+            aria-hidden="true"
+          >
+            {initialsFor(displayName)}
+          </div>
+          <span
+            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--paper-warm)]
+                       border border-[var(--paper-shadow)]
+                       flex items-center justify-center text-[var(--cinnabar)]"
+            aria-label={channelLabel(row.channel)}
+            title={channelLabel(row.channel)}
+          >
+            <ChannelGlyph channel={row.channel} size={8} />
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline justify-between gap-2">
+            <span
+              className={[
+                "truncate leading-[1.25]",
+                hasRealName
+                  ? "font-display text-[13.5px] text-[var(--ink)] tracking-[-0.005em]"
+                  : "font-mono text-[12px] text-[var(--ink-soft)]",
+              ].join(" ")}
+            >
+              {displayName}
+            </span>
+            <span className="flex-none text-[10px] tracking-[0.02em] text-[var(--ink-faint)] tabular-nums">
+              {timeAgo(row.last_message_at)}
+            </span>
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <span className="flex-1 min-w-0 truncate text-[11.5px] text-[var(--ink-mute)] leading-[1.4]">
+              {row.last_message_preview?.trim() || (
+                <span className="text-[var(--ink-faint)] italic">No messages yet</span>
+              )}
+            </span>
+            {isLead ? (
+              <span className="flex-none text-[8.5px] tracking-[0.18em] uppercase text-[var(--gold-deep,var(--ink-mute))] bg-[var(--gold-soft)] border border-[var(--gold)]/40 rounded-[var(--radius-pill)] px-1 py-px">
+                Lead
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Carded (original, used in <xl fallback)
+// -----------------------------------------------------------------------------
+
+function CardedItem({
+  row,
+  isActive,
+}: {
+  row: ConversationListRow;
+  isActive: boolean;
+}) {
   const p = row.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
@@ -29,13 +146,16 @@ export function InboxListItem({ row }: { row: ConversationListRow }) {
     <li>
       <Link
         href={`/admin/inbox/${row.id}`}
-        className="group relative flex items-center gap-4 px-4 py-3.5 rounded-[var(--radius-md)]
-                   border border-[var(--paper-shadow)] bg-[var(--paper-warm)]
-                   shadow-[var(--shadow-paper-1)]
-                   hover:-translate-y-[1px] hover:shadow-[var(--shadow-paper-2)] hover:border-[var(--cinnabar)]/20
-                   transition-[transform,box-shadow,border-color] duration-[var(--dur-fast)] ease-[var(--ease-out)]"
+        aria-current={isActive ? "page" : undefined}
+        className={[
+          "group relative flex items-center gap-4 px-4 py-3.5 rounded-[var(--radius-md)]",
+          "border shadow-[var(--shadow-paper-1)]",
+          "transition-[transform,box-shadow,border-color,background-color] duration-[var(--dur-fast)] ease-[var(--ease-out)]",
+          isActive
+            ? "border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] shadow-[var(--shadow-paper-2)]"
+            : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] hover:-translate-y-[1px] hover:shadow-[var(--shadow-paper-2)] hover:border-[var(--cinnabar)]/20",
+        ].join(" ")}
       >
-        {/* Channel avatar */}
         <div className="flex-none relative">
           <div
             className="w-10 h-10 rounded-full bg-[var(--ink)] text-[var(--paper-warm)]
@@ -56,7 +176,6 @@ export function InboxListItem({ row }: { row: ConversationListRow }) {
           </span>
         </div>
 
-        {/* Name + preview */}
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
             {regionId ? (
@@ -94,7 +213,6 @@ export function InboxListItem({ row }: { row: ConversationListRow }) {
           ) : null}
         </div>
 
-        {/* Right column: time + status chip + assignment */}
         <div className="flex-none flex flex-col items-end gap-1.5 min-w-[96px]">
           <span className="text-[10.5px] tracking-[0.12em] uppercase text-[var(--ink-faint)] tabular-nums">
             {timeAgo(row.last_message_at)}

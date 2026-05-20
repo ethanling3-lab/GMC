@@ -5,10 +5,28 @@ import type { AdminContext } from "@/lib/admin-guard";
 // Inbox list-query helper. URL-driven filters + role-scope + q-search, mirroring
 // the pattern from `src/lib/participants-query.ts` (per feedback_list_query_pattern).
 
+export type ParticipantLifecycle =
+  | "lead"
+  | "new"
+  | "info_verified"
+  | "cs_enriched"
+  | "active"
+  | "inactive";
+
+export const PARTICIPANT_LIFECYCLE_VALUES: readonly ParticipantLifecycle[] = [
+  "lead",
+  "new",
+  "info_verified",
+  "cs_enriched",
+  "active",
+  "inactive",
+] as const;
+
 export type InboxListFilters = {
   scope: "mine" | "unassigned" | "all";
   channel: "whatsapp" | "line" | "email" | null;
   status: "open" | "pending" | "snoozed" | "closed" | null;
+  lifecycle: ParticipantLifecycle | null;
   q: string;
   admin_id: string;
 };
@@ -65,9 +83,16 @@ export function parseFilters(
       ? (statusRaw as InboxListFilters["status"])
       : null;
 
+  const lifecycleRaw = typeof sp.lifecycle === "string" ? sp.lifecycle : "";
+  const lifecycle = (PARTICIPANT_LIFECYCLE_VALUES as readonly string[]).includes(
+    lifecycleRaw,
+  )
+    ? (lifecycleRaw as ParticipantLifecycle)
+    : null;
+
   const q = (typeof sp.q === "string" ? sp.q : "").trim().slice(0, 120);
 
-  return { scope, channel, status, q, admin_id: admin.id };
+  return { scope, channel, status, lifecycle, q, admin_id: admin.id };
 }
 
 export async function loadConversations(
@@ -96,6 +121,31 @@ export async function loadConversations(
     if (participantIdsForQ.length === 0) return [];
   }
 
+  // Lifecycle filter (sub-nav "Lifecycle" section) resolves the same way —
+  // grab participant IDs whose status matches, then intersect with q-results.
+  let participantIdsForLifecycle: string[] | null = null;
+  if (filters.lifecycle) {
+    const { data: pRows } = await supabase
+      .from("participants")
+      .select("id")
+      .eq("status", filters.lifecycle)
+      .limit(5000);
+    participantIdsForLifecycle = (pRows ?? []).map((r) => r.id as string);
+    if (participantIdsForLifecycle.length === 0) return [];
+  }
+
+  // Intersect q + lifecycle ID lists if both were applied.
+  let participantIds: string[] | null = participantIdsForQ;
+  if (participantIdsForLifecycle) {
+    if (participantIdsForQ) {
+      const qSet = new Set(participantIdsForQ);
+      participantIds = participantIdsForLifecycle.filter((id) => qSet.has(id));
+      if (participantIds.length === 0) return [];
+    } else {
+      participantIds = participantIdsForLifecycle;
+    }
+  }
+
   let query = supabase
     .from("conversations")
     .select(
@@ -113,7 +163,7 @@ export async function loadConversations(
 
   if (filters.channel) query = query.eq("channel", filters.channel);
   if (filters.status) query = query.eq("status", filters.status);
-  if (participantIdsForQ) query = query.in("participant_id", participantIdsForQ);
+  if (participantIds) query = query.in("participant_id", participantIds);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -141,6 +191,25 @@ export async function loadStatusCounts(
     unassigned: unassigned.count ?? 0,
     all: all.count ?? 0,
   };
+}
+
+export async function loadChannelCounts(
+  supabase: SupabaseClient,
+  filters: Pick<InboxListFilters, "scope" | "admin_id">,
+): Promise<{ whatsapp: number; line: number }> {
+  // Channel counts respect the active scope so the sidebar reads consistently
+  // with whatever scope tab is selected.
+  const base = () => {
+    let q = supabase.from("conversations").select("id", { count: "exact", head: true });
+    if (filters.scope === "mine") q = q.eq("assigned_to", filters.admin_id);
+    else if (filters.scope === "unassigned") q = q.is("assigned_to", null);
+    return q;
+  };
+  const [wa, line] = await Promise.all([
+    base().eq("channel", "whatsapp"),
+    base().eq("channel", "line"),
+  ]);
+  return { whatsapp: wa.count ?? 0, line: line.count ?? 0 };
 }
 
 export async function loadConversationDetail(

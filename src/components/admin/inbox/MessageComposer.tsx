@@ -102,6 +102,32 @@ export function MessageComposer({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value, mode]);
 
+  // Listen for AiAssistPanel "Insert into composer" events. The panel
+  // dispatches a window CustomEvent with the suggested text; we append it to
+  // the current draft (separated by a blank line if there's existing content)
+  // and switch back to text mode + focus the textarea.
+  useEffect(() => {
+    function onInsert(e: Event) {
+      const ce = e as CustomEvent<{ text?: string }>;
+      const incoming = (ce.detail?.text ?? "").trim();
+      if (!incoming) return;
+      setMode("text");
+      setValue((prev) => {
+        if (!prev.trim()) return incoming;
+        return `${prev.trimEnd()}\n\n${incoming}`;
+      });
+      // Defer focus until after the textarea has re-rendered with the new value.
+      window.setTimeout(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }, 0);
+    }
+    window.addEventListener("inbox-composer-insert", onInsert);
+    return () => window.removeEventListener("inbox-composer-insert", onInsert);
+  }, []);
+
   // Abort any in-flight uploads on unmount.
   useEffect(() => {
     return () => {

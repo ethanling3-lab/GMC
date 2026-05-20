@@ -7,7 +7,16 @@ export async function middleware(req: NextRequest) {
   // Only act on /admin/*
   if (!pathname.startsWith("/admin")) return NextResponse.next();
 
-  const res = NextResponse.next();
+  // Pass the request pathname down to server components via a header so
+  // AdminShell can compute auto-collapse state SSR-side and avoid a
+  // hydration mismatch with the client `usePathname()` (which can briefly
+  // be null on first render in dev with parallel routes).
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-pathname", pathname);
+
+  const res = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

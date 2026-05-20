@@ -229,6 +229,23 @@ a  { color: inherit; text-decoration: none; }
   animation: gmc-toast-in 200ms var(--ease-out) both;
 }
 
+/* AI Assist streaming caret — used by the AiAssistPanel result area while a
+   draft is mid-stream so the admin sees that text is still arriving. */
+@keyframes gmc-typing-caret {
+  0%, 60% { opacity: 1; }
+  60.01%, 100% { opacity: 0; }
+}
+.gmc-typing-caret {
+  display: inline-block;
+  width: 6px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--cinnabar);
+  border-radius: 1px;
+  animation: gmc-typing-caret 900ms steps(1) infinite;
+}
+
 /* ==========================================================================
    Floor plan canvas — density tiers. The canvas root carries one of
    `gmc-density-hidden | gmc-density-compact | gmc-density-detailed`,
