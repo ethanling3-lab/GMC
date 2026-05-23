@@ -16,6 +16,11 @@ import {
   type TemplateLanguage,
   type TemplateSummary,
 } from "@/lib/inbox/whatsapp-templates-types";
+import {
+  resolveSnippetBody,
+  type Snippet,
+  type SnippetContext,
+} from "@/lib/inbox/snippets-types";
 
 // Reply composer. Three modes:
 //   - text: default free-form textarea with optional attachments (WhatsApp)
@@ -69,6 +74,8 @@ export function MessageComposer({
   disabledReason,
   participantName,
   defaultTemplateLanguage,
+  snippetContext = {},
+  snippetLanguage = "en",
 }: {
   conversationId: string;
   channel: string;
@@ -78,6 +85,10 @@ export function MessageComposer({
   participantName?: string;
   /** Defaults the template language toggle; admin can still swap. */
   defaultTemplateLanguage?: TemplateLanguage;
+  /** Variable substitutions for slash-command snippet insertion. */
+  snippetContext?: SnippetContext;
+  /** Which language body to use when inserting a snippet. */
+  snippetLanguage?: "en" | "zh";
 }) {
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -427,6 +438,8 @@ export function MessageComposer({
           removeAttachment={removeAttachment}
           hasUploading={hasUploading}
           readyCount={readyAttachments.length}
+          snippetContext={snippetContext}
+          snippetLanguage={snippetLanguage}
           errorBanner={
             error ? (
               <ErrorBanner
@@ -481,6 +494,8 @@ function TextPanel({
   removeAttachment,
   hasUploading,
   readyCount,
+  snippetContext,
+  snippetLanguage,
   errorBanner,
 }: {
   channel: string;
@@ -497,9 +512,167 @@ function TextPanel({
   removeAttachment: (id: string) => void;
   hasUploading: boolean;
   readyCount: number;
+  snippetContext: SnippetContext;
+  snippetLanguage: "en" | "zh";
   errorBanner: React.ReactNode;
 }) {
   const canSend = !busy && !hasUploading && (value.trim().length > 0 || readyCount > 0);
+
+  // Slash-command state. Active only while the user is editing a token that
+  // starts with "/" — derived from the textarea's caret position on every
+  // change. Snippets list is lazy-loaded on first slash press.
+  const [slashState, setSlashState] = useState<{
+    start: number;
+    query: string;
+    selectedIdx: number;
+  } | null>(null);
+  const [snippets, setSnippets] = useState<Snippet[] | null>(null);
+  const [snippetsErr, setSnippetsErr] = useState<string | null>(null);
+  const [snippetsLoading, setSnippetsLoading] = useState(false);
+
+  const loadSnippets = useCallback(async () => {
+    if (snippets !== null || snippetsLoading) return;
+    setSnippetsLoading(true);
+    setSnippetsErr(null);
+    try {
+      const res = await fetch("/api/admin/inbox/snippets", { cache: "no-store" });
+      const body = (await res.json().catch(() => ({}))) as {
+        snippets?: Snippet[];
+        detail?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        setSnippetsErr(body.detail ?? body.error ?? `Load failed (${res.status})`);
+        return;
+      }
+      setSnippets(body.snippets ?? []);
+    } catch (err) {
+      setSnippetsErr(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setSnippetsLoading(false);
+    }
+  }, [snippets, snippetsLoading]);
+
+  const filteredSnippets = useMemo(() => {
+    if (!slashState || !snippets) return [];
+    const q = slashState.query.toLowerCase();
+    if (!q) return snippets.slice(0, 8);
+    const matches = snippets.filter((s) => {
+      if (s.shortcut.toLowerCase().includes(q)) return true;
+      if (s.title_en.toLowerCase().includes(q)) return true;
+      if (s.title_zh.includes(q)) return true;
+      return false;
+    });
+    matches.sort((a, b) => {
+      const ap = a.shortcut.toLowerCase().startsWith(q) ? 0 : 1;
+      const bp = b.shortcut.toLowerCase().startsWith(q) ? 0 : 1;
+      return ap - bp;
+    });
+    return matches.slice(0, 8);
+  }, [slashState, snippets]);
+
+  const detectSlash = useCallback(
+    (val: string, caretPos: number) => {
+      let start = caretPos;
+      while (start > 0 && !/\s/.test(val[start - 1])) start -= 1;
+      const word = val.slice(start, caretPos);
+      if (!word.startsWith("/")) return null;
+      // Slash already inserts — don't allow whitespace inside the token.
+      if (/\s/.test(word)) return null;
+      return { start, query: word.slice(1) };
+    },
+    [],
+  );
+
+  const onTextareaChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const val = e.target.value;
+      setValue(val);
+      const caret = e.target.selectionStart ?? val.length;
+      const detected = detectSlash(val, caret);
+      if (detected) {
+        setSlashState((prev) => ({
+          start: detected.start,
+          query: detected.query,
+          selectedIdx:
+            prev && prev.start === detected.start ? prev.selectedIdx : 0,
+        }));
+        if (snippets === null) void loadSnippets();
+      } else {
+        setSlashState(null);
+      }
+    },
+    [setValue, detectSlash, snippets, loadSnippets],
+  );
+
+  const insertSnippet = useCallback(
+    (snippet: Snippet) => {
+      if (!slashState) return;
+      const body =
+        snippetLanguage === "zh" ? snippet.body_zh : snippet.body_en;
+      const resolved = resolveSnippetBody(body, snippetContext);
+      const start = slashState.start;
+      const end = start + 1 + slashState.query.length;
+      const next = value.slice(0, start) + resolved + value.slice(end);
+      setValue(next);
+      setSlashState(null);
+      const newCaret = start + resolved.length;
+      window.setTimeout(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(newCaret, newCaret);
+      }, 0);
+    },
+    [slashState, snippetLanguage, snippetContext, value, setValue, textareaRef],
+  );
+
+  const onTextareaKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (slashState && filteredSnippets.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSlashState((s) =>
+            s
+              ? {
+                  ...s,
+                  selectedIdx: Math.min(
+                    s.selectedIdx + 1,
+                    filteredSnippets.length - 1,
+                  ),
+                }
+              : s,
+          );
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSlashState((s) =>
+            s ? { ...s, selectedIdx: Math.max(s.selectedIdx - 1, 0) } : s,
+          );
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault();
+          insertSnippet(filteredSnippets[slashState.selectedIdx]);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSlashState(null);
+          return;
+        }
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        onSend();
+      }
+    },
+    [slashState, filteredSnippets, insertSnippet, onSend],
+  );
+
+  const slashMenuOpen = Boolean(slashState);
+
   return (
     <div className="flex items-start gap-3">
       <div
@@ -509,7 +682,7 @@ function TextPanel({
       >
         <ChannelGlyph channel={channel} size={12} />
       </div>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 relative">
         <label className="sr-only" htmlFor="inbox-composer">
           Reply
         </label>
@@ -517,20 +690,22 @@ function TextPanel({
           id="inbox-composer"
           ref={textareaRef}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              onSend();
-            }
+          onChange={onTextareaChange}
+          onKeyDown={onTextareaKeyDown}
+          onBlur={() => {
+            // Defer so a click on the menu can fire before close.
+            window.setTimeout(() => setSlashState(null), 120);
           }}
           placeholder={
             attachments.length > 0
               ? "Caption (optional — sent on the first attachment)"
-              : `Reply via ${channelLabel(channel)}… (Shift+Enter for newline)`
+              : `Reply via ${channelLabel(channel)}… (Shift+Enter for newline, / for snippets)`
           }
           rows={2}
           disabled={busy}
+          aria-autocomplete="list"
+          aria-expanded={slashMenuOpen}
+          aria-controls={slashMenuOpen ? "inbox-snippet-menu" : undefined}
           className="block w-full resize-none bg-[var(--paper)] border border-[var(--paper-shadow)]
                      rounded-[var(--radius-md)] px-3.5 py-2.5
                      text-[13.5px] leading-[1.55] text-[var(--ink)]
@@ -540,6 +715,22 @@ function TextPanel({
                      transition-[border-color,box-shadow] duration-[var(--dur-fast)]
                      disabled:opacity-60"
         />
+
+        {slashMenuOpen ? (
+          <SnippetSlashMenu
+            id="inbox-snippet-menu"
+            loading={snippetsLoading}
+            error={snippetsErr}
+            snippets={filteredSnippets}
+            selectedIdx={slashState!.selectedIdx}
+            query={slashState!.query}
+            language={snippetLanguage}
+            onSelect={(s) => insertSnippet(s)}
+            onHoverIdx={(i) =>
+              setSlashState((prev) => (prev ? { ...prev, selectedIdx: i } : prev))
+            }
+          />
+        ) : null}
 
         {attachments.length > 0 ? (
           <ul className="mt-2 flex flex-wrap gap-2">
@@ -1232,6 +1423,144 @@ function ErrorBanner({
           </button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Slash-command snippet menu — popover above the textarea.
+// -----------------------------------------------------------------------------
+
+function SnippetSlashMenu({
+  id,
+  loading,
+  error,
+  snippets,
+  selectedIdx,
+  query,
+  language,
+  onSelect,
+  onHoverIdx,
+}: {
+  id: string;
+  loading: boolean;
+  error: string | null;
+  snippets: Snippet[];
+  selectedIdx: number;
+  query: string;
+  language: "en" | "zh";
+  onSelect: (s: Snippet) => void;
+  onHoverIdx: (i: number) => void;
+}) {
+  const hasResults = snippets.length > 0;
+
+  return (
+    <div
+      id={id}
+      role="listbox"
+      aria-label="Snippets"
+      className="absolute left-0 right-0 bottom-full mb-2 z-30
+                 rounded-[var(--radius-md)] border border-[var(--paper-shadow)]
+                 bg-[var(--paper-warm)] shadow-[var(--shadow-paper-2)] overflow-hidden"
+      onMouseDown={(e) => {
+        // Prevent textarea blur on row click — blur would close the menu
+        // before onClick can fire.
+        e.preventDefault();
+      }}
+    >
+      {loading && !hasResults ? (
+        <div className="px-4 py-3 text-[11.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
+          Loading snippets…
+        </div>
+      ) : error ? (
+        <div className="px-4 py-3 text-[12px] text-[var(--cinnabar-deep)]">
+          {error}
+        </div>
+      ) : !hasResults ? (
+        <div className="px-4 py-3 flex items-center justify-between gap-3">
+          <span className="text-[12px] text-[var(--ink-mute)]">
+            {query
+              ? `No snippet matches "/${query}".`
+              : "No snippets yet."}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("inbox-open-snippets-tab"));
+              window.dispatchEvent(new CustomEvent("inbox-open-snippet-editor"));
+            }}
+            className="text-[10.5px] tracking-[0.14em] uppercase text-[var(--cinnabar)] hover:text-[var(--cinnabar-deep)] transition-colors duration-[var(--dur-fast)]"
+          >
+            {query ? "Create →" : "New →"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <ul className="max-h-[280px] overflow-y-auto">
+            {snippets.map((s, i) => {
+              const active = i === selectedIdx;
+              const title = s.title_en;
+              const titleAlt = s.title_zh;
+              return (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => onSelect(s)}
+                    onMouseEnter={() => onHoverIdx(i)}
+                    className={`group w-full text-left px-3.5 py-2.5 flex items-start gap-3
+                                transition-[background-color] duration-[var(--dur-fast)]
+                                ${active ? "bg-[var(--cinnabar-wash)]" : "hover:bg-[var(--paper)]"}`}
+                  >
+                    <code
+                      className={`flex-none text-[12px] font-mono tracking-tight mt-0.5
+                                  ${active ? "text-[var(--cinnabar-deep)]" : "text-[var(--cinnabar)]"}`}
+                    >
+                      /{s.shortcut}
+                    </code>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12.5px] text-[var(--ink)] truncate">
+                        <span className="font-display tracking-[-0.005em]">{title}</span>
+                        <span className="text-[var(--ink-mute)]"> · {titleAlt}</span>
+                      </div>
+                      {s.description_en || s.description_zh ? (
+                        <div className="mt-0.5 text-[11px] text-[var(--ink-mute)] truncate">
+                          {(s.description_en || s.description_zh) ?? ""}
+                        </div>
+                      ) : null}
+                    </div>
+                    {active ? (
+                      <span className="flex-none text-[9.5px] tracking-[0.18em] uppercase text-[var(--cinnabar)] mt-1">
+                        Enter ↵
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="flex items-center justify-between gap-3 px-3.5 py-2 border-t border-[var(--paper-shadow)] bg-[var(--paper)]/60">
+            <div className="text-[10px] tracking-[0.16em] uppercase text-[var(--ink-faint)] flex items-center gap-3">
+              <span>↑↓ select</span>
+              <span>↵ insert</span>
+              <span>Esc close</span>
+              <span className="text-[var(--cinnabar)]/80">
+                Lang · {language === "zh" ? "中文" : "EN"}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("inbox-open-snippets-tab"))
+              }
+              className="text-[10px] tracking-[0.14em] uppercase text-[var(--ink-mute)] hover:text-[var(--ink)] transition-colors duration-[var(--dur-fast)]"
+            >
+              Manage →
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

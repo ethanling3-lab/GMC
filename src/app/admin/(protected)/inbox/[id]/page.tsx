@@ -19,6 +19,7 @@ import { AiAssistantToggle } from "@/components/admin/inbox/AiAssistantToggle";
 import { AiAssistPanel } from "@/components/admin/inbox/AiAssistPanel";
 import { ThreadRightRail } from "@/components/admin/inbox/ThreadRightRail";
 import { loadFlightInfoForParticipant } from "@/lib/inbox/flight-info-query";
+import { loadSnippetContextForConversation } from "@/lib/inbox/snippets";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Conversation" };
@@ -38,8 +39,12 @@ type PageProps = {
 // of two stacked cards.
 
 export default async function InboxThreadPage({ params }: PageProps) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const { id } = await params;
+  const canManageSnippets =
+    admin.role === "super_admin" ||
+    admin.role === "regional_lead" ||
+    admin.role === "customer_service";
 
   const supabase = await createSupabaseServerClient();
   const detail = await loadConversationDetail(supabase, id);
@@ -49,6 +54,8 @@ export default async function InboxThreadPage({ params }: PageProps) {
   const flightRows = conversation.participant_id
     ? await loadFlightInfoForParticipant(supabase, conversation.participant_id)
     : [];
+  const { context: snippetContext, preferredLanguage: snippetLanguage } =
+    await loadSnippetContextForConversation(conversation.id);
   const p = conversation.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
@@ -162,6 +169,8 @@ export default async function InboxThreadPage({ params }: PageProps) {
             defaultTemplateLanguage={
               p?.language_fluency === "cn" || p?.language_fluency === "both" ? "zh_CN" : "en_US"
             }
+            snippetContext={snippetContext}
+            snippetLanguage={snippetLanguage}
           />
         </section>
 
@@ -173,6 +182,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
             assignedAdmin={conversation.assigned_admin}
             conversationId={conversation.id}
             flightRows={flightRows}
+            canManageSnippets={canManageSnippets}
           />
         </aside>
       </div>
