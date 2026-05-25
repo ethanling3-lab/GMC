@@ -204,6 +204,12 @@ function ActiveFilterStrip({
       href: makeHref(filters, { channel: null }),
     });
   }
+  if (filters.tag) {
+    chips.push({
+      label: compact ? `#${filters.tag}` : `Tag: ${filters.tag}`,
+      href: makeHref(filters, { tag: null }),
+    });
+  }
   if (filters.q) {
     chips.push({
       label: compact ? `"${filters.q}"` : `Search: "${filters.q}"`,
@@ -266,13 +272,14 @@ function ActiveFilterStrip({
 
 function makeHref(
   filters: InboxListFilters,
-  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "lifecycle" | "q">>,
+  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "lifecycle" | "tag" | "q">>,
 ): string {
   const next = {
     scope: filters.scope,
     channel: filters.channel,
     status: filters.status,
     lifecycle: filters.lifecycle,
+    tag: filters.tag,
     q: filters.q,
     ...patch,
   };
@@ -281,6 +288,7 @@ function makeHref(
   if (next.channel) params.set("channel", next.channel);
   if (next.status) params.set("status", next.status);
   if (next.lifecycle) params.set("lifecycle", next.lifecycle);
+  if (next.tag) params.set("tag", next.tag);
   if (next.q) params.set("q", next.q);
   const qs = params.toString();
   return qs ? `/admin/inbox?${qs}` : "/admin/inbox";

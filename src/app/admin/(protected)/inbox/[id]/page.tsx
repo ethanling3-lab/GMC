@@ -18,8 +18,10 @@ import { ScrollAnchor } from "@/components/admin/inbox/ScrollAnchor";
 import { AiAssistantToggle } from "@/components/admin/inbox/AiAssistantToggle";
 import { AiAssistPanel } from "@/components/admin/inbox/AiAssistPanel";
 import { ThreadRightRail } from "@/components/admin/inbox/ThreadRightRail";
+import { ConversationTagStrip } from "@/components/admin/inbox/ConversationTagStrip";
 import { loadFlightInfoForParticipant } from "@/lib/inbox/flight-info-query";
 import { loadSnippetContextForConversation } from "@/lib/inbox/snippets";
+import { listTags } from "@/lib/inbox/tags";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
 export const metadata: Metadata = { title: "Conversation" };
@@ -56,6 +58,10 @@ export default async function InboxThreadPage({ params }: PageProps) {
     : [];
   const { context: snippetContext, preferredLanguage: snippetLanguage } =
     await loadSnippetContextForConversation(conversation.id);
+  const allTags = await listTags();
+  const appliedTagSlugs: string[] = Array.isArray(conversation.tags)
+    ? (conversation.tags as string[])
+    : [];
   const p = conversation.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
@@ -125,6 +131,13 @@ export default async function InboxThreadPage({ params }: PageProps) {
           </span>
         </div>
       </header>
+
+      <ConversationTagStrip
+        conversationId={conversation.id}
+        initialAppliedSlugs={appliedTagSlugs}
+        initialTags={allTags}
+        canWrite={canManageSnippets}
+      />
 
       {/* Body: thread + right rail */}
       <div className="flex-1 min-h-0 flex">

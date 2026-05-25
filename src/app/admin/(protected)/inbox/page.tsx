@@ -9,6 +9,7 @@ import {
 } from "@/lib/inbox/inbox-query";
 import { ConversationListView } from "@/components/admin/inbox/ConversationListView";
 import { InboxSidebar } from "@/components/admin/inbox/InboxSidebar";
+import { listTags } from "@/lib/inbox/tags";
 
 export const metadata: Metadata = { title: "Inbox" };
 export const dynamic = "force-dynamic";
@@ -36,10 +37,11 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
   const filters = parseFilters(admin, sp);
 
   const supabase = await createSupabaseServerClient();
-  const [rows, scopeCounts, channelCounts] = await Promise.all([
+  const [rows, scopeCounts, channelCounts, tags] = await Promise.all([
     loadConversations(supabase, filters),
     loadStatusCounts(supabase, { admin_id: admin.id, channel: filters.channel }),
     loadChannelCounts(supabase, { admin_id: admin.id, scope: filters.scope }),
+    listTags(),
   ]);
 
   return (
@@ -74,6 +76,7 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
                 all: scopeCounts.all,
                 channels: channelCounts,
               }}
+              tags={tags}
             />
           </div>
 

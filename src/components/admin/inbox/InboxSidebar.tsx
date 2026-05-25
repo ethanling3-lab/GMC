@@ -3,6 +3,8 @@ import type {
   InboxListFilters,
   ParticipantLifecycle,
 } from "@/lib/inbox/inbox-query";
+import type { Tag } from "@/lib/inbox/tags-types";
+import { tintHex } from "@/lib/inbox/tags-types";
 
 // Inbox sub-nav (left column of /admin/inbox). Renders one stacked list of
 // "saved views" — each link is just a URL with a different filter set —
@@ -40,9 +42,11 @@ const LIFECYCLE_ITEMS: Array<{
 export function InboxSidebar({
   filters,
   counts,
+  tags,
 }: {
   filters: InboxListFilters;
   counts: Counts;
+  tags: Tag[];
 }) {
   return (
     // Width is controlled by the parent — either the @subnav slot column in
@@ -125,6 +129,22 @@ export function InboxSidebar({
 
         <SectionDivider />
 
+        {/* Tags section — definitions managed inline from any thread. */}
+        <SectionHeader>Tags · 标签</SectionHeader>
+        {tags.length === 0 ? (
+          <div className="px-4 pb-3 text-[11.5px] text-[var(--ink-faint)] italic">
+            None yet. Open a thread to create one.
+          </div>
+        ) : (
+          <nav className="px-2 py-1 pb-3 space-y-0.5">
+            {tags.map((t) => (
+              <TagLink key={t.id} filters={filters} tag={t} />
+            ))}
+          </nav>
+        )}
+
+        <SectionDivider />
+
         {/* Saved Views — placeholder shell for the dedicated Phase-1 follow-up */}
         <SectionHeader>
           <span>Saved Views · 保存视图</span>
@@ -141,6 +161,41 @@ export function InboxSidebar({
         </div>
       </div>
     </aside>
+  );
+}
+
+function TagLink({ filters, tag }: { filters: InboxListFilters; tag: Tag }) {
+  const active = filters.tag === tag.slug;
+  // Same-slug click toggles off, mirroring the channel/lifecycle pattern.
+  const href = buildHref(filters, { tag: active ? null : tag.slug });
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={[
+        "group flex items-center gap-2 h-8 px-2 rounded-[var(--radius-md)]",
+        "text-[12.5px] tracking-[-0.005em]",
+        "transition-[background-color,color] duration-[var(--dur-fast)]",
+        active
+          ? "text-[var(--ink)]"
+          : "text-[var(--ink-soft)] hover:bg-[var(--paper-deep)] hover:text-[var(--ink)]",
+      ].join(" ")}
+      style={
+        active
+          ? { backgroundColor: tintHex(tag.color, 0.16) }
+          : undefined
+      }
+    >
+      <span
+        aria-hidden="true"
+        className="flex-none w-2 h-2 rounded-full"
+        style={{ backgroundColor: tag.color }}
+      />
+      <span className="flex-1 min-w-0 truncate">
+        {tag.label_en}
+        <span className="text-[var(--ink-faint)]"> · {tag.label_zh}</span>
+      </span>
+    </Link>
   );
 }
 
@@ -170,13 +225,14 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 function buildHref(
   filters: InboxListFilters,
-  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "lifecycle">>,
+  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "lifecycle" | "tag">>,
 ): string {
   const next = {
     scope: filters.scope,
     channel: filters.channel,
     status: filters.status,
     lifecycle: filters.lifecycle,
+    tag: filters.tag,
     ...patch,
   };
   const params = new URLSearchParams();
@@ -184,6 +240,7 @@ function buildHref(
   if (next.channel) params.set("channel", next.channel);
   if (next.status) params.set("status", next.status);
   if (next.lifecycle) params.set("lifecycle", next.lifecycle);
+  if (next.tag) params.set("tag", next.tag);
   if (filters.q) params.set("q", filters.q);
   const qs = params.toString();
   return qs ? `/admin/inbox?${qs}` : "/admin/inbox";
@@ -204,10 +261,10 @@ function ScopeLink({
   count: number;
   icon: React.ReactNode;
 }) {
-  const active = filters.scope === code && !filters.lifecycle && !filters.channel;
+  const active = filters.scope === code && !filters.lifecycle && !filters.channel && !filters.tag;
   // Clearing channel + lifecycle when clicking a scope link mirrors the Gmail
   // "All Mail" UX — picking a scope is a reset, not a refinement.
-  const href = buildHref(filters, { scope: code, channel: null, lifecycle: null });
+  const href = buildHref(filters, { scope: code, channel: null, lifecycle: null, tag: null });
   return (
     <Link
       href={href}

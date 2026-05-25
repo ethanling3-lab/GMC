@@ -27,6 +27,7 @@ export type InboxListFilters = {
   channel: "whatsapp" | "line" | "email" | null;
   status: "open" | "pending" | "snoozed" | "closed" | null;
   lifecycle: ParticipantLifecycle | null;
+  tag: string | null;
   q: string;
   admin_id: string;
 };
@@ -90,9 +91,12 @@ export function parseFilters(
     ? (lifecycleRaw as ParticipantLifecycle)
     : null;
 
+  const tagRaw = (typeof sp.tag === "string" ? sp.tag : "").trim().slice(0, 40);
+  const tag = /^[a-z0-9][a-z0-9-]{0,39}$/.test(tagRaw) ? tagRaw : null;
+
   const q = (typeof sp.q === "string" ? sp.q : "").trim().slice(0, 120);
 
-  return { scope, channel, status, lifecycle, q, admin_id: admin.id };
+  return { scope, channel, status, lifecycle, tag, q, admin_id: admin.id };
 }
 
 export async function loadConversations(
@@ -163,6 +167,7 @@ export async function loadConversations(
 
   if (filters.channel) query = query.eq("channel", filters.channel);
   if (filters.status) query = query.eq("status", filters.status);
+  if (filters.tag) query = query.contains("tags", [filters.tag]);
   if (participantIds) query = query.in("participant_id", participantIds);
 
   const { data, error } = await query;
