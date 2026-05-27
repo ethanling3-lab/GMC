@@ -2,7 +2,7 @@ import { SelectionProvider } from "@/components/admin/inbox/selection/SelectionC
 import { InboxKeyboardHost } from "@/components/admin/inbox/selection/InboxKeyboardHost";
 
 // Inbox layout — composes three parallel slots/children:
-//   [ sidebar 260px ] [ list 320px (xl+) ] [ children fills rest ]
+//   [ sidebar 260px ] [ list 440px (xl+) ] [ children fills rest ]
 //
 // All three are scoped to /admin/inbox/* via the layout's existence. When
 // the user navigates away, the whole layout unmounts and the slots
@@ -39,7 +39,7 @@ export default function InboxLayout({
           {sidebar}
         </aside>
         <aside
-          className="hidden xl:flex flex-none w-[320px] h-full
+          className="hidden xl:flex flex-none w-[440px] h-full
                      border-r border-[var(--paper-shadow)] bg-[var(--paper-warm)]
                      overflow-hidden"
         >
