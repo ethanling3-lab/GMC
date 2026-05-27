@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import type { MouseEvent } from "react";
 import type { ConversationListRow } from "@/lib/inbox/inbox-query";
 import {
   CONVERSATION_STATUS_LABEL,
@@ -9,6 +12,7 @@ import {
   participantDisplay,
 } from "@/lib/inbox/format";
 import { ChannelGlyph } from "./ChannelGlyph";
+import { useSelectionOptional } from "./selection/SelectionContext";
 
 // A single row in the conversation list. Two visual modes:
 //   - default: carded (border + shadow + per-item padding) — used in the
@@ -17,8 +21,9 @@ import { ChannelGlyph } from "./ChannelGlyph";
 //     vertical padding + hover/active bg tint) — used in the persistent
 //     `@list` slot column at xl+.
 //
-// Server component. Active-thread highlight derives from the `activePath`
-// prop (server-supplied via `x-pathname` header from @list/default.tsx).
+// Now a CLIENT component — it subscribes to the SelectionContext so the
+// avatar doubles as a checkbox (hover or any-selected reveals it) and the
+// row tints when selected / when focused via j/k.
 
 export function InboxListItem({
   row,
@@ -30,12 +35,46 @@ export function InboxListItem({
   compact?: boolean;
 }) {
   const isActive = activePath === `/admin/inbox/${row.id}`;
+  const sel = useSelectionOptional();
+  const isSelected = sel?.selected.has(row.id) ?? false;
+  const isFocused = sel?.focusedId === row.id && sel?.keyboardMode === true;
+  const anySelected = (sel?.selected.size ?? 0) > 0;
+
+  const onCheckboxClick = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    sel?.toggle(row.id);
+  };
+
   return compact ? (
-    <CompactItem row={row} isActive={isActive} />
+    <CompactItem
+      row={row}
+      isActive={isActive}
+      isSelected={isSelected}
+      isFocused={isFocused}
+      anySelected={anySelected}
+      onCheckboxClick={onCheckboxClick}
+    />
   ) : (
-    <CardedItem row={row} isActive={isActive} />
+    <CardedItem
+      row={row}
+      isActive={isActive}
+      isSelected={isSelected}
+      isFocused={isFocused}
+      anySelected={anySelected}
+      onCheckboxClick={onCheckboxClick}
+    />
   );
 }
+
+type RowProps = {
+  row: ConversationListRow;
+  isActive: boolean;
+  isSelected: boolean;
+  isFocused: boolean;
+  anySelected: boolean;
+  onCheckboxClick: (e: MouseEvent<HTMLButtonElement>) => void;
+};
 
 // -----------------------------------------------------------------------------
 // Compact (WhatsApp-style)
@@ -44,48 +83,46 @@ export function InboxListItem({
 function CompactItem({
   row,
   isActive,
-}: {
-  row: ConversationListRow;
-  isActive: boolean;
-}) {
+  isSelected,
+  isFocused,
+  anySelected,
+  onCheckboxClick,
+}: RowProps) {
   const p = row.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
   const isLead = p?.status === "lead";
 
+  // Selection state takes visual priority over the active-thread tint so
+  // bulk operations stay legible.
+  const bgClass = isSelected
+    ? "bg-[var(--cinnabar-wash)]"
+    : isActive
+      ? "bg-[var(--paper-deep)]"
+      : "bg-transparent hover:bg-[var(--paper-deep)]/60";
+
   return (
-    <li>
+    <li data-inbox-row-id={row.id} className="group/row relative">
+      {isFocused ? <FocusRing /> : null}
+      {isSelected ? <SelectedEdge /> : null}
       <Link
         href={`/admin/inbox/${row.id}`}
         aria-current={isActive ? "page" : undefined}
         className={[
-          "group relative flex items-center gap-3 px-3 py-3",
+          "relative flex items-center gap-3 px-3 py-3",
           "border-b border-[var(--paper-shadow)]/60",
           "transition-[background-color] duration-[var(--dur-fast)]",
-          isActive
-            ? "bg-[var(--paper-deep)]"
-            : "bg-transparent hover:bg-[var(--paper-deep)]/60",
+          bgClass,
         ].join(" ")}
       >
-        <div className="flex-none relative">
-          <div
-            className="w-10 h-10 rounded-full bg-[var(--ink)] text-[var(--paper-warm)]
-                       flex items-center justify-center text-[11px] tracking-[0.06em] font-medium
-                       shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]"
-            aria-hidden="true"
-          >
-            {initialsFor(displayName)}
-          </div>
-          <span
-            className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[var(--paper-warm)]
-                       border border-[var(--paper-shadow)]
-                       flex items-center justify-center text-[var(--cinnabar)]"
-            aria-label={channelLabel(row.channel)}
-            title={channelLabel(row.channel)}
-          >
-            <ChannelGlyph channel={row.channel} size={8} />
-          </span>
-        </div>
+        <AvatarCheckbox
+          displayName={displayName}
+          channel={row.channel}
+          size="md"
+          isSelected={isSelected}
+          anySelected={anySelected}
+          onCheckboxClick={onCheckboxClick}
+        />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-2">
@@ -128,10 +165,11 @@ function CompactItem({
 function CardedItem({
   row,
   isActive,
-}: {
-  row: ConversationListRow;
-  isActive: boolean;
-}) {
+  isSelected,
+  isFocused,
+  anySelected,
+  onCheckboxClick,
+}: RowProps) {
   const p = row.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
@@ -142,39 +180,33 @@ function CardedItem({
   const assignedName =
     row.assigned_admin?.name_en ?? row.assigned_admin?.name_cn ?? null;
 
+  const stateClass = isSelected
+    ? "border-[var(--cinnabar)]/55 bg-[var(--cinnabar-wash)] shadow-[var(--shadow-paper-2)]"
+    : isActive
+      ? "border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] shadow-[var(--shadow-paper-2)]"
+      : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] hover:-translate-y-[1px] hover:shadow-[var(--shadow-paper-2)] hover:border-[var(--cinnabar)]/20";
+
   return (
-    <li>
+    <li data-inbox-row-id={row.id} className="group/row relative">
+      {isFocused ? <FocusRing rounded /> : null}
       <Link
         href={`/admin/inbox/${row.id}`}
         aria-current={isActive ? "page" : undefined}
         className={[
-          "group relative flex items-center gap-4 px-4 py-3.5 rounded-[var(--radius-md)]",
+          "relative flex items-center gap-4 px-4 py-3.5 rounded-[var(--radius-md)]",
           "border shadow-[var(--shadow-paper-1)]",
           "transition-[transform,box-shadow,border-color,background-color] duration-[var(--dur-fast)] ease-[var(--ease-out)]",
-          isActive
-            ? "border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] shadow-[var(--shadow-paper-2)]"
-            : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] hover:-translate-y-[1px] hover:shadow-[var(--shadow-paper-2)] hover:border-[var(--cinnabar)]/20",
+          stateClass,
         ].join(" ")}
       >
-        <div className="flex-none relative">
-          <div
-            className="w-10 h-10 rounded-full bg-[var(--ink)] text-[var(--paper-warm)]
-                       flex items-center justify-center text-[11px] tracking-[0.06em] font-medium
-                       shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]"
-            aria-hidden="true"
-          >
-            {initialsFor(displayName)}
-          </div>
-          <span
-            className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[var(--paper-warm)]
-                       border border-[var(--paper-shadow)] shadow-[var(--shadow-paper-1)]
-                       flex items-center justify-center text-[var(--cinnabar)]"
-            aria-label={channelLabel(row.channel)}
-            title={channelLabel(row.channel)}
-          >
-            <ChannelGlyph channel={row.channel} size={10} />
-          </span>
-        </div>
+        <AvatarCheckbox
+          displayName={displayName}
+          channel={row.channel}
+          size="lg"
+          isSelected={isSelected}
+          anySelected={anySelected}
+          onCheckboxClick={onCheckboxClick}
+        />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
@@ -234,6 +266,161 @@ function CardedItem({
         </div>
       </Link>
     </li>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Avatar that doubles as a selection checkbox.
+// -----------------------------------------------------------------------------
+
+function AvatarCheckbox({
+  displayName,
+  channel,
+  size,
+  isSelected,
+  anySelected,
+  onCheckboxClick,
+}: {
+  displayName: string;
+  channel: string;
+  size: "md" | "lg";
+  isSelected: boolean;
+  anySelected: boolean;
+  onCheckboxClick: (e: MouseEvent<HTMLButtonElement>) => void;
+}) {
+  // md = compact list (10x10 circle, smaller glyph badge)
+  // lg = carded fallback (10x10 circle, larger glyph badge)
+  // — actual size is the same (40px) but the badge differs.
+  const reveal = isSelected || anySelected; // always show in selection mode
+  const ariaLabel = isSelected
+    ? `Unselect ${displayName}`
+    : `Select ${displayName}`;
+
+  return (
+    <div className="flex-none relative">
+      <button
+        type="button"
+        onClick={onCheckboxClick}
+        aria-pressed={isSelected}
+        aria-label={ariaLabel}
+        title={ariaLabel}
+        className={[
+          "relative w-10 h-10 rounded-full overflow-hidden",
+          "flex items-center justify-center",
+          "transition-[background-color,box-shadow] duration-[var(--dur-fast)] ease-[var(--ease-out)]",
+          isSelected
+            ? "bg-[var(--cinnabar)] text-[var(--paper-warm)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]"
+            : "bg-[var(--ink)] text-[var(--paper-warm)] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] hover:bg-[var(--cinnabar-deep)] focus-visible:bg-[var(--cinnabar-deep)] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)]",
+        ].join(" ")}
+      >
+        {/* Initials layer */}
+        <span
+          aria-hidden="true"
+          className={[
+            "absolute inset-0 flex items-center justify-center text-[11px] tracking-[0.06em] font-medium",
+            "transition-opacity duration-[var(--dur-fast)] ease-[var(--ease-out)]",
+            // Hide initials when selected, or on hover-reveal in selection mode
+            isSelected
+              ? "opacity-0"
+              : reveal
+                ? "opacity-100 group-hover/row:opacity-0"
+                : "opacity-100 group-hover/row:opacity-0",
+          ].join(" ")}
+        >
+          {initialsFor(displayName)}
+        </span>
+
+        {/* Checkbox layer */}
+        <span
+          aria-hidden="true"
+          className={[
+            "absolute inset-0 flex items-center justify-center",
+            "transition-opacity duration-[var(--dur-fast)] ease-[var(--ease-out)]",
+            isSelected
+              ? "opacity-100"
+              : reveal
+                ? "opacity-0 group-hover/row:opacity-100"
+                : "opacity-0 group-hover/row:opacity-100",
+          ].join(" ")}
+        >
+          {isSelected ? <CheckIcon /> : <CircleIcon />}
+        </span>
+      </button>
+
+      {/* Channel glyph badge — sits in corner, stays visible. */}
+      <span
+        className={[
+          "absolute -bottom-0.5 -right-0.5 rounded-full bg-[var(--paper-warm)]",
+          "border border-[var(--paper-shadow)]",
+          "flex items-center justify-center text-[var(--cinnabar)]",
+          size === "md"
+            ? "w-4 h-4"
+            : "w-5 h-5 shadow-[var(--shadow-paper-1)]",
+        ].join(" ")}
+        aria-label={channelLabel(channel)}
+        title={channelLabel(channel)}
+      >
+        <ChannelGlyph channel={channel} size={size === "md" ? 8 : 10} />
+      </span>
+    </div>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3.5 8.5l3 3 6-7" />
+    </svg>
+  );
+}
+
+function CircleIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      aria-hidden="true"
+    >
+      <circle cx="9" cy="9" r="7" />
+    </svg>
+  );
+}
+
+function FocusRing({ rounded = false }: { rounded?: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={[
+        "pointer-events-none absolute inset-0 z-10",
+        "shadow-[inset_0_0_0_2px_var(--cinnabar)]",
+        rounded ? "rounded-[var(--radius-md)]" : "",
+      ].join(" ")}
+    />
+  );
+}
+
+function SelectedEdge() {
+  // Subtle cinnabar accent bar on the left edge — only used in compact mode
+  // since carded already gets a full cinnabar border when selected.
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute left-0 top-0 bottom-0 w-[2px] bg-[var(--cinnabar)]"
+    />
   );
 }
 

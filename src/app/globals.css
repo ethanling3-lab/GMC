@@ -246,6 +246,26 @@ a  { color: inherit; text-decoration: none; }
   animation: gmc-typing-caret 900ms steps(1) infinite;
 }
 
+/* Inbox bulk-actions toolbar — slides down from the top of the list when
+   selection state flips to ≥1. Translate-only so it composites on the GPU
+   and doesn't trigger a row-list relayout while the bar is mounting. */
+@keyframes gmc-toolbar-in {
+  from { opacity: 0; transform: translate3d(0, -6px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.gmc-toolbar-in {
+  animation: gmc-toolbar-in 180ms var(--ease-out) both;
+}
+
+/* Inbox keyboard-cheatsheet modal — gentle scale-in over the scrim. */
+@keyframes gmc-cheatsheet-in {
+  from { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.98); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+.gmc-cheatsheet-in {
+  animation: gmc-cheatsheet-in 220ms var(--ease-out) both;
+}
+
 /* ==========================================================================
    Floor plan canvas — density tiers. The canvas root carries one of
    `gmc-density-hidden | gmc-density-compact | gmc-density-detailed`,

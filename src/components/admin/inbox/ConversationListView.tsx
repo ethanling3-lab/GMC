@@ -5,6 +5,7 @@ import type {
 } from "@/lib/inbox/inbox-query";
 import { InboxListItem } from "./InboxListItem";
 import { InboxSearch } from "./InboxSearch";
+import { SelectionShell } from "./selection/SelectionShell";
 
 // Conversation list pane — used in TWO places:
 //   1. `inbox/@list/default.tsx` (the persistent xl+ middle column, rendered
@@ -60,20 +61,22 @@ export function ConversationListView({
           <div className="px-3 pt-3 pb-2">
             <InboxSearch initialQ={filters.q} />
           </div>
-          {rows.length === 0 ? (
-            <EmptyState filters={filters} compact />
-          ) : (
-            <ul className="flex flex-col">
-              {rows.map((row) => (
-                <InboxListItem
-                  key={row.id}
-                  row={row}
-                  activePath={activePath}
-                  compact
-                />
-              ))}
-            </ul>
-          )}
+          <SelectionShell rowIds={rows.map((r) => r.id)} compact>
+            {rows.length === 0 ? (
+              <EmptyState filters={filters} compact />
+            ) : (
+              <ul className="flex flex-col">
+                {rows.map((row) => (
+                  <InboxListItem
+                    key={row.id}
+                    row={row}
+                    activePath={activePath}
+                    compact
+                  />
+                ))}
+              </ul>
+            )}
+          </SelectionShell>
         </div>
       </div>
     );
@@ -96,15 +99,17 @@ export function ConversationListView({
         <ActiveFilterStrip filters={filters} count={rows.length} />
       </div>
 
-      {rows.length === 0 ? (
-        <EmptyState filters={filters} compact={false} />
-      ) : (
-        <ul className="flex flex-col gap-1.5">
-          {rows.map((row) => (
-            <InboxListItem key={row.id} row={row} activePath={activePath} />
-          ))}
-        </ul>
-      )}
+      <SelectionShell rowIds={rows.map((r) => r.id)} compact={false}>
+        {rows.length === 0 ? (
+          <EmptyState filters={filters} compact={false} />
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {rows.map((row) => (
+              <InboxListItem key={row.id} row={row} activePath={activePath} />
+            ))}
+          </ul>
+        )}
+      </SelectionShell>
     </div>
   );
 }
