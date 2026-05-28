@@ -30,20 +30,8 @@ export function MessageBubble({
       {showDaySeparator ? (
         <li aria-hidden="true" className="flex items-center gap-3 my-2">
           <span className="flex-1 h-px bg-[var(--paper-shadow)]" />
-          {/* Server (Node ICU) and client (browser) emit subtly different
-              en-GB short-date output ("Thu, 23 Apr" vs "Thu 23 Apr") which
-              trips React's hydration check. The admin's LOCAL formatting
-              wins after hydration; suppressHydrationWarning silences the
-              cosmetic diff without forcing a client-only render. */}
-          <span
-            suppressHydrationWarning
-            className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)] tabular-nums"
-          >
-            {new Date(m.created_at).toLocaleDateString("en-GB", {
-              weekday: "short",
-              day: "numeric",
-              month: "short",
-            })}
+          <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)] tabular-nums">
+            <LocaleDate iso={m.created_at} kind="date" />
           </span>
           <span className="flex-1 h-px bg-[var(--paper-shadow)]" />
         </li>
@@ -88,16 +76,8 @@ export function MessageBubble({
             </div>
 
             <div className={`mt-1 flex items-center gap-2 text-[10.5px] tracking-[0.08em] text-[var(--ink-faint)] ${isOutbound ? "flex-row-reverse" : ""}`}>
-              <span
-                suppressHydrationWarning
-                title={timestampFull(m.created_at)}
-                className="tabular-nums"
-              >
-                {new Date(m.created_at).toLocaleTimeString("en-GB", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  hour12: true,
-                })}
+              <span title={timestampFull(m.created_at)} className="tabular-nums">
+                <LocaleDate iso={m.created_at} kind="time" />
               </span>
               {isOutbound ? (
                 <span
@@ -225,4 +205,23 @@ function AttachmentTile({
       {attachment.filename ?? (isPdf ? "PDF" : "File")}
     </a>
   );
+}
+
+// Client-only locale-formatted date/time. Server renders empty; useEffect
+// fills the formatted string after mount so the admin's local timezone
+// + browser locale data both win without tripping React's hydration
+// check (Node ICU vs browser locale data emit subtly different en-GB
+// strings — "Thu, 23 Apr" vs "Thu 23 Apr" — and Turbopack's dev overlay
+// surfaces these even when suppressHydrationWarning is set).
+function LocaleDate({ iso, kind }: { iso: string; kind: "date" | "time" }) {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    const d = new Date(iso);
+    setText(
+      kind === "date"
+        ? d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })
+        : d.toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true }),
+    );
+  }, [iso, kind]);
+  return <>{text}</>;
 }
