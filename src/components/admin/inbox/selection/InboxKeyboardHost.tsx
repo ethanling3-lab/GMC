@@ -15,6 +15,8 @@ import { KeyboardCheatsheet } from "./KeyboardCheatsheet";
 //   x / Space    Toggle selection on focused row
 //   ⌘/⌃ A        Select all visible
 //   e            Mark read (selected if any, else focused)
+//   c            Close (selected if any, else focused)
+//   m            Assign to me (selected if any, else focused)
 //   Esc          Clear selection / close cheatsheet
 //   ?            Toggle cheatsheet
 //
@@ -71,6 +73,42 @@ export function InboxKeyboardHost() {
         const res = await fetch(`/api/admin/inbox/${id}/read`, {
           method: "POST",
           credentials: "include",
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      },
+      { concurrency: 6 },
+    );
+    router.refresh();
+  }, [router]);
+
+  const closeIds = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    await runBulk(
+      ids,
+      async (id) => {
+        const res = await fetch(`/api/admin/inbox/${id}/status`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "closed" }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      },
+      { concurrency: 6 },
+    );
+    router.refresh();
+  }, [router]);
+
+  const assignToMeIds = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    await runBulk(
+      ids,
+      async (id) => {
+        const res = await fetch(`/api/admin/inbox/${id}/assign`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ admin_id: "self" }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       },
@@ -159,13 +197,33 @@ export function InboxKeyboardHost() {
         }
         return;
       }
+      if (key === "c") {
+        const sel = selectedRef.current;
+        const ids = sel.size > 0 ? Array.from(sel) : focusedRef.current ? [focusedRef.current] : [];
+        if (ids.length > 0) {
+          e.preventDefault();
+          void closeIds(ids);
+        }
+        return;
+      }
+      if (key === "m") {
+        const sel = selectedRef.current;
+        const ids = sel.size > 0 ? Array.from(sel) : focusedRef.current ? [focusedRef.current] : [];
+        if (ids.length > 0) {
+          e.preventDefault();
+          void assignToMeIds(ids);
+        }
+        return;
+      }
     }
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
+    assignToMeIds,
     cheatsheetOpen,
     clear,
+    closeIds,
     focusNext,
     focusPrev,
     markReadIds,

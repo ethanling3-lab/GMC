@@ -15,7 +15,9 @@ const SHORTCUTS: Array<{ keys: string[]; en: string; cn: string }> = [
   { keys: ["Enter"], en: "Open focused thread", cn: "打开" },
   { keys: ["x", "Space"], en: "Select / unselect", cn: "选择 / 取消" },
   { keys: ["⌘", "A"], en: "Select all visible", cn: "全选" },
-  { keys: ["e"], en: "Mark read (selected or focused)", cn: "标记已读" },
+  { keys: ["e"], en: "Mark read", cn: "标记已读" },
+  { keys: ["c"], en: "Close", cn: "关闭" },
+  { keys: ["m"], en: "Assign to me", cn: "分给我" },
   { keys: ["Esc"], en: "Clear selection / close this", cn: "清除 / 关闭" },
   { keys: ["?"], en: "Show this cheatsheet", cn: "显示快捷键" },
 ];
