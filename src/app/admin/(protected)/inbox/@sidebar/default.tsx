@@ -6,6 +6,7 @@ import {
   parseFilters,
 } from "@/lib/inbox/inbox-query";
 import { listTags } from "@/lib/inbox/tags";
+import { listSavedViewsForAdmin } from "@/lib/inbox/saved-views";
 import { InboxSidebar } from "@/components/admin/inbox/InboxSidebar";
 
 // Inbox sub-nav — parallel slot scoped to the inbox layout. Lives at the
@@ -29,10 +30,11 @@ export default async function InboxSidebarSlot({ searchParams }: SlotProps) {
   const filters = parseFilters(admin, sp);
 
   const supabase = await createSupabaseServerClient();
-  const [scopeCounts, channelCounts, tags] = await Promise.all([
+  const [scopeCounts, channelCounts, tags, savedViews] = await Promise.all([
     loadStatusCounts(supabase, { admin_id: admin.id, channel: filters.channel }),
     loadChannelCounts(supabase, { admin_id: admin.id, scope: filters.scope }),
     listTags(),
+    listSavedViewsForAdmin(admin),
   ]);
 
   return (
@@ -46,6 +48,7 @@ export default async function InboxSidebarSlot({ searchParams }: SlotProps) {
           channels: channelCounts,
         }}
         tags={tags}
+        savedViews={savedViews}
       />
     </div>
   );

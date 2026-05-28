@@ -6,6 +6,7 @@ import type {
 import { InboxListItem } from "./InboxListItem";
 import { InboxSearch } from "./InboxSearch";
 import { SelectionShell } from "./selection/SelectionShell";
+import { SaveViewButton } from "./SaveViewButton";
 
 // Conversation list pane — used in TWO places:
 //   1. `inbox/@list/default.tsx` (the persistent xl+ middle column, rendered
@@ -271,6 +272,17 @@ function ActiveFilterStrip({
       >
         · {count.toLocaleString()}
       </span>
+      <SaveViewButton
+        compact={compact}
+        filters={{
+          scope: filters.scope,
+          channel: filters.channel,
+          status: filters.status,
+          lifecycle: filters.lifecycle,
+          tag: filters.tag,
+          q: filters.q,
+        }}
+      />
     </div>
   );
 }

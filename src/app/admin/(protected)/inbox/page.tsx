@@ -10,6 +10,7 @@ import {
 import { ConversationListView } from "@/components/admin/inbox/ConversationListView";
 import { InboxSidebar } from "@/components/admin/inbox/InboxSidebar";
 import { listTags } from "@/lib/inbox/tags";
+import { listSavedViewsForAdmin } from "@/lib/inbox/saved-views";
 
 export const metadata: Metadata = { title: "Inbox" };
 export const dynamic = "force-dynamic";
@@ -37,11 +38,12 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
   const filters = parseFilters(admin, sp);
 
   const supabase = await createSupabaseServerClient();
-  const [rows, scopeCounts, channelCounts, tags] = await Promise.all([
+  const [rows, scopeCounts, channelCounts, tags, savedViews] = await Promise.all([
     loadConversations(supabase, filters),
     loadStatusCounts(supabase, { admin_id: admin.id, channel: filters.channel }),
     loadChannelCounts(supabase, { admin_id: admin.id, scope: filters.scope }),
     listTags(),
+    listSavedViewsForAdmin(admin),
   ]);
 
   return (
@@ -77,6 +79,7 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
                 channels: channelCounts,
               }}
               tags={tags}
+              savedViews={savedViews}
             />
           </div>
 

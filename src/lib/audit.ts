@@ -56,6 +56,8 @@ export type AuditAction =
   | "inbox.tag_deleted"
   | "inbox.conversation_tagged"
   | "inbox.conversation_untagged"
+  | "inbox.saved_view_created"
+  | "inbox.saved_view_deleted"
   | "transfer_list.generated"
   | "transfer_list.finalized"
   | "transfer_list.deleted"

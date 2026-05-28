@@ -5,6 +5,9 @@ import type {
 } from "@/lib/inbox/inbox-query";
 import type { Tag } from "@/lib/inbox/tags-types";
 import { tintHex } from "@/lib/inbox/tags-types";
+import type { SavedView } from "@/lib/inbox/saved-views-types";
+import { savedViewHref } from "@/lib/inbox/saved-views-types";
+import { SavedViewItem } from "./SavedViewItem";
 
 // Inbox sub-nav (left column of /admin/inbox). Renders one stacked list of
 // "saved views" — each link is just a URL with a different filter set —
@@ -43,11 +46,21 @@ export function InboxSidebar({
   filters,
   counts,
   tags,
+  savedViews,
 }: {
   filters: InboxListFilters;
   counts: Counts;
   tags: Tag[];
+  savedViews: SavedView[];
 }) {
+  const activeViewHref = savedViewHref({
+    scope: filters.scope,
+    channel: filters.channel,
+    status: filters.status,
+    lifecycle: filters.lifecycle,
+    tag: filters.tag,
+    q: filters.q,
+  });
   return (
     // Width is controlled by the parent — either the @subnav slot column in
     // AdminShell (lg+) or the lg:hidden fallback wrapper in inbox/page.tsx.
@@ -145,20 +158,26 @@ export function InboxSidebar({
 
         <SectionDivider />
 
-        {/* Saved Views — placeholder shell for the dedicated Phase-1 follow-up */}
         <SectionHeader>
           <span>Saved Views · 保存视图</span>
-          <span
-            className="text-[10px] tracking-[0.06em] normal-case text-[var(--ink-faint)]"
-            aria-hidden="true"
-            title="Coming next"
-          >
-            soon
-          </span>
         </SectionHeader>
-        <div className="px-4 py-3 text-[11.5px] text-[var(--ink-faint)] italic">
-          No views yet.
-        </div>
+        {savedViews.length === 0 ? (
+          <div className="px-4 py-3 text-[11.5px] text-[var(--ink-faint)] italic leading-[1.55]">
+            No views yet. Apply a filter combo, then use{" "}
+            <span className="font-medium text-[var(--ink-mute)]">+ Save view</span>{" "}
+            on the list.
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-px px-1">
+            {savedViews.map((v) => (
+              <SavedViewItem
+                key={v.id}
+                view={v}
+                isActive={savedViewHref(v.filters) === activeViewHref}
+              />
+            ))}
+          </ul>
+        )}
       </div>
     </aside>
   );
