@@ -114,7 +114,16 @@ export type AuditAction =
   | "check_in.duplicate_attempt"
   | "participant.face_embedding_computed"
   | "participant.face_embedding_failed"
-  | "participant.facial_recognition_consent_changed";
+  | "participant.facial_recognition_consent_changed"
+  | "broadcast.created"
+  | "broadcast.updated"
+  | "broadcast.cancelled"
+  | "broadcast.scheduled"
+  | "broadcast.sent"
+  | "broadcast.retry_failed"
+  | "broadcast.recipient_sent"
+  | "broadcast.recipient_failed"
+  | "broadcast.recipient_skipped";
 
 export type WriteAuditLog = {
   actor_id: string | null;

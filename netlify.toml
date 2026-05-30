@@ -18,3 +18,17 @@
 [functions."cron-reminders"]
   schedule = "@hourly"
   timeout = 60
+
+# M7.6 — scheduled function pings /api/cron/broadcasts-due every 5 min.
+# Picks up status='scheduled' AND scheduled_for <= now() broadcasts and
+# kicks broadcast-fanout-background for each. Same CRON_SECRET gate.
+[functions."cron-broadcasts-due"]
+  schedule = "*/5 * * * *"
+  timeout = 60
+
+# M7.6 — broadcast fan-out runs as a background function (15-min ceiling)
+# so a 500-recipient blast finishes well past the 26s system-handler
+# timeout. Invoked fire-and-forget by /api/admin/broadcasts/:id/send
+# and the cron route.
+[functions."broadcast-fanout-background"]
+  timeout = 900
