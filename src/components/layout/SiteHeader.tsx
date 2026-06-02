@@ -79,7 +79,9 @@ const NAV: NavItem[] = [
   { href: "/events", label: { zh: "活动", en: "Events" } },
 ];
 
-export function SiteHeader() {
+type AccountState = { href: string; isParticipant: boolean } | null;
+
+export function SiteHeader({ account = null }: { account?: AccountState }) {
   const { locale, t } = useLocale();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -192,17 +194,42 @@ export function SiteHeader() {
         {/* Right cluster */}
         <div className="flex items-center gap-3 md:gap-5">
           <LanguageToggle className="hidden sm:inline-flex" />
-          <Link
-            href="/register"
-            className="hidden md:inline-flex items-center gap-2 h-10 px-5 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12px] font-medium tracking-[0.02em]
-                       shadow-[0_3px_12px_rgba(37,99,235,0.28)]
-                       transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                       hover:-translate-y-[1px] hover:bg-[var(--cinnabar-deep)] hover:shadow-[0_6px_18px_rgba(37,99,235,0.38)]
-                       active:translate-y-0"
-          >
-            {t("landing.ctaRegister", locale === "zh" ? "立即报名" : "Register")}
-            <span aria-hidden="true" className="w-3 h-px bg-current" />
-          </Link>
+          {account?.isParticipant ? (
+            <Link
+              href={account.href}
+              className="hidden md:inline-flex items-center gap-2 h-10 px-5 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12px] font-medium tracking-[0.02em]
+                         shadow-[0_3px_12px_rgba(37,99,235,0.28)]
+                         transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                         hover:-translate-y-[1px] hover:bg-[var(--cinnabar-deep)] hover:shadow-[0_6px_18px_rgba(37,99,235,0.38)]
+                         active:translate-y-0"
+              style={{ color: "var(--paper-warm)" }}
+            >
+              {locale === "zh" ? "学员中心" : "My portal"}
+              <span aria-hidden="true" className="w-3 h-px bg-current" />
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="hidden md:inline-flex items-center text-[12px] tracking-[0.06em] uppercase text-[var(--ink-soft)] hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)]"
+                style={{ color: "var(--ink-soft)" }}
+              >
+                {locale === "zh" ? "登录" : "Sign in"}
+              </Link>
+              <Link
+                href="/register"
+                className="hidden md:inline-flex items-center gap-2 h-10 px-5 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12px] font-medium tracking-[0.02em]
+                           shadow-[0_3px_12px_rgba(37,99,235,0.28)]
+                           transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
+                           hover:-translate-y-[1px] hover:bg-[var(--cinnabar-deep)] hover:shadow-[0_6px_18px_rgba(37,99,235,0.38)]
+                           active:translate-y-0"
+                style={{ color: "var(--paper-warm)" }}
+              >
+                {t("landing.ctaRegister", locale === "zh" ? "立即报名" : "Register")}
+                <span aria-hidden="true" className="w-3 h-px bg-current" />
+              </Link>
+            </>
+          )}
 
           {/* Mobile menu trigger */}
           <button
@@ -296,12 +323,32 @@ export function SiteHeader() {
           })}
           <div className="flex items-center justify-between mt-4">
             <LanguageToggle />
-            <Link
-              href="/register"
-              className="inline-flex items-center gap-2 h-10 px-5 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12px] font-medium tracking-[0.02em] shadow-[0_3px_12px_rgba(37,99,235,0.28)]"
-            >
-              {t("landing.ctaRegister", locale === "zh" ? "立即报名" : "Register")}
-            </Link>
+            {account?.isParticipant ? (
+              <Link
+                href={account.href}
+                className="inline-flex items-center gap-2 h-10 px-5 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12px] font-medium tracking-[0.02em] shadow-[0_3px_12px_rgba(37,99,235,0.28)]"
+                style={{ color: "var(--paper-warm)" }}
+              >
+                {locale === "zh" ? "学员中心" : "My portal"}
+              </Link>
+            ) : (
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/login"
+                  className="text-[12px] tracking-[0.06em] uppercase text-[var(--ink-soft)]"
+                  style={{ color: "var(--ink-soft)" }}
+                >
+                  {locale === "zh" ? "登录" : "Sign in"}
+                </Link>
+                <Link
+                  href="/register"
+                  className="inline-flex items-center gap-2 h-10 px-5 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12px] font-medium tracking-[0.02em] shadow-[0_3px_12px_rgba(37,99,235,0.28)]"
+                  style={{ color: "var(--paper-warm)" }}
+                >
+                  {t("landing.ctaRegister", locale === "zh" ? "立即报名" : "Register")}
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       </div>

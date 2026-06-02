@@ -144,6 +144,16 @@ export async function notifyApproved({
       result: waRes,
     },
   });
+
+  // M8 — fire an account-claim invite if the participant doesn't have one
+  // yet. Idempotent + best-effort; failures are logged but don't break the
+  // approval flow.
+  try {
+    const { inviteParticipantToAccountIfNeeded } = await import("./participant-invite");
+    await inviteParticipantToAccountIfNeeded(participant.id, "enrollment_approved");
+  } catch (err) {
+    console.warn(`[notifyApproved] invite trigger failed: ${err}`);
+  }
 }
 
 // --- Rejection --------------------------------------------------------------
@@ -332,6 +342,16 @@ export async function notifyPaymentReceived({
       result: waRes,
     },
   });
+
+  // M8 — fire an account-claim invite if the participant doesn't have one
+  // yet. Payment-received is the most reliable signal we have to invite
+  // (admin approval can be reversed; payment is final).
+  try {
+    const { inviteParticipantToAccountIfNeeded } = await import("./participant-invite");
+    await inviteParticipantToAccountIfNeeded(participant.id, "payment_received");
+  } catch (err) {
+    console.warn(`[notifyPaymentReceived] invite trigger failed: ${err}`);
+  }
 }
 
 // --- Helpers ---------------------------------------------------------------

@@ -123,7 +123,18 @@ export type AuditAction =
   | "broadcast.retry_failed"
   | "broadcast.recipient_sent"
   | "broadcast.recipient_failed"
-  | "broadcast.recipient_skipped";
+  | "broadcast.recipient_skipped"
+  | "participant.account_invite_sent"
+  | "participant.account_claimed"
+  | "participant.account_claim_conflict"
+  | "participant.password_reset_requested"
+  | "recording.uploaded"
+  | "recording.updated"
+  | "recording.deleted"
+  | "recording.access_granted"
+  | "recording.access_revoked"
+  | "recording.played"
+  | "recruit.lead_added";
 
 export type WriteAuditLog = {
   actor_id: string | null;
