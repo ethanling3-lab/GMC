@@ -14,6 +14,7 @@ import {
   notifyPaymentReceived,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
+import { resolvePriceTier } from "@/lib/pricing/tiers";
 import { writeAuditLog } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
@@ -89,7 +90,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const { data: event, error: eventErr } = await service
     .from("events")
     .select(
-      "id, slug, status, requires_approval, capacity, currency, price, title_en, title_cn, start_date, end_date",
+      "id, slug, status, requires_approval, capacity, currency, price, price_tiers, title_en, title_cn, start_date, end_date",
     )
     .eq("id", eventId)
     .maybeSingle();
@@ -167,6 +168,20 @@ export async function POST(req: Request, { params }: RouteCtx) {
     );
   }
 
+  // Resolve the price tier from the participant's record (programme_tier,
+  // else new/returning) so amount_due is correct. Falls back to event.price.
+  const { data: pricingRow } = await service
+    .from("participants")
+    .select("programme_tier, is_old_student")
+    .eq("id", participantId)
+    .maybeSingle();
+  const tier = resolvePriceTier(event, pricingRow ?? null);
+  const amountDue = tier
+    ? tier.amount
+    : event.price != null && Number.isFinite(Number(event.price))
+      ? Number(event.price)
+      : null;
+
   // Build the insert payload from the chosen initial state. Mirrors the
   // PATCH route's per-action mutation logic so a manually-created "approved"
   // row carries the same audit timestamps as one transitioned via the table.
@@ -174,6 +189,8 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const enrollPayload: Record<string, unknown> = {
     participant_id: participantId,
     event_id: event.id,
+    price_tier_key: tier?.tier_key ?? null,
+    amount_due: amountDue,
   };
 
   if (body.initial_state === "pending") {
@@ -274,7 +291,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
     try {
       if (body.initial_state === "approved") {
         const token = createPaymentAccessToken(enrollment.id, PAYMENT_TOKEN_TTL_MS);
-        const amountLabel = fmtAmount(event.price, event.currency, locale);
+        const amountLabel = fmtAmount(amountDue, event.currency, locale);
         await notifyApproved({
           enrollment: enr,
           participant: pRow,
@@ -284,7 +301,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
         });
       } else if (body.initial_state === "paid") {
         const amountLabel = fmtAmount(
-          body.amount_paid ?? event.price,
+          body.amount_paid ?? amountDue,
           event.currency,
           locale,
         );

@@ -12,6 +12,7 @@ import {
   type ParticipantInsertInput,
 } from "@/lib/participants-write";
 import { isEventFull } from "@/lib/event-capacity";
+import { resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
 
 export const runtime = "nodejs";
 
@@ -49,13 +50,18 @@ export async function POST(req: NextRequest) {
         enrollment_closes_at: string | null;
         capacity: number | null;
         form_schema?: unknown;
+        price?: number | string | null;
+        price_tiers?: PriceTier[] | null;
       }
     | null = null;
+  // When the tiered-pricing columns (migration 042) aren't present we skip
+  // writing them on the enrollment insert.
+  let tieredAvailable = true;
   {
     const primary = await supabase
       .from("events")
       .select(
-        "id, status, requires_approval, enrollment_closes_at, capacity, form_schema",
+        "id, status, requires_approval, enrollment_closes_at, capacity, form_schema, price, price_tiers",
       )
       .eq("slug", presliced.data.event_slug)
       .maybeSingle();
@@ -64,9 +70,10 @@ export async function POST(req: NextRequest) {
       if (code !== "42703") {
         return NextResponse.json({ error: "event_not_found" }, { status: 404 });
       }
+      tieredAvailable = false;
       const fallback = await supabase
         .from("events")
-        .select("id, status, requires_approval, enrollment_closes_at, capacity")
+        .select("id, status, requires_approval, enrollment_closes_at, capacity, price")
         .eq("slug", presliced.data.event_slug)
         .maybeSingle();
       if (fallback.error || !fallback.data) {
@@ -206,6 +213,29 @@ export async function POST(req: NextRequest) {
   const confirmationToken = createToken("confirm_registration", `${participantId}:${event.id}`);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
+  // Resolve the price tier from the participant's record so the amount
+  // owed is correct when the pay link is later generated. New public
+  // leads (no programme_tier) resolve to the new-student / default tier.
+  let priceTierKey: string | null = null;
+  let amountDue: number | null = null;
+  if (tieredAvailable) {
+    const { data: pricing } = await supabase
+      .from("participants")
+      .select("programme_tier, is_old_student")
+      .eq("id", participantId)
+      .maybeSingle();
+    const tier = resolvePriceTier(
+      { price: event.price, price_tiers: event.price_tiers },
+      pricing ?? null,
+    );
+    priceTierKey = tier?.tier_key ?? null;
+    amountDue = tier
+      ? tier.amount
+      : event.price != null && Number.isFinite(Number(event.price))
+        ? Number(event.price)
+        : null;
+  }
+
   // Pin `event` here so the narrowing survives into the closure below.
   const eventRef = event;
   async function insertEnrollment(includeAnswers: boolean) {
@@ -216,6 +246,10 @@ export async function POST(req: NextRequest) {
       confirmation_token: confirmationToken,
       confirmation_token_expires_at: expiresAt,
     };
+    if (tieredAvailable) {
+      payload.price_tier_key = priceTierKey;
+      payload.amount_due = amountDue;
+    }
     if (includeAnswers) payload.form_answers = input.answers ?? {};
     return supabase
       .from("enrollments")

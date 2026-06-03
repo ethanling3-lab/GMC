@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { verifyPaymentAccessToken } from "@/lib/tokens";
 import { createPaymentRequest } from "@/lib/hitpay";
+import { enrollmentAmountDue } from "@/lib/pricing/tiers";
 import { writeAuditLog } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   const { data: row, error } = await service
     .from("enrollments")
     .select(
-      "id, event_id, status, payment_status, payment_method, amount_paid, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone), event:events(id, slug, title_en, title_cn, price, currency, payment_methods)",
+      "id, event_id, status, payment_status, payment_method, amount_paid, amount_due, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone), event:events(id, slug, title_en, title_cn, price, currency, payment_methods)",
     )
     .eq("id", enrollmentId)
     .maybeSingle();
@@ -71,10 +72,12 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "method_not_enabled" }, { status: 409 });
   }
 
-  const amount =
-    typeof event.price === "number"
-      ? event.price
-      : Number(event.price ?? 0);
+  // Prefer the per-enrollment resolved amount (tiered pricing); fall back
+  // to the event's single price for legacy/single-price enrollments.
+  const amount = enrollmentAmountDue(
+    row as unknown as { amount_due?: number | string | null },
+    event,
+  );
   if (!Number.isFinite(amount) || amount <= 0) {
     return NextResponse.json({ error: "invalid_amount" }, { status: 422 });
   }

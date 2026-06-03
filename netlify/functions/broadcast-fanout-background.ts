@@ -244,7 +244,9 @@ async function processRow(
           price: eventRow.price,
         }
       : null,
-    enrollment: enrollment ? { id: enrollment.id } : null,
+    enrollment: enrollment
+      ? { id: enrollment.id, amount_due: enrollment.amount_due ?? null }
+      : null,
   };
 
   await supabase
@@ -330,6 +332,7 @@ type ParticipantContextRow = {
 
 type EnrollmentContextRow = {
   id: string;
+  amount_due?: number | string | null;
 };
 
 type RecipientRow = {
@@ -396,7 +399,7 @@ async function loadEnrollmentContexts(
   if (ids.length === 0) return out;
   const { data, error } = await supabase
     .from("enrollments")
-    .select("id")
+    .select("id, amount_due")
     .in("id", ids);
   if (error) throw new Error(`enrollment context load failed: ${error.message}`);
   for (const r of (data ?? []) as EnrollmentContextRow[]) {

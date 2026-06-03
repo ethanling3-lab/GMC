@@ -31,6 +31,7 @@ export type InterpolationContext = {
   } | null;
   enrollment: {
     id: string;
+    amount_due?: number | string | null;
   } | null;
 };
 
@@ -81,9 +82,11 @@ function resolveToken(
     case "${event.main_venue_hotel_name}":
       return ctx.event?.main_venue_hotel_name ?? null;
     case "${amount_due}": {
-      const p = ctx.event?.price;
-      if (p === null || p === undefined) return null;
-      const n = typeof p === "string" ? Number(p) : p;
+      // Prefer the per-enrollment resolved amount (tiered pricing); fall
+      // back to the event's single price.
+      const raw = ctx.enrollment?.amount_due ?? ctx.event?.price;
+      if (raw === null || raw === undefined) return null;
+      const n = typeof raw === "string" ? Number(raw) : raw;
       if (!Number.isFinite(n)) return null;
       return n.toFixed(2);
     }

@@ -3,6 +3,7 @@ import { requireParticipant } from "@/lib/participant-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { isEventFull } from "@/lib/event-capacity";
 import { createPaymentAccessToken } from "@/lib/tokens";
+import { resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,7 +30,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   const service = createSupabaseServiceClient();
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price")
+    .select("id, slug, status, capacity, requires_approval, price, price_tiers")
     .eq("slug", slug)
     .maybeSingle();
   if (!event) {
@@ -41,6 +42,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     capacity: number | null;
     requires_approval: boolean;
     price: number | string | null;
+    price_tiers: PriceTier[] | null;
   };
   if (ev.status !== "open") {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
@@ -63,6 +65,20 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "already_enrolled" }, { status: 409 });
   }
 
+  // Resolve the price tier from the participant's record (programme_tier,
+  // else new/returning). Falls back to the single event.price.
+  const { data: pricing } = await service
+    .from("participants")
+    .select("programme_tier, is_old_student")
+    .eq("id", participant.id)
+    .maybeSingle();
+  const tier = resolvePriceTier(ev, pricing ?? null);
+  const amountDue = tier
+    ? tier.amount
+    : ev.price != null && Number.isFinite(Number(ev.price))
+      ? Number(ev.price)
+      : null;
+
   const status = ev.requires_approval ? "pending_approval" : "approved";
   const { data: enrollment, error: insErr } = await service
     .from("enrollments")
@@ -71,6 +87,8 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       event_id: ev.id,
       status,
       payment_status: "none",
+      price_tier_key: tier?.tier_key ?? null,
+      amount_due: amountDue,
     })
     .select("id")
     .single();
@@ -81,9 +99,9 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     );
   }
 
-  // Mint payment token if there's a price.
+  // Mint payment token if there's something to pay.
   const paymentToken =
-    ev.price && Number(ev.price) > 0
+    amountDue && amountDue > 0
       ? createPaymentAccessToken(enrollment.id, 30 * 24 * 60 * 60 * 1000) // 30 days
       : null;
 

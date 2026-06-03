@@ -29,6 +29,35 @@ export const EventCreateSchema = z.object({
 });
 export type EventCreate = z.infer<typeof EventCreateSchema>;
 
+// Tiered pricing (migration 042). One event can carry several price
+// tiers; `applies_to` maps each to participant categories so checkout
+// auto-resolves the right amount. See lib/pricing/tiers.ts.
+const PRICE_TIER_CATEGORIES = [
+  "abundance",
+  "glorious_family",
+  "elite_cultural_heritage",
+  "glorious_cultural_heritage",
+  "returning_student",
+  "new_student",
+  "default",
+] as const;
+
+export const PriceTierSchema = z.object({
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9][a-z0-9_-]*$/, {
+      message: "Tier key must be lowercase alphanumerics, _, -",
+    }),
+  label_en: z.string().trim().max(120),
+  label_cn: z.string().trim().max(120),
+  amount: z.number().min(0).max(1_000_000),
+  applies_to: z.array(z.enum(PRICE_TIER_CATEGORIES)).max(7),
+  custom_label: z.string().trim().max(120).optional(),
+});
+
 export const EventUpdateSchema = z
   .object({
     slug: slug.optional(),
@@ -65,6 +94,10 @@ export const EventUpdateSchema = z
     price: z.number().min(0).max(1_000_000).nullable().optional(),
     currency: z.string().length(3).optional(),
     payment_methods: z.array(z.enum(PAYMENT_METHODS)).optional(),
+
+    // Tiered pricing (migration 042). Empty/absent ⇒ single-price mode
+    // (use `price`). See lib/pricing/tiers.ts for resolution.
+    price_tiers: z.array(PriceTierSchema).max(12).optional(),
 
     target_audience_filter: z.record(z.string(), z.unknown()).optional(),
     status: z.enum(["draft", "open", "closed", "archived"]).optional(),

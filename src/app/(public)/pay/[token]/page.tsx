@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 import { verifyPaymentAccessToken } from "@/lib/tokens";
+import { enrollmentAmountDue } from "@/lib/pricing/tiers";
 import { TransferSlipUploader } from "@/components/payment/TransferSlipUploader";
 import { HitPayCheckoutButton } from "@/components/payment/HitPayCheckoutButton";
 
@@ -21,6 +22,7 @@ type EnrollmentRow = {
   payment_status: string;
   payment_method: string | null;
   amount_paid: number | string | null;
+  amount_due?: number | string | null;
   paid_at: string | null;
   transfer_slip_url?: string | null;
   transfer_slip_uploaded_at?: string | null;
@@ -58,8 +60,8 @@ async function loadEnrollment(token: string): Promise<EnrollmentRow | null> {
     // back tier by tier. The page renders identically; just without the slip
     // upload UI on legacy schemas.
     const tiers: string[] = [
-      "id, status, payment_status, payment_method, amount_paid, paid_at, transfer_slip_url, transfer_slip_uploaded_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
-      "id, status, payment_status, payment_method, amount_paid, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
+      "id, status, payment_status, payment_method, amount_paid, amount_due, paid_at, transfer_slip_url, transfer_slip_uploaded_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
+      "id, status, payment_status, payment_method, amount_paid, amount_due, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
       "id, status, payment_status, payment_method, amount_paid, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods)",
     ];
     for (const select of tiers) {
@@ -164,7 +166,13 @@ export default async function PayPage({ params, searchParams }: PageProps) {
 
   const when = fmtRange(event.start_date, event.end_date, locale);
   const where = [event.city, event.country].filter(Boolean).join(" · ");
-  const price = fmtMoney(event.price, event.currency, locale);
+  // Prefer the per-enrollment resolved amount (tiered pricing); fall back
+  // to the event's single price for legacy/single-price enrollments.
+  const price = fmtMoney(
+    enrollmentAmountDue(enrollment, event),
+    event.currency,
+    locale,
+  );
 
   const alreadyPaid =
     enrollment.status === "paid" || enrollment.payment_status === "paid";

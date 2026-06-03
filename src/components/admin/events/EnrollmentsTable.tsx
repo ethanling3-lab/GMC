@@ -28,6 +28,7 @@ import {
   RejectReasonModal,
   type RejectReasonValue,
 } from "./RejectReasonModal";
+import type { PriceTier } from "@/lib/pricing/tiers";
 
 type ParticipantRef = {
   id: string;
@@ -74,6 +75,10 @@ export type EnrollmentRow = {
   payment_status: PaymentStatus;
   payment_method: PaymentMethod | null;
   amount_paid: number | null;
+  /** Tiered pricing (migration 042) — resolved amount + applied tier key.
+   * Optional so pre-042 schemas still work. */
+  amount_due?: number | string | null;
+  price_tier_key?: string | null;
   paid_at: string | null;
   confirmed_at: string | null;
   approved_at: string | null;
@@ -102,6 +107,8 @@ type Props = {
   canEdit: boolean;
   hasFilter: boolean;
   formSchema: unknown;
+  /** Event's tiered-pricing rows (migration 042). Empty = single-price event. */
+  priceTiers?: PriceTier[];
   referrerById: Record<string, ReferrerRef>;
   latestNotificationByEnrollment?: Record<string, LatestNotification>;
 };
@@ -265,10 +272,12 @@ export function EnrollmentsTable({
   canEdit,
   hasFilter,
   formSchema,
+  priceTiers = [],
   referrerById,
   latestNotificationByEnrollment = {},
 }: Props) {
   const router = useRouter();
+  const tierByKey = new Map(priceTiers.map((t) => [t.key, t]));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<BulkAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -581,6 +590,56 @@ export function EnrollmentsTable({
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Pin update failed");
+    }
+  }
+
+  // Tier-override editor — window.prompt picker (matches the Pin editor
+  // pattern). Only offered when the event defines price tiers. Admin types
+  // the number of the tier (or blank to clear → falls back to event price).
+  async function editPriceTier(id: string, currentKey: string | null | undefined) {
+    if (!canEdit || priceTiers.length === 0) return;
+    const menu = priceTiers
+      .map((t, i) => `${i + 1}. ${t.label_cn || t.label_en} — ${t.amount}`)
+      .join("\n");
+    const currentIdx = priceTiers.findIndex((t) => t.key === currentKey);
+    const raw = window.prompt(
+      `Set price tier (blank to clear):\n${menu}`,
+      currentIdx >= 0 ? String(currentIdx + 1) : "",
+    );
+    if (raw === null) return;
+    const trimmed = raw.trim();
+    let nextKey: string | null;
+    if (trimmed === "" || trimmed === "0") {
+      nextKey = null;
+    } else {
+      const idx = Number(trimmed) - 1;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= priceTiers.length) {
+        setError(`Enter a number between 1 and ${priceTiers.length}, or blank to clear.`);
+        return;
+      }
+      nextKey = priceTiers[idx].key;
+    }
+    if ((currentKey ?? null) === nextKey) return;
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ price_tier_key: nextKey }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error ?? `Couldn't update tier (${res.status})`);
+      }
+      router.refresh();
+      setToast({
+        message:
+          nextKey == null
+            ? "Tier cleared"
+            : `Tier set · amount due ${payload?.amount_due ?? "updated"}`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Tier update failed");
     }
   }
 
@@ -1106,6 +1165,42 @@ export function EnrollmentsTable({
                       ) : (
                         <span className="text-[var(--ink-faint)]">—</span>
                       )}
+                      {/* Tiered pricing — amount due + applied tier (migration 042). */}
+                      {priceTiers.length > 0 ? (
+                        canEdit ? (
+                          <button
+                            type="button"
+                            onClick={() => editPriceTier(r.id, r.price_tier_key)}
+                            title="Click to change price tier"
+                            className="mt-1 group inline-flex items-center gap-1 px-1.5 py-0.5 -mr-1.5 rounded-[var(--radius-sm)] text-[11px] text-[var(--ink-mute)] hover:bg-[var(--cinnabar-wash)]/60 hover:text-[var(--cinnabar-deep)] transition-colors duration-[var(--dur-fast)]"
+                          >
+                            <span className="text-[9.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
+                              due
+                            </span>
+                            <span className="tabular-nums">
+                              {r.amount_due != null
+                                ? Number(r.amount_due).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                : "—"}
+                            </span>
+                            {r.price_tier_key && tierByKey.get(r.price_tier_key) ? (
+                              <span className="text-[var(--ink-faint)]">
+                                · {tierByKey.get(r.price_tier_key)!.label_cn || tierByKey.get(r.price_tier_key)!.label_en}
+                              </span>
+                            ) : null}
+                          </button>
+                        ) : (
+                          <div className="mt-1 text-[11px] text-[var(--ink-mute)]">
+                            <span className="text-[9.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
+                              due{" "}
+                            </span>
+                            <span className="tabular-nums">
+                              {r.amount_due != null
+                                ? Number(r.amount_due).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                : "—"}
+                            </span>
+                          </div>
+                        )
+                      ) : null}
                     </td>
                     <td className="px-5 py-3.5 text-right text-[var(--ink-mute)] whitespace-nowrap align-top">
                       <span

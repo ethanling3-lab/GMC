@@ -17,6 +17,11 @@ import {
   type RejectReason,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
+import {
+  enrollmentAmountDue,
+  findTierByKey,
+  type PriceTier,
+} from "@/lib/pricing/tiers";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
 import { participantEmailLocale } from "@/lib/i18n";
 import { ensureRegionId } from "@/lib/region-id";
@@ -41,6 +46,9 @@ const PatchBody = z
   .object({
     action: z.enum(ACTIONS).optional(),
     amount_paid: z.number().min(0).max(1_000_000).optional(),
+    // Admin override of the applied price tier; recomputes amount_due.
+    // null clears the tier (falls back to the single event price).
+    price_tier_key: z.string().trim().min(1).max(64).nullable().optional(),
     payment_method: z
       .enum(["hitpay", "stripe", "bank_transfer", "tt"])
       .optional(),
@@ -66,6 +74,7 @@ const PatchBody = z
     (b) =>
       b.action !== undefined
       || b.amount_paid !== undefined
+      || b.price_tier_key !== undefined
       || b.pinned_group_no !== undefined
       || b.serving_as_zu_zhang !== undefined
       || b.zu_zhang_tier_for_event !== undefined
@@ -111,7 +120,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const { data: row, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, price_tier_key, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price, price_tiers)",
     )
     .eq("id", enrollmentId)
     .maybeSingle();
@@ -145,6 +154,54 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       ok: true,
       id: enrollmentId,
       amount_paid: body.amount_paid,
+    });
+  }
+
+  // Tier-override edit path — admin changes the applied price tier, which
+  // recomputes amount_due. No state transition, no notifications.
+  if (body.action === undefined && body.price_tier_key !== undefined) {
+    const ev = (row as unknown as { event: EventShape | null }).event;
+    let amountDue: number | null;
+    if (body.price_tier_key === null) {
+      amountDue =
+        ev?.price != null && Number.isFinite(Number(ev.price))
+          ? Number(ev.price)
+          : null;
+    } else {
+      const tier = findTierByKey(ev ?? {}, body.price_tier_key);
+      if (!tier) {
+        return NextResponse.json({ error: "tier_not_found" }, { status: 400 });
+      }
+      amountDue = Number(tier.amount);
+    }
+    const beforeRow = row as {
+      price_tier_key?: string | null;
+      amount_due?: number | string | null;
+    };
+    const { error: updErr } = await service
+      .from("enrollments")
+      .update({ price_tier_key: body.price_tier_key, amount_due: amountDue })
+      .eq("id", enrollmentId);
+    if (updErr) {
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "enrollment.update_amount",
+      entity: "enrollments",
+      entity_id: enrollmentId,
+      before: {
+        price_tier_key: beforeRow.price_tier_key ?? null,
+        amount_due: beforeRow.amount_due ?? null,
+      },
+      after: { price_tier_key: body.price_tier_key, amount_due: amountDue },
+      metadata: { event_id: row.event_id, via: "tier_edit" },
+    });
+    return NextResponse.json({
+      ok: true,
+      id: enrollmentId,
+      price_tier_key: body.price_tier_key,
+      amount_due: amountDue,
     });
   }
 
@@ -373,8 +430,12 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         payment_method: (update.payment_method as string) ?? row.payment_method,
       };
       const locale = participantEmailLocale(participant);
+      const due = enrollmentAmountDue(
+        row as unknown as { amount_due?: number | string | null },
+        event,
+      );
       const amountLabel = fmtAmount(
-        action === "mark_paid" ? enr.amount_paid ?? event.price : event.price,
+        action === "mark_paid" ? enr.amount_paid ?? due : due,
         event.currency,
         locale,
       );
@@ -437,4 +498,5 @@ type EventShape = {
   end_date: string | null;
   currency: string | null;
   price: number | string | null;
+  price_tiers?: PriceTier[] | null;
 };

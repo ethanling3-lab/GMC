@@ -11,6 +11,7 @@ import {
   type RejectReason,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
+import { enrollmentAmountDue } from "@/lib/pricing/tiers";
 import { writeAuditLog } from "@/lib/audit";
 import { participantEmailLocale } from "@/lib/i18n";
 import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
@@ -30,6 +31,7 @@ type EnrichedRow = {
   payment_status: string;
   payment_method: string | null;
   amount_paid: number | string | null;
+  amount_due?: number | string | null;
   reject_reason?: string | null;
   reject_note?: string | null;
   participant: {
@@ -68,7 +70,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   // Pull enrolment + participant + event. Fall back when migration 011
   // isn't applied yet (no reject_reason / reject_note columns).
   const baseSelect =
-    "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)";
+    "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)";
   const fullSelect = `${baseSelect}, reject_reason, reject_note`;
 
   let res = await service
@@ -109,7 +111,11 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   try {
     if (row.status === "approved") {
       const token = createPaymentAccessToken(row.id, PAYMENT_TOKEN_TTL_MS);
-      const amountLabel = fmtAmount(row.event.price, row.event.currency, locale);
+      const amountLabel = fmtAmount(
+        enrollmentAmountDue(row, row.event),
+        row.event.currency,
+        locale,
+      );
       await notifyApproved({
         enrollment: enr,
         participant: row.participant,
@@ -120,7 +126,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       template = "enrollment_approved";
     } else if (row.status === "paid") {
       const amountLabel = fmtAmount(
-        row.amount_paid ?? row.event.price,
+        row.amount_paid ?? enrollmentAmountDue(row, row.event),
         row.event.currency,
         locale,
       );

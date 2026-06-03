@@ -149,6 +149,7 @@ type EnrolmentRow = {
   payment_status: string;
   payment_provider_id: string | null;
   amount_paid: number | string | null;
+  amount_due: number | string | null;
   approved_at: string | null;
   paid_at: string | null;
   event: {
@@ -209,9 +210,11 @@ function toCandidate(
     expected_amount:
       e.amount_paid != null
         ? Number(e.amount_paid)
-        : e.event?.price != null
-          ? Number(e.event.price)
-          : null,
+        : e.amount_due != null
+          ? Number(e.amount_due)
+          : e.event?.price != null
+            ? Number(e.event.price)
+            : null,
     status: e.status,
     payment_status: e.payment_status,
     approved_at: e.approved_at,
@@ -244,9 +247,11 @@ function scoreByNameAmountDate(
   const expected =
     e.amount_paid != null
       ? Number(e.amount_paid)
-      : e.event?.price != null
-        ? Number(e.event.price)
-        : null;
+      : e.amount_due != null
+        ? Number(e.amount_due)
+        : e.event?.price != null
+          ? Number(e.event.price)
+          : null;
   if (expected == null || !Number.isFinite(expected) || expected <= 0) return null;
 
   const amountDelta = Math.abs(txn.amount - expected);
@@ -295,7 +300,7 @@ export async function matchBankTransaction(
   //     (pre-payment approved rows)
   // Tolerate older databases that don't have refund_amount yet.
   const selectCols =
-    "id, event_id, participant_id, status, payment_status, payment_provider_id, amount_paid, approved_at, paid_at, event:events(id, title_en, title_cn, currency, price), participant:participants(id, region_id, name_en, name_cn, region)";
+    "id, event_id, participant_id, status, payment_status, payment_provider_id, amount_paid, amount_due, approved_at, paid_at, event:events(id, title_en, title_cn, currency, price), participant:participants(id, region_id, name_en, name_cn, region)";
 
   const { data, error } = await service
     .from("enrollments")

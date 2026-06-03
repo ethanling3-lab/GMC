@@ -18,6 +18,7 @@ import {
   type RejectReason,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
+import { enrollmentAmountDue } from "@/lib/pricing/tiers";
 import { writeAuditLogBatch, type AuditAction } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
@@ -82,7 +83,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const { data: rows, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
     )
     .eq("event_id", eventId)
     .in("id", body.ids);
@@ -225,8 +226,12 @@ export async function POST(req: Request, { params }: RouteCtx) {
       payment_method: r.payment_method,
     };
     const currency = event.currency ?? "SGD";
+    const due = enrollmentAmountDue(
+      r as unknown as { amount_due?: number | string | null },
+      event,
+    );
     const amountLabel = fmtAmount(
-      body.action === "mark_paid" ? r.amount_paid ?? event.price : event.price,
+      body.action === "mark_paid" ? r.amount_paid ?? due : due,
       currency,
       participantEmailLocale(p),
     );

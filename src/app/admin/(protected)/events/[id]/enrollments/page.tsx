@@ -10,6 +10,7 @@ import {
   type ReferrerRef,
 } from "@/components/admin/events/EnrollmentsTable";
 import { EnrollmentsToolbar } from "@/components/admin/events/EnrollmentsToolbar";
+import type { PriceTier } from "@/lib/pricing/tiers";
 import { STATUS_LABEL as EVENT_STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
 import { checkCapacity } from "@/lib/event-capacity";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
@@ -55,13 +56,14 @@ export default async function EventEnrollmentsPage({
         end_date: string | null;
         capacity: number | null;
         form_schema?: unknown;
+        price_tiers?: PriceTier[] | null;
       }
     | null = null;
   {
     const primary = await supabase
       .from("events")
       .select(
-        "id, slug, title_en, title_cn, type, status, start_date, end_date, capacity, form_schema",
+        "id, slug, title_en, title_cn, type, status, start_date, end_date, capacity, form_schema, price_tiers",
       )
       .eq("id", eventId)
       .maybeSingle();
@@ -74,7 +76,7 @@ export default async function EventEnrollmentsPage({
         .eq("id", eventId)
         .maybeSingle();
       if (fallback.error) throw new Error(fallback.error.message);
-      event = fallback.data ? { ...fallback.data, form_schema: {} } : null;
+      event = fallback.data ? { ...fallback.data, form_schema: {}, price_tiers: [] } : null;
     } else {
       event = primary.data;
     }
@@ -117,7 +119,7 @@ export default async function EventEnrollmentsPage({
   // pull serving_as_zu_zhang + zu_zhang_tier_for_event for the per-row
   // 组长 chip.
   const enrollmentColsWithBoth = (participant: string) =>
-    `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, transfer_slip_url, transfer_slip_uploaded_at, pinned_group_no, serving_as_zu_zhang, zu_zhang_tier_for_event, participant:participants(${participant})`;
+    `id, status, payment_status, payment_method, amount_paid, amount_due, price_tier_key, paid_at, confirmed_at, approved_at, created_at, form_answers, transfer_slip_url, transfer_slip_uploaded_at, pinned_group_no, serving_as_zu_zhang, zu_zhang_tier_for_event, participant:participants(${participant})`;
   const enrollmentColsWithSchema = (participant: string) =>
     `id, status, payment_status, payment_method, amount_paid, paid_at, confirmed_at, approved_at, created_at, form_answers, participant:participants(${participant})`;
   const enrollmentColsLegacy = (participant: string) =>
@@ -413,6 +415,7 @@ export default async function EventEnrollmentsPage({
         canEdit={admin.role === "super_admin"}
         hasFilter={statusFilter !== null || q.length > 0}
         formSchema={event.form_schema ?? {}}
+        priceTiers={event.price_tiers ?? []}
         referrerById={referrerById}
         latestNotificationByEnrollment={latestNotificationByEnrollment}
       />

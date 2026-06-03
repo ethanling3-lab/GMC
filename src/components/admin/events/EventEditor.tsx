@@ -10,6 +10,12 @@ import type {
 } from "@/lib/events-shared";
 import { STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
 import { PAYMENT_METHODS } from "@/lib/event-update-schema";
+import {
+  PARTICIPANT_PRICE_CATEGORIES,
+  PRICE_CATEGORY_LABEL,
+  type PriceTier,
+  type ParticipantPriceCategory,
+} from "@/lib/pricing/tiers";
 import { PosterUploader } from "./PosterUploader";
 import { EventFormBuilder } from "./EventFormBuilder";
 
@@ -40,6 +46,8 @@ export type EventFull = {
   capacity: number | null;
   price: number | null;
   currency: string;
+  // Tiered pricing (migration 042). Empty ⇒ single-price mode (use `price`).
+  price_tiers: PriceTier[];
   payment_methods: string[];
   target_audience_filter: Record<string, unknown>;
   status: EventStatus;
@@ -286,6 +294,7 @@ export function EventEditor({
         capacity: draft.capacity,
         price: draft.price,
         currency: draft.currency,
+        price_tiers: draft.price_tiers ?? [],
         payment_methods: draft.payment_methods,
         target_audience_filter: targetFilter,
         requires_approval: draft.requires_approval,
@@ -899,6 +908,19 @@ export function EventEditor({
           </Field>
         </div>
 
+        <Field
+          label="Tiered pricing"
+          labelZh="分级定价"
+          hint="Optional. Add rows to charge different student categories different prices in this one event — the right tier is auto-applied from the participant's record. Leave empty to charge the single Price above for everyone."
+        >
+          <PriceTiersEditor
+            value={draft.price_tiers ?? []}
+            currency={draft.currency}
+            onChange={(next) => update("price_tiers", next)}
+            disabled={!canEdit}
+          />
+        </Field>
+
         <Field label="Payment methods" labelZh="支付方式">
           <div className="flex flex-wrap gap-2">
             {PAYMENT_METHODS.map((m) => {
@@ -1168,6 +1190,303 @@ function Field({
         </span>
       ) : null}
     </label>
+  );
+}
+
+// "Applies to" multi-select dropdown — sits beside the tier price. Shows
+// the selected categories as a summary on the trigger; opens a checkbox
+// popover. Closes on outside-click / Escape.
+function AppliesToDropdown({
+  value,
+  claimedTwice,
+  disabled,
+  onToggle,
+}: {
+  value: ParticipantPriceCategory[];
+  claimedTwice: Set<ParticipantPriceCategory>;
+  disabled: boolean;
+  onToggle: (cat: ParticipantPriceCategory) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const summary =
+    value.length === 0
+      ? "Applies to…"
+      : value.map((c) => PRICE_CATEGORY_LABEL[c].cn).join(", ");
+
+  return (
+    <div ref={ref} className="relative flex-1 min-w-0">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        title="Choose which student categories pay this price"
+        className={inputCls(
+          `w-full text-left pr-9 inline-flex items-center ${disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`,
+        )}
+      >
+        <span
+          className={`flex-1 truncate ${value.length === 0 ? "text-[var(--ink-faint)]" : "text-[var(--ink)]"}`}
+        >
+          {value.length === 0 ? "Select tiers…" : summary}
+        </span>
+      </button>
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--ink-mute)]"
+        viewBox="0 0 12 12"
+        fill="none"
+      >
+        <path
+          d="M2 4.5l4 4 4-4"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {open ? (
+        <div className="absolute left-0 top-full z-30 mt-1 w-full min-w-[240px] rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] p-1.5 shadow-[var(--shadow-pop,0_8px_24px_rgba(0,0,0,0.12))]">
+          {PARTICIPANT_PRICE_CATEGORIES.map((cat) => {
+            const on = value.includes(cat);
+            const dup = on && claimedTwice.has(cat);
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => onToggle(cat)}
+                title={dup ? "Also claimed by another tier — first row wins" : undefined}
+                className={`flex w-full items-center gap-2 h-8 px-2 rounded-[var(--radius-sm)] text-[12px] text-left transition-colors
+                  ${on ? "text-[var(--cinnabar-deep)]" : "text-[var(--ink-soft)]"}
+                  hover:bg-[var(--paper-deep)]/60`}
+              >
+                <span
+                  className={`inline-flex items-center justify-center w-4 h-4 rounded-[4px] border text-[10px]
+                    ${
+                      on
+                        ? dup
+                          ? "border-[var(--gold)]/70 bg-[var(--gold-soft)] text-[var(--ink)]"
+                          : "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                        : "border-[var(--paper-shadow)]"
+                    }`}
+                >
+                  {on ? "✓" : ""}
+                </span>
+                <span className="flex-1">
+                  {PRICE_CATEGORY_LABEL[cat].cn} · {PRICE_CATEGORY_LABEL[cat].en}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Editor for events.price_tiers JSONB (migration 042). A list of tier
+// rows — bilingual label, total amount, and the participant categories
+// the price applies to. Local row state is source of truth (same pattern
+// as DesignatedHotelsEditor) so empty rows don't vanish on re-render.
+// Each row keeps a stable `key` used to match enrollments.price_tier_key.
+function PriceTiersEditor({
+  value,
+  currency,
+  onChange,
+  disabled,
+}: {
+  value: PriceTier[];
+  currency: string;
+  onChange: (next: PriceTier[]) => void;
+  disabled: boolean;
+}) {
+  // A tier is defined by its categories ("applies to") + amount. The
+  // bilingual label is derived from the selected categories, so there are
+  // no separate label inputs.
+  type Row = {
+    rowId: string;
+    key: string;
+    amount: string; // string for free typing; parsed on emit
+    applies_to: ParticipantPriceCategory[];
+    custom_label: string; // shown only when "default" (其他) is selected
+  };
+  const [rows, setRows] = useState<Row[]>(() =>
+    (value ?? []).map((t, i) => ({
+      rowId: `r${i}`,
+      key: t.key,
+      amount: t.amount != null ? String(t.amount) : "",
+      applies_to: t.applies_to ?? [],
+      custom_label: t.custom_label ?? "",
+    })),
+  );
+
+  function emit(next: Row[]) {
+    const out: PriceTier[] = [];
+    for (const r of next) {
+      const amount = Number(r.amount);
+      if (r.applies_to.length === 0) continue;
+      if (!Number.isFinite(amount) || amount < 0) continue;
+      // "Everyone else" has no descriptive label — if admin named the tier,
+      // that custom label is the displayed label; otherwise derive from
+      // the selected categories.
+      const custom =
+        r.applies_to.includes("default") && r.custom_label.trim() !== ""
+          ? r.custom_label.trim()
+          : "";
+      const derived = r.applies_to
+        .map((c) => PRICE_CATEGORY_LABEL[c].cn)
+        .join(" / ");
+      const derivedEn = r.applies_to
+        .map((c) => PRICE_CATEGORY_LABEL[c].en)
+        .join(" / ");
+      out.push({
+        key: r.key,
+        label_cn: custom || derived,
+        label_en: custom || derivedEn,
+        amount,
+        applies_to: r.applies_to,
+        ...(custom ? { custom_label: custom } : {}),
+      });
+    }
+    onChange(out);
+  }
+
+  function updateRow(idx: number, patch: Partial<Row>) {
+    const next = rows.slice();
+    next[idx] = { ...next[idx], ...patch };
+    setRows(next);
+    emit(next);
+  }
+
+  function toggleCategory(idx: number, cat: ParticipantPriceCategory) {
+    const row = rows[idx];
+    const has = row.applies_to.includes(cat);
+    const applies_to = has
+      ? row.applies_to.filter((c) => c !== cat)
+      : [...row.applies_to, cat];
+    updateRow(idx, { applies_to });
+  }
+
+  function removeRow(idx: number) {
+    const next = rows.slice();
+    next.splice(idx, 1);
+    setRows(next);
+    emit(next);
+  }
+
+  function addRow() {
+    setRows((prev) => [
+      ...prev,
+      {
+        rowId: `r${Date.now()}`,
+        key: `tier-${Date.now()}`,
+        amount: "",
+        applies_to: [],
+        custom_label: "",
+      },
+    ]);
+    // Don't emit — an empty row contributes nothing until admin fills it.
+  }
+
+  // First matching tier wins at checkout; flag a category claimed twice.
+  const claimedTwice = new Set<ParticipantPriceCategory>();
+  const seen = new Set<ParticipantPriceCategory>();
+  for (const r of rows) {
+    for (const c of r.applies_to) {
+      if (seen.has(c)) claimedTwice.add(c);
+      else seen.add(c);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {rows.length === 0 ? (
+        <p className="text-[12px] text-[var(--ink-faint)] italic">
+          No tiers — everyone pays the single Price above.
+        </p>
+      ) : null}
+      {rows.map((r, i) => (
+        <div
+          key={r.rowId}
+          className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] p-2.5"
+        >
+          <div className="flex items-center gap-2">
+            <AppliesToDropdown
+              value={r.applies_to}
+              claimedTwice={claimedTwice}
+              disabled={disabled}
+              onToggle={(cat) => toggleCategory(i, cat)}
+            />
+            <span className="shrink-0 text-[11px] font-mono uppercase text-[var(--ink-faint)]">
+              {currency}
+            </span>
+            {/* Fixed-width wrapper so inputCls's `w-full` fills 120px instead of
+                fighting a `w-[120px]` on the same element (Tailwind width conflict). */}
+            <div className="w-[120px] shrink-0">
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                value={r.amount}
+                onChange={(e) => updateRow(i, { amount: e.target.value })}
+                disabled={disabled}
+                placeholder="865"
+                className={inputCls("tabular-nums")}
+              />
+            </div>
+            {!disabled ? (
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                aria-label="Remove tier"
+                title="Remove tier"
+                className="shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-[var(--radius-md)] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] hover:bg-[var(--paper-deep)]/60 transition-colors"
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
+            ) : null}
+          </div>
+          {/* "Everyone else" has no descriptive label — let admin name it. */}
+          {r.applies_to.includes("default") ? (
+            <input
+              type="text"
+              value={r.custom_label}
+              onChange={(e) => updateRow(i, { custom_label: e.target.value })}
+              disabled={disabled}
+              placeholder="Name this tier (其他 · e.g. 新人 / 老学员)"
+              className={inputCls("")}
+            />
+          ) : null}
+        </div>
+      ))}
+      {!disabled ? (
+        <button
+          type="button"
+          onClick={addRow}
+          className="self-start inline-flex items-center gap-1.5 h-8 px-3 rounded-[var(--radius-pill)] border border-dashed border-[var(--paper-shadow)] text-[11.5px] tracking-[0.06em] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)] transition-colors"
+        >
+          <span aria-hidden="true">＋</span>
+          Add tier
+        </button>
+      ) : null}
+    </div>
   );
 }
 

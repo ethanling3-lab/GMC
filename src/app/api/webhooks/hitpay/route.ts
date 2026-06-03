@@ -9,6 +9,7 @@ import {
   notifyPaymentReceived,
 } from "@/lib/enrollment-notifications";
 import { writeAuditLog } from "@/lib/audit";
+import { enrollmentAmountDue } from "@/lib/pricing/tiers";
 import { participantEmailLocale } from "@/lib/i18n";
 import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
 
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
   const { data: row, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, status, payment_status, amount_paid, payment_method, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
+      "id, event_id, status, payment_status, amount_paid, amount_due, payment_method, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
     )
     .eq("payment_provider_id", fields.payment_request_id)
     .maybeSingle();
@@ -199,7 +200,12 @@ export async function POST(req: Request) {
           participant,
           event,
           amountLabel: fmtAmount(
-            Number.isFinite(amountPaid) ? amountPaid : event.price,
+            Number.isFinite(amountPaid)
+              ? amountPaid
+              : enrollmentAmountDue(
+                  row as unknown as { amount_due?: number | string | null },
+                  event,
+                ),
             event.currency,
             locale,
           ),

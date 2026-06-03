@@ -4,6 +4,7 @@ import { PosterSlideshow } from "@/components/marketing/PosterSlideshow";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 import { TYPE_LABEL } from "@/lib/events-shared";
+import { lowestTierAmount, type PriceTier } from "@/lib/pricing/tiers";
 
 export const revalidate = 60;
 
@@ -33,6 +34,7 @@ type EventRow = {
   enrollment_closes_at: string | null;
   capacity: number | null;
   price: number | string | null;
+  price_tiers?: PriceTier[] | null;
   currency: string | null;
   status: string;
   requires_approval: boolean;
@@ -41,16 +43,25 @@ type EventRow = {
 async function loadEvent(slug: string): Promise<EventRow | null> {
   try {
     const supabase = createSupabaseServiceClient();
-    const { data, error } = await supabase
+    const base =
+      "slug, title_cn, title_en, heading_cn, heading_en, sub_heading_cn, sub_heading_en, body_cn, body_en, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_closes_at, capacity, price, currency, status, requires_approval";
+    let res = await supabase
       .from("events")
-      .select(
-        "slug, title_cn, title_en, heading_cn, heading_en, sub_heading_cn, sub_heading_en, body_cn, body_en, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_closes_at, capacity, price, currency, status, requires_approval",
-      )
+      .select(`${base}, price_tiers`)
       .eq("slug", slug)
       .eq("status", "open")
       .maybeSingle();
-    if (error || !data) return null;
-    return data as EventRow;
+    // Pre-042 fallback — drop price_tiers if the column doesn't exist yet.
+    if (res.error && (res.error as { code?: string }).code === "42703") {
+      res = await supabase
+        .from("events")
+        .select(base)
+        .eq("slug", slug)
+        .eq("status", "open")
+        .maybeSingle();
+    }
+    if (res.error || !res.data) return null;
+    return res.data as EventRow;
   } catch {
     return null;
   }
@@ -163,7 +174,15 @@ export default async function EventDetailPage({ params }: PageProps) {
         : "In person";
 
   const typeTxt = TYPE_LABEL[event.type][locale];
-  const priceTxt = fmtPrice(event.price, event.currency, locale);
+  // With tiered pricing, show "from <lowest tier>" since the exact amount
+  // depends on the participant's tier (resolved at checkout).
+  const lowest = lowestTierAmount(event);
+  const priceTxt =
+    lowest != null
+      ? locale === "zh"
+        ? `${fmtPrice(lowest, event.currency, locale)} 起`
+        : `from ${fmtPrice(lowest, event.currency, locale)}`
+      : fmtPrice(event.price, event.currency, locale);
   const capacityTxt =
     event.capacity && event.capacity > 0
       ? locale === "zh"
