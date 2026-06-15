@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useSelectedLayoutSegment } from "next/navigation";
 
 type NavItem = {
   href: string;
@@ -33,9 +33,14 @@ const UPCOMING: NavItem[] = [
   { href: "/admin/transfer-lists", label: "Transfer lists", labelZh: "接送列表", icon: "transfer" },
 ];
 
-function isActive(pathname: string, href: string): boolean {
-  if (href === "/admin") return pathname === "/admin";
-  return pathname === href || pathname.startsWith(href + "/");
+// Active detection reads the route SEGMENT one level below the (protected)
+// layout — deterministic on both server and client, so no hydration mismatch.
+// `usePathname()` is unreliable here (middleware request mutation + inbox
+// parallel routes); this is the Next-documented zero-hydration-risk pattern.
+// Every nav href is "/admin" or "/admin/<segment>", so:
+function isActive(segment: string | null, href: string): boolean {
+  if (href === "/admin") return segment === null;
+  return segment === href.slice("/admin/".length);
 }
 
 function NavIcon({ name }: { name: IconName }) {
@@ -201,7 +206,7 @@ function Item({
 }
 
 export function AdminNav({ collapsed = false }: { collapsed?: boolean }) {
-  const pathname = usePathname() ?? "";
+  const segment = useSelectedLayoutSegment();
 
   return (
     <nav
@@ -225,7 +230,7 @@ export function AdminNav({ collapsed = false }: { collapsed?: boolean }) {
             <li key={item.href}>
               <Item
                 item={item}
-                active={isActive(pathname, item.href)}
+                active={isActive(segment, item.href)}
                 collapsed={collapsed}
               />
             </li>
@@ -249,7 +254,7 @@ export function AdminNav({ collapsed = false }: { collapsed?: boolean }) {
             <li key={item.href}>
               <Item
                 item={item}
-                active={isActive(pathname, item.href)}
+                active={isActive(segment, item.href)}
                 collapsed={collapsed}
               />
             </li>

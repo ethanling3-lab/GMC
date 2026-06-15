@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSelectedLayoutSegment } from "next/navigation";
 import type { AdminContext } from "@/lib/admin-guard";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
@@ -19,13 +19,16 @@ const STORAGE_KEY = "gmc-admin-sidebar-collapsed";
 // `effective = userPref || isInboxRoute`. Auto-collapse never writes
 // localStorage — leaving inbox restores the user's saved width.
 //
-// Hydration safety: both auto-collapse and userPref-from-localStorage are
-// gated on a `mounted` flag that's only set post-mount. SSR + first client
-// render therefore agree (both compute false/false). After mount, both
-// kick in and the existing `transition-[width]` on Sidebar animates the
-// width change smoothly — reads as an intentional collapse, not a flash.
-// This sidesteps the prior fragility around middleware-header propagation
-// and `usePathname()` returning empty on first client render.
+// Hydration safety:
+//   - Auto-collapse on inbox reads `useSelectedLayoutSegment()` — the route
+//     segment is resolved from the server-rendered tree, so SSR + client agree
+//     and the inbox renders correctly-collapsed on first paint. This is the
+//     Next-documented zero-hydration-risk pattern; it replaced the fragile
+//     `usePathname()` approach (unreliable here due to middleware request
+//     mutation + the inbox `@sidebar`/`@list` parallel routes).
+//   - userPref-from-localStorage is still gated on a post-mount `mounted` flag
+//     because it's a genuinely client-only read; when it flips, the existing
+//     `transition-[width]` on Sidebar animates smoothly.
 //
 // The inbox sub-nav lives inside `inbox/layout.tsx` as an `@sidebar`
 // parallel slot scoped to inbox routes only — it unmounts cleanly when
@@ -41,6 +44,7 @@ export function AdminShell({
   const [userPref, setUserPref] = useState(false);
   const [mounted, setMounted] = useState(false);
   const pathname = usePathname();
+  const segment = useSelectedLayoutSegment();
 
   useEffect(() => {
     try {
@@ -52,12 +56,12 @@ export function AdminShell({
     setMounted(true);
   }, []);
 
-  // Both signals gated on `mounted` so SSR + first client render render
-  // an expanded nav (no auto-collapse, no localStorage read). After mount,
-  // userPref reflects saved state and isInboxRoute reflects the URL.
-  const isInboxRoute =
-    mounted && (pathname?.startsWith("/admin/inbox") ?? false);
-  const effectiveCollapsed = userPref || isInboxRoute;
+  // Auto-collapse on inbox reads the route SEGMENT (deterministic on server +
+  // client → renders correctly-collapsed on first paint, no width flash and no
+  // hydration mismatch). `userPref` stays gated on `mounted` because it's a
+  // genuinely client-only localStorage read.
+  const isInboxRoute = segment === "inbox";
+  const effectiveCollapsed = (mounted && userPref) || isInboxRoute;
 
   // Defensive cleanup on every route change. With React 19 transitions +
   // portaled dialog modals (createPortal to document.body), there's a small
