@@ -161,7 +161,18 @@ export default async function BroadcastDetailPage({ params, searchParams }: Page
           </div>
         </div>
         {canManage ? (
-          <BroadcastActionBar id={b.id} status={b.status} />
+          <div className="flex items-center gap-2 flex-wrap">
+            {b.status === "draft" || b.status === "scheduled" ? (
+              <Link
+                href={`/admin/broadcasts/${b.id}/edit`}
+                className="inline-flex items-center gap-2 px-4 h-9 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[12px] tracking-[0.06em] uppercase text-[var(--ink-soft)] hover:bg-[var(--paper-deep)] hover:text-[var(--ink)] transition-colors"
+                style={{ color: "var(--ink-soft)" }}
+              >
+                Edit · 编辑
+              </Link>
+            ) : null}
+            <BroadcastActionBar id={b.id} status={b.status} />
+          </div>
         ) : null}
       </div>
 

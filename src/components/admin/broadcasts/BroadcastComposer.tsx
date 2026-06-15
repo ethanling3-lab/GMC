@@ -66,50 +66,112 @@ const MOTIVATIONS: Array<{ value: string; label_en: string; label_cn: string }> 
   { value: "other", label_en: "Other", label_cn: "其他" },
 ];
 
+// When present, the composer edits an existing draft/scheduled broadcast
+// (PATCH) instead of creating a new one (POST). Populated by the edit page.
+export type ExistingBroadcast = {
+  id: string;
+  name: string;
+  channels: BroadcastChannel[];
+  audience_mode: "event_cohort" | "participant_master";
+  audience_filter: AudienceFilter;
+  whatsapp_template_name: string | null;
+  whatsapp_template_language: "en_US" | "zh_CN" | null;
+  whatsapp_template_params: Record<string, string> | null;
+  email_subject_en: string | null;
+  email_subject_cn: string | null;
+  email_body_en: string | null;
+  email_body_cn: string | null;
+  scheduled_for: string | null;
+};
+
+// ISO timestamp → value for <input type="datetime-local">. Timezone-dependent,
+// so this only ever runs client-side (in a mount effect) to avoid SSR/client
+// hydration mismatch on the seeded value.
+function toLocalDatetimeInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function BroadcastComposer({
   adminRegion,
   events,
+  existing,
 }: {
   adminRegion: string | null;
   events: EventOption[];
+  existing?: ExistingBroadcast;
 }) {
   const router = useRouter();
+  const isEdit = Boolean(existing);
 
-  const [name, setName] = useState("");
-  const [channels, setChannels] = useState<BroadcastChannel[]>(["whatsapp"]);
-  const [audienceMode, setAudienceMode] = useState<"event_cohort" | "participant_master">("event_cohort");
+  // Seed event-cohort / participant-master state from the existing filter
+  // when editing. Both branches are derived once for the useState initializers.
+  const ec =
+    existing && existing.audience_filter.mode === "event_cohort"
+      ? existing.audience_filter
+      : null;
+  const pm =
+    existing && existing.audience_filter.mode === "participant_master"
+      ? existing.audience_filter
+      : null;
+
+  const [name, setName] = useState(existing?.name ?? "");
+  const [channels, setChannels] = useState<BroadcastChannel[]>(existing?.channels ?? ["whatsapp"]);
+  const [audienceMode, setAudienceMode] = useState<"event_cohort" | "participant_master">(
+    existing?.audience_mode ?? "event_cohort",
+  );
 
   // Event-cohort state
-  const [eventId, setEventId] = useState<string>(events[0]?.id ?? "");
-  const [enrollmentStatuses, setEnrollmentStatuses] = useState<EnrollmentStatusForBroadcast[]>([
-    "approved",
-    "paid",
-  ]);
-  const [languageFilter, setLanguageFilter] = useState<"" | "en" | "cn" | "both">("");
-  const [tagSlug, setTagSlug] = useState<string>("");
+  const [eventId, setEventId] = useState<string>(ec?.event_id ?? events[0]?.id ?? "");
+  const [enrollmentStatuses, setEnrollmentStatuses] = useState<EnrollmentStatusForBroadcast[]>(
+    ec?.enrollment_statuses ?? ["approved", "paid"],
+  );
+  const [languageFilter, setLanguageFilter] = useState<"" | "en" | "cn" | "both">(
+    ec?.language ?? "",
+  );
+  const [tagSlug, setTagSlug] = useState<string>(ec?.tag_slug ?? "");
 
   // Participant-master state
-  const [region, setRegion] = useState<string>(adminRegion ?? "");
-  const [masterStatuses, setMasterStatuses] = useState<string[]>(["active", "cs_enriched"]);
-  const [motivation, setMotivation] = useState<string>("");
-  const [programmeTier, setProgrammeTier] = useState<string>("");
-  const [isOldStudent, setIsOldStudent] = useState<"" | "true" | "false">("");
+  const [region, setRegion] = useState<string>(pm ? (pm.region ?? "") : (adminRegion ?? ""));
+  const [masterStatuses, setMasterStatuses] = useState<string[]>(
+    pm?.status ?? ["active", "cs_enriched"],
+  );
+  const [motivation, setMotivation] = useState<string>(pm?.motivation ?? "");
+  const [programmeTier, setProgrammeTier] = useState<string>(pm?.programme_tier ?? "");
+  const [isOldStudent, setIsOldStudent] = useState<"" | "true" | "false">(
+    pm ? (pm.is_old_student === null ? "" : pm.is_old_student ? "true" : "false") : "",
+  );
 
   // WhatsApp content
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateSummary | null>(null);
-  const [templateLanguage, setTemplateLanguage] = useState<"en_US" | "zh_CN">("zh_CN");
-  const [templateParams, setTemplateParams] = useState<Record<string, string>>({});
+  const [templateLanguage, setTemplateLanguage] = useState<"en_US" | "zh_CN">(
+    existing?.whatsapp_template_language ?? "zh_CN",
+  );
+  const [templateParams, setTemplateParams] = useState<Record<string, string>>(
+    existing?.whatsapp_template_params ?? {},
+  );
 
   // Email content
-  const [emailSubjectEn, setEmailSubjectEn] = useState("");
-  const [emailSubjectCn, setEmailSubjectCn] = useState("");
-  const [emailBodyEn, setEmailBodyEn] = useState("");
-  const [emailBodyCn, setEmailBodyCn] = useState("");
+  const [emailSubjectEn, setEmailSubjectEn] = useState(existing?.email_subject_en ?? "");
+  const [emailSubjectCn, setEmailSubjectCn] = useState(existing?.email_subject_cn ?? "");
+  const [emailBodyEn, setEmailBodyEn] = useState(existing?.email_body_en ?? "");
+  const [emailBodyCn, setEmailBodyCn] = useState(existing?.email_body_cn ?? "");
 
   // Send mode
-  const [sendMode, setSendMode] = useState<"now" | "schedule">("now");
+  const [sendMode, setSendMode] = useState<"now" | "schedule">(
+    existing?.scheduled_for ? "schedule" : "now",
+  );
   const [scheduledFor, setScheduledFor] = useState<string>("");
+
+  // Seed the schedule input client-side only (timezone-dependent → can't be a
+  // useState initializer without risking a hydration mismatch).
+  useEffect(() => {
+    if (existing?.scheduled_for) {
+      setScheduledFor(toLocalDatetimeInput(existing.scheduled_for));
+    }
+  }, [existing]);
 
   // Audience preview (debounced)
   const [preview, setPreview] = useState<{
@@ -147,6 +209,19 @@ export function BroadcastComposer({
       cancelled = true;
     };
   }, [channels, templates.length]);
+
+  // When editing, re-select the saved template object once the registry loads.
+  // Set directly (not via onSelect) so the saved template params are preserved.
+  const templateSeededRef = useRef(false);
+  useEffect(() => {
+    if (templateSeededRef.current) return;
+    if (!existing?.whatsapp_template_name || templates.length === 0) return;
+    const match = templates.find((t) => t.name === existing.whatsapp_template_name);
+    if (match) {
+      setSelectedTemplate(match);
+      templateSeededRef.current = true;
+    }
+  }, [templates, existing]);
 
   const filter: AudienceFilter = useMemo(() => {
     if (audienceMode === "event_cohort") {
@@ -264,19 +339,33 @@ export function BroadcastComposer({
         email_body_cn: emailBodyCn.trim() || null,
       };
 
-      const createRes = await fetch("/api/admin/broadcasts", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(createBody),
-      });
-      if (!createRes.ok) {
-        const body = (await createRes.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(body.detail ?? `Create failed (${createRes.status})`);
+      let targetId: string;
+      if (existing) {
+        const patchRes = await fetch(`/api/admin/broadcasts/${existing.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(createBody),
+        });
+        if (!patchRes.ok) {
+          const body = (await patchRes.json().catch(() => ({}))) as { detail?: string };
+          throw new Error(body.detail ?? `Save failed (${patchRes.status})`);
+        }
+        targetId = existing.id;
+      } else {
+        const createRes = await fetch("/api/admin/broadcasts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(createBody),
+        });
+        if (!createRes.ok) {
+          const body = (await createRes.json().catch(() => ({}))) as { detail?: string };
+          throw new Error(body.detail ?? `Create failed (${createRes.status})`);
+        }
+        targetId = ((await createRes.json()) as { id: string }).id;
       }
-      const created = (await createRes.json()) as { id: string };
 
       if (action === "send") {
-        const sendRes = await fetch(`/api/admin/broadcasts/${created.id}/send`, {
+        const sendRes = await fetch(`/api/admin/broadcasts/${targetId}/send`, {
           method: "POST",
         });
         if (!sendRes.ok && sendRes.status !== 202) {
@@ -285,7 +374,7 @@ export function BroadcastComposer({
         }
       } else if (action === "schedule") {
         const dt = new Date(scheduledFor);
-        const scheduleRes = await fetch(`/api/admin/broadcasts/${created.id}/schedule`, {
+        const scheduleRes = await fetch(`/api/admin/broadcasts/${targetId}/schedule`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ scheduled_for: dt.toISOString() }),
@@ -296,7 +385,8 @@ export function BroadcastComposer({
         }
       }
 
-      router.push(`/admin/broadcasts/${created.id}`);
+      router.push(`/admin/broadcasts/${targetId}`);
+      router.refresh();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Submit failed");
       setSubmitting(false);
@@ -683,7 +773,7 @@ export function BroadcastComposer({
             disabled={submitting}
             className="inline-flex items-center gap-2 px-4 h-10 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[12.5px] tracking-[0.06em] uppercase text-[var(--ink-soft)] hover:bg-[var(--paper-deep)] disabled:opacity-50 transition-colors"
           >
-            Save draft
+            {isEdit ? "Save changes" : "Save draft"}
           </button>
           {sendMode === "now" ? (
             <button
