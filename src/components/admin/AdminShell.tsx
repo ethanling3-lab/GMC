@@ -20,12 +20,14 @@ const STORAGE_KEY = "gmc-admin-sidebar-collapsed";
 // localStorage — leaving inbox restores the user's saved width.
 //
 // Hydration safety:
-//   - Auto-collapse on inbox reads `useSelectedLayoutSegment()` — the route
-//     segment is resolved from the server-rendered tree, so SSR + client agree
-//     and the inbox renders correctly-collapsed on first paint. This is the
-//     Next-documented zero-hydration-risk pattern; it replaced the fragile
-//     `usePathname()` approach (unreliable here due to middleware request
-//     mutation + the inbox `@sidebar`/`@list` parallel routes).
+//   - The active route segment is derived SERVER-SIDE from the `x-pathname`
+//     middleware header (`initialSegment` prop) and used for SSR + the first
+//     client render, so the HTML matches and there is no hydration mismatch.
+//     `useSelectedLayoutSegment()` is NOT trusted for the initial render: in
+//     this Next build it resolves to `null` during SSR, then the real segment
+//     on the client, which mismatched `aria-current` on every active nav link.
+//     After mount we switch to the live hook so client-side navigation updates
+//     the active link and inbox auto-collapse without a full request.
 //   - userPref-from-localStorage is still gated on a post-mount `mounted` flag
 //     because it's a genuinely client-only read; when it flips, the existing
 //     `transition-[width]` on Sidebar animates smoothly.
@@ -36,15 +38,22 @@ const STORAGE_KEY = "gmc-admin-sidebar-collapsed";
 
 export function AdminShell({
   admin,
+  initialSegment,
   children,
 }: {
   admin: AdminContext;
+  initialSegment: string | null;
   children: React.ReactNode;
 }) {
   const [userPref, setUserPref] = useState(false);
   const [mounted, setMounted] = useState(false);
   const pathname = usePathname();
-  const segment = useSelectedLayoutSegment();
+  const liveSegment = useSelectedLayoutSegment();
+
+  // Server + first client render use the server-derived `initialSegment` so
+  // the HTML matches exactly. Once mounted, the live hook takes over so
+  // client-side navigation updates the active link / inbox auto-collapse.
+  const segment = mounted ? liveSegment : initialSegment;
 
   useEffect(() => {
     try {
@@ -56,10 +65,10 @@ export function AdminShell({
     setMounted(true);
   }, []);
 
-  // Auto-collapse on inbox reads the route SEGMENT (deterministic on server +
-  // client → renders correctly-collapsed on first paint, no width flash and no
-  // hydration mismatch). `userPref` stays gated on `mounted` because it's a
-  // genuinely client-only localStorage read.
+  // Auto-collapse on inbox uses the same server-derived-then-live `segment`
+  // (correct on first paint → no width flash, no hydration mismatch).
+  // `userPref` stays gated on `mounted` because it's a genuinely client-only
+  // localStorage read.
   const isInboxRoute = segment === "inbox";
   const effectiveCollapsed = (mounted && userPref) || isInboxRoute;
 
@@ -94,7 +103,12 @@ export function AdminShell({
         className="min-h-[100dvh] flex bg-[var(--paper)]"
         data-hydrated={mounted ? "true" : "false"}
       >
-        <Sidebar admin={admin} collapsed={effectiveCollapsed} onToggle={toggle} />
+        <Sidebar
+          admin={admin}
+          segment={segment}
+          collapsed={effectiveCollapsed}
+          onToggle={toggle}
+        />
 
         <div className="flex-1 min-w-0 flex flex-col">
           <TopBar />

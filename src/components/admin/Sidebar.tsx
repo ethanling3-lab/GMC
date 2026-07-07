@@ -24,11 +24,12 @@ function initials(name: string | null, email: string): string {
 
 type SidebarProps = {
   admin: AdminContext;
+  segment: string | null;
   collapsed: boolean;
   onToggle: () => void;
 };
 
-export function Sidebar({ admin, collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ admin, segment, collapsed, onToggle }: SidebarProps) {
   const displayName = admin.name_en ?? admin.name_cn ?? admin.email;
 
   return (
@@ -138,7 +139,7 @@ export function Sidebar({ admin, collapsed, onToggle }: SidebarProps) {
       </div>
 
       {/* Nav fills */}
-      <AdminNav collapsed={collapsed} />
+      <AdminNav segment={segment} collapsed={collapsed} />
 
       {/* Profile card */}
       <div className="px-3 pb-4">

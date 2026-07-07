@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useSelectedLayoutSegment } from "next/navigation";
 
 type NavItem = {
   href: string;
@@ -18,6 +17,7 @@ type IconName =
   | "inbox"
   | "broadcasts"
   | "finance"
+  | "programmes"
   | "transfer";
 
 const PRIMARY: NavItem[] = [
@@ -26,6 +26,7 @@ const PRIMARY: NavItem[] = [
   { href: "/admin/broadcasts", label: "Broadcasts", labelZh: "群发", icon: "broadcasts" },
   { href: "/admin/participants", label: "Participants", labelZh: "学员", icon: "participants" },
   { href: "/admin/events", label: "Events", labelZh: "活动", icon: "events" },
+  { href: "/admin/programmes", label: "Programmes", labelZh: "课程", icon: "programmes" },
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance" },
 ];
 
@@ -33,10 +34,10 @@ const UPCOMING: NavItem[] = [
   { href: "/admin/transfer-lists", label: "Transfer lists", labelZh: "接送列表", icon: "transfer" },
 ];
 
-// Active detection reads the route SEGMENT one level below the (protected)
-// layout — deterministic on both server and client, so no hydration mismatch.
-// `usePathname()` is unreliable here (middleware request mutation + inbox
-// parallel routes); this is the Next-documented zero-hydration-risk pattern.
+// Active detection compares each nav href against the active route segment.
+// `segment` is supplied by AdminShell — server-derived from the `x-pathname`
+// header for SSR/first paint, then the live `useSelectedLayoutSegment()` after
+// mount — so server and client agree and there is no hydration mismatch.
 // Every nav href is "/admin" or "/admin/<segment>", so:
 function isActive(segment: string | null, href: string): boolean {
   if (href === "/admin") return segment === null;
@@ -103,6 +104,14 @@ function NavIcon({ name }: { name: IconName }) {
           <path d="M4 3.5h8M4 12.5h8" />
           <path d="M5 3.5v9M11 3.5v9" />
           <path d="M8 5.5v5M6.5 7h3M6.5 9h3" />
+        </svg>
+      );
+    case "programmes":
+      return (
+        <svg {...common}>
+          <path d="M8 2.5L14 5l-6 2.5L2 5z" />
+          <path d="M4.5 6.2v3.4c0 1 1.6 1.9 3.5 1.9s3.5-.9 3.5-1.9V6.2" />
+          <path d="M14 5v3.5" />
         </svg>
       );
     case "transfer":
@@ -205,9 +214,13 @@ function Item({
   );
 }
 
-export function AdminNav({ collapsed = false }: { collapsed?: boolean }) {
-  const segment = useSelectedLayoutSegment();
-
+export function AdminNav({
+  segment,
+  collapsed = false,
+}: {
+  segment: string | null;
+  collapsed?: boolean;
+}) {
   return (
     <nav
       className={`flex-1 py-5 flex flex-col gap-6 overflow-y-auto ${
