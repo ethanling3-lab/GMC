@@ -51,13 +51,6 @@ const ENROLLMENT_STATUSES: Array<{ value: EnrollmentStatusForBroadcast; label_en
 
 const REGIONS = ["MY", "SG", "TW", "HK", "CN"] as const;
 
-const PROGRAMME_TIERS: Array<{ value: string; label_cn: string }> = [
-  { value: "abundance", label_cn: "丰盛" },
-  { value: "glorious_family", label_cn: "荣贵" },
-  { value: "elite_cultural_heritage", label_cn: "精英文化财" },
-  { value: "glorious_cultural_heritage", label_cn: "荣耀文化财" },
-];
-
 const MOTIVATIONS: Array<{ value: string; label_en: string; label_cn: string }> = [
   { value: "clean", label_en: "Clean", label_cn: "干净" },
   { value: "insurance", label_en: "Insurance", label_cn: "保险" },
@@ -96,10 +89,12 @@ function toLocalDatetimeInput(iso: string): string {
 export function BroadcastComposer({
   adminRegion,
   events,
+  programmes,
   existing,
 }: {
   adminRegion: string | null;
   events: EventOption[];
+  programmes: Array<{ value: string; label_cn: string; label_en: string }>;
   existing?: ExistingBroadcast;
 }) {
   const router = useRouter();
@@ -578,7 +573,7 @@ export function BroadcastComposer({
                   className="w-full px-3 h-10 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[14px] text-[var(--ink)] focus:outline-none focus:border-[var(--cinnabar)] focus:ring-1 focus:ring-[var(--cinnabar)]/30"
                 >
                   <option value="">Any · 任意</option>
-                  {PROGRAMME_TIERS.map((t) => (
+                  {programmes.map((t) => (
                     <option key={t.value} value={t.value}>
                       {t.label_cn}
                     </option>

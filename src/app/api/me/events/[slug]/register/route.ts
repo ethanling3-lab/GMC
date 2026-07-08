@@ -3,7 +3,7 @@ import { requireParticipant } from "@/lib/participant-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { isEventFull } from "@/lib/event-capacity";
 import { createPaymentAccessToken } from "@/lib/tokens";
-import { resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
+import { resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,7 +30,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   const service = createSupabaseServiceClient();
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price, price_tiers")
+    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers")
     .eq("slug", slug)
     .maybeSingle();
   if (!event) {
@@ -42,6 +42,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     capacity: number | null;
     requires_approval: boolean;
     price: number | string | null;
+    misc_fee: number | string | null;
     price_tiers: PriceTier[] | null;
   };
   if (ev.status !== "open") {
@@ -69,10 +70,10 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   // else new/returning). Falls back to the single event.price.
   const { data: pricing } = await service
     .from("participants")
-    .select("programme_tier, is_old_student")
+    .select("is_old_student, programme_expires_at, programmes(slug)")
     .eq("id", participant.id)
     .maybeSingle();
-  const tier = resolvePriceTier(ev, pricing ?? null);
+  const tier = resolvePriceTier(ev, pricingParticipantFromRow(pricing));
   const amountDue = tier
     ? tier.amount
     : ev.price != null && Number.isFinite(Number(ev.price))

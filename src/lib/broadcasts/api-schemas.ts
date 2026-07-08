@@ -32,12 +32,10 @@ const MotivationZ = z.enum([
   "other",
 ]);
 
-const ProgrammeTierZ = z.enum([
-  "abundance",
-  "glorious_family",
-  "elite_cultural_heritage",
-  "glorious_cultural_heritage",
-]);
+// Programme membership filter value — a programme SLUG (dynamic, from the
+// admin-managed programmes table). The 4 original tiers keep their slugs
+// (abundance / glorious_family / …) so existing stored broadcasts still match.
+const ProgrammeTierZ = z.string().min(1).max(50);
 
 const EventCohortFilterZ = z.object({
   mode: z.literal("event_cohort"),

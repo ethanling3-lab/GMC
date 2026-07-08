@@ -8,6 +8,7 @@ import {
   type ExistingBroadcast,
 } from "@/components/admin/broadcasts/BroadcastComposer";
 import type { AudienceFilter, BroadcastChannel, BroadcastStatus } from "@/lib/broadcasts/types";
+import { loadActiveProgrammes } from "@/lib/programmes/load";
 
 export const metadata: Metadata = { title: "Edit broadcast" };
 export const dynamic = "force-dynamic";
@@ -49,6 +50,12 @@ export default async function EditBroadcastPage({ params }: PageProps) {
     .select("id, title_en, title_cn, status, start_date, city, slug")
     .order("start_date", { ascending: false, nullsFirst: false })
     .limit(200);
+
+  const programmes = (await loadActiveProgrammes()).map((p) => ({
+    value: p.slug,
+    label_cn: p.name_cn,
+    label_en: p.name_en,
+  }));
 
   const existing: ExistingBroadcast = {
     id: b.id,
@@ -96,6 +103,7 @@ export default async function EditBroadcastPage({ params }: PageProps) {
         <BroadcastComposer
           adminRegion={admin.region}
           existing={existing}
+          programmes={programmes}
           events={(events ?? []) as Array<{
             id: string;
             title_en: string | null;

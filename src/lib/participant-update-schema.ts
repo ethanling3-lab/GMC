@@ -165,6 +165,11 @@ export const ParticipantUpdateSchema = z
     has_special_contribution: z.boolean().optional(),
     upgrade_potential: z.union([z.enum(UPGRADE_POTENTIALS), z.null()]).optional(),
     programme_tier: z.union([z.enum(PROGRAMME_TIERS), z.null()]).optional(),
+    // Migration 043 — dynamic programme membership. `programme_id` is the FK;
+    // `programme_started_at` is an optional admin override of the validity
+    // anchor (else the PATCH route auto-anchors to the latest paid enrolment).
+    programme_id: z.union([z.string().uuid(), z.null()]).optional(),
+    programme_started_at: z.union([z.string(), z.null()]).optional(),
 
     // M6.8 profile-deck fields.
     dharma_name: optionalString,
@@ -250,6 +255,8 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "has_special_contribution",
   "upgrade_potential",
   "programme_tier",
+  "programme_id",
+  "programme_started_at",
   "dharma_name",
   "religion",
   "attended_courses",

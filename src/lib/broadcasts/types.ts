@@ -96,12 +96,9 @@ export type ParticipantMasterFilter = {
   require_any_of_channels: BroadcastChannel[] | null;
 };
 
-// Mirror of public.programme_tier (023_programme_tier.sql).
-export type BroadcastProgrammeTier =
-  | "abundance"
-  | "glorious_family"
-  | "elite_cultural_heritage"
-  | "glorious_cultural_heritage";
+// A programme SLUG from the admin-managed programmes table (dynamic). The 4
+// original tiers keep their slugs, so this stays string-typed.
+export type BroadcastProgrammeTier = string;
 
 export type AudienceFilter = EventCohortFilter | ParticipantMasterFilter;
 

@@ -14,7 +14,7 @@ import {
   notifyPaymentReceived,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
-import { resolvePriceTier } from "@/lib/pricing/tiers";
+import { resolvePriceTier, pricingParticipantFromRow } from "@/lib/pricing/tiers";
 import { writeAuditLog } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
@@ -90,7 +90,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const { data: event, error: eventErr } = await service
     .from("events")
     .select(
-      "id, slug, status, requires_approval, capacity, currency, price, price_tiers, title_en, title_cn, start_date, end_date",
+      "id, slug, status, requires_approval, capacity, currency, price, misc_fee, price_tiers, title_en, title_cn, start_date, end_date",
     )
     .eq("id", eventId)
     .maybeSingle();
@@ -172,10 +172,10 @@ export async function POST(req: Request, { params }: RouteCtx) {
   // else new/returning) so amount_due is correct. Falls back to event.price.
   const { data: pricingRow } = await service
     .from("participants")
-    .select("programme_tier, is_old_student")
+    .select("is_old_student, programme_expires_at, programmes(slug)")
     .eq("id", participantId)
     .maybeSingle();
-  const tier = resolvePriceTier(event, pricingRow ?? null);
+  const tier = resolvePriceTier(event, pricingParticipantFromRow(pricingRow));
   const amountDue = tier
     ? tier.amount
     : event.price != null && Number.isFinite(Number(event.price))

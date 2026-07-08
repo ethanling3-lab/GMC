@@ -7,6 +7,7 @@ import { upsertParticipant } from "@/lib/participants-write";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
 import { isEligibleVolunteer } from "@/lib/participant-recruit";
+import { resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
   // Load event.
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price")
+    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers")
     .eq("slug", body.event_slug)
     .maybeSingle();
   if (!event) {
@@ -74,6 +75,8 @@ export async function POST(req: Request) {
     capacity: number | null;
     requires_approval: boolean;
     price: number | string | null;
+    misc_fee: number | string | null;
+    price_tiers: PriceTier[] | null;
   };
   if (ev.status !== "open") {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
@@ -119,6 +122,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "already_enrolled" }, { status: 409 });
   }
 
+  // Resolve pricing for the new lead. A freshly-recruited lead has no
+  // programme, so this resolves to the new-student / default tier (parity
+  // with the public + logged-in register flows).
+  const tier = resolvePriceTier(ev, null);
+  const amountDue = tier
+    ? tier.amount
+    : ev.price != null && Number.isFinite(Number(ev.price))
+      ? Number(ev.price)
+      : null;
+
   const status = ev.requires_approval ? "pending_approval" : "approved";
   const { data: enrollment, error: insErr } = await service
     .from("enrollments")
@@ -128,6 +141,8 @@ export async function POST(req: Request) {
       status,
       payment_status: "none",
       recruited_via_portal: true,
+      price_tier_key: tier?.tier_key ?? null,
+      amount_due: amountDue,
       cs_followup_notes: `recruited via portal by ${volunteer.region_id ?? volunteer.id.slice(0, 8)}`,
     })
     .select("id")

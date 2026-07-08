@@ -12,7 +12,7 @@ import {
   type ParticipantInsertInput,
 } from "@/lib/participants-write";
 import { isEventFull } from "@/lib/event-capacity";
-import { resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
+import { resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
 
 export const runtime = "nodejs";
 
@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
         capacity: number | null;
         form_schema?: unknown;
         price?: number | string | null;
+        misc_fee?: number | string | null;
         price_tiers?: PriceTier[] | null;
       }
     | null = null;
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
     const primary = await supabase
       .from("events")
       .select(
-        "id, status, requires_approval, enrollment_closes_at, capacity, form_schema, price, price_tiers",
+        "id, status, requires_approval, enrollment_closes_at, capacity, form_schema, price, misc_fee, price_tiers",
       )
       .eq("slug", presliced.data.event_slug)
       .maybeSingle();
@@ -221,12 +222,12 @@ export async function POST(req: NextRequest) {
   if (tieredAvailable) {
     const { data: pricing } = await supabase
       .from("participants")
-      .select("programme_tier, is_old_student")
+      .select("is_old_student, programme_expires_at, programmes(slug)")
       .eq("id", participantId)
       .maybeSingle();
     const tier = resolvePriceTier(
-      { price: event.price, price_tiers: event.price_tiers },
-      pricing ?? null,
+      { price: event.price, misc_fee: event.misc_fee, price_tiers: event.price_tiers },
+      pricingParticipantFromRow(pricing),
     );
     priceTierKey = tier?.tier_key ?? null;
     amountDue = tier

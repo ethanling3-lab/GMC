@@ -5,7 +5,6 @@ import { CardShell } from "./CardShell";
 import { Empty } from "./Field";
 import { LabelRow, TextInput, Textarea } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
-import { PROGRAMME_TIER_LABEL } from "@/lib/grouping/types";
 import type { ProgrammeTier } from "@/lib/grouping/types";
 
 // M6.8 Profile card — what shows up on the per-participant briefing deck.
@@ -52,14 +51,6 @@ export type ProfileData = {
   // Internal admin notes
   cs_notes: string | null;
 };
-
-const PROGRAMME_OPTIONS: Array<{ value: ProgrammeTier | ""; label: string }> = [
-  { value: "", label: "—" },
-  { value: "abundance", label: "丰盛" },
-  { value: "glorious_family", label: "荣贵" },
-  { value: "elite_cultural_heritage", label: "精英文化财" },
-  { value: "glorious_cultural_heritage", label: "荣耀文化财" },
-];
 
 const INPUT_BASE =
   "h-9 px-3 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[14px] text-[var(--ink)] placeholder:text-[var(--ink-faint)] focus:border-[var(--cinnabar)]/50 focus:outline-none focus:shadow-[var(--shadow-focus)] transition-[border-color,box-shadow] duration-[var(--dur-fast)]";
@@ -302,22 +293,6 @@ export function ProfileEditor({
                       placeholder="丰盛系列 · Abundance Series"
                       className={`${INPUT_BASE} flex-1 min-w-0`}
                     />
-                    <select
-                      value={c.programme_tier ?? ""}
-                      onChange={(e) =>
-                        updateCourse(i, {
-                          programme_tier: (e.target.value ||
-                            null) as ProgrammeTier | null,
-                        })
-                      }
-                      className={`${INPUT_BASE} w-[140px]`}
-                    >
-                      {PROGRAMME_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
                     <input
                       type="text"
                       value={c.date ?? ""}
@@ -460,11 +435,6 @@ export function ProfileEditor({
                   <span className="flex-1 text-[16px] text-[var(--ink)] font-display tracking-[-0.005em]">
                     {c.course_name}
                   </span>
-                  {c.programme_tier ? (
-                    <span className="inline-flex items-center h-5 px-2.5 rounded-[var(--radius-pill)] bg-[var(--cinnabar-wash)] text-[11px] tracking-[0.12em] text-[var(--cinnabar-deep)]">
-                      {PROGRAMME_TIER_LABEL[c.programme_tier].cn}
-                    </span>
-                  ) : null}
                   {c.date ? (
                     <span className="text-[12px] font-mono tabular-nums text-[var(--ink-faint)]">
                       {c.date}

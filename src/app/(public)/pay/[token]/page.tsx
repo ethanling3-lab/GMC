@@ -43,6 +43,7 @@ type EnrollmentRow = {
     city: string | null;
     country: string | null;
     price: number | string | null;
+    misc_fee: number | string | null;
     currency: string | null;
     payment_methods: string[] | null;
     bank_details?: { en?: string; zh?: string } | null;
@@ -60,7 +61,7 @@ async function loadEnrollment(token: string): Promise<EnrollmentRow | null> {
     // back tier by tier. The page renders identically; just without the slip
     // upload UI on legacy schemas.
     const tiers: string[] = [
-      "id, status, payment_status, payment_method, amount_paid, amount_due, paid_at, transfer_slip_url, transfer_slip_uploaded_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
+      "id, status, payment_status, payment_method, amount_paid, amount_due, paid_at, transfer_slip_url, transfer_slip_uploaded_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, misc_fee, currency, payment_methods, bank_details)",
       "id, status, payment_status, payment_method, amount_paid, amount_due, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods, bank_details)",
       "id, status, payment_status, payment_method, amount_paid, paid_at, participant:participants(id, region_id, name_en, name_cn), event:events(id, slug, title_en, title_cn, poster_url, start_date, end_date, city, country, price, currency, payment_methods)",
     ];
@@ -168,11 +169,18 @@ export default async function PayPage({ params, searchParams }: PageProps) {
   const where = [event.city, event.country].filter(Boolean).join(" · ");
   // Prefer the per-enrollment resolved amount (tiered pricing); fall back
   // to the event's single price for legacy/single-price enrollments.
-  const price = fmtMoney(
-    enrollmentAmountDue(enrollment, event),
-    event.currency,
-    locale,
-  );
+  const totalDue = enrollmentAmountDue(enrollment, event);
+  const price = fmtMoney(totalDue, event.currency, locale);
+  // Breakdown: misc fee (会务费, everyone) + course fee (the rest). Derived
+  // from event.misc_fee + the stored total — only shown when a misc fee exists.
+  const miscFeeNum =
+    event.misc_fee != null && Number.isFinite(Number(event.misc_fee))
+      ? Number(event.misc_fee)
+      : 0;
+  const courseFeeNum = Math.max(0, totalDue - miscFeeNum);
+  const showFeeBreakdown = miscFeeNum > 0 && totalDue > 0;
+  const miscLabel = fmtMoney(miscFeeNum, event.currency, locale);
+  const courseLabel = fmtMoney(courseFeeNum, event.currency, locale);
 
   const alreadyPaid =
     enrollment.status === "paid" || enrollment.payment_status === "paid";
@@ -266,7 +274,21 @@ export default async function PayPage({ params, searchParams }: PageProps) {
                 {where ? <span className="text-[var(--ink-faint)]"> · {where}</span> : null}
               </div>
             ) : null}
-            <div className="mt-6 pt-5 border-t border-[var(--paper-shadow)] flex items-baseline justify-between gap-6 flex-wrap">
+            {showFeeBreakdown ? (
+              <div className="mt-6 pt-5 border-t border-[var(--paper-shadow)] flex flex-col gap-1.5 text-[13px] tabular-nums">
+                <div className="flex items-baseline justify-between gap-6">
+                  <span className="text-[var(--ink-mute)]">{locale === "zh" ? "会务费" : "Misc fee"}</span>
+                  <span className="text-[var(--ink-soft)]">{miscLabel}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-6">
+                  <span className="text-[var(--ink-mute)]">{locale === "zh" ? "课程费" : "Course fee"}</span>
+                  <span className="text-[var(--ink-soft)]">{courseLabel}</span>
+                </div>
+              </div>
+            ) : null}
+            <div
+              className={`${showFeeBreakdown ? "mt-2 pt-2 border-t" : "mt-6 pt-5 border-t"} border-[var(--paper-shadow)] flex items-baseline justify-between gap-6 flex-wrap`}
+            >
               <span className="text-[11px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
                 {locale === "zh" ? "应付金额" : "Amount due"}
               </span>

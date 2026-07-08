@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { BroadcastComposer } from "@/components/admin/broadcasts/BroadcastComposer";
+import { loadActiveProgrammes } from "@/lib/programmes/load";
 
 export const metadata: Metadata = { title: "New broadcast" };
 export const dynamic = "force-dynamic";
@@ -23,6 +24,12 @@ export default async function NewBroadcastPage() {
     .select("id, title_en, title_cn, status, start_date, city, slug")
     .order("start_date", { ascending: false, nullsFirst: false })
     .limit(200);
+
+  const programmes = (await loadActiveProgrammes()).map((p) => ({
+    value: p.slug,
+    label_cn: p.name_cn,
+    label_en: p.name_en,
+  }));
 
   return (
     <div>
@@ -45,6 +52,7 @@ export default async function NewBroadcastPage() {
       <section className="mt-10">
         <BroadcastComposer
           adminRegion={admin.region}
+          programmes={programmes}
           events={(events ?? []) as Array<{
             id: string;
             title_en: string | null;

@@ -33,6 +33,8 @@ import {
 import { StatusEditor } from "@/components/admin/participants/detail/StatusEditor";
 import { ActionsCard } from "@/components/admin/participants/detail/ActionsCard";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
+import { loadActiveProgrammes, loadProgrammeMap } from "@/lib/programmes/load";
+import type { ProgrammeOption } from "@/components/admin/participants/detail/ScoringEditor";
 
 export const metadata: Metadata = { title: "Participant" };
 export const dynamic = "force-dynamic";
@@ -63,6 +65,9 @@ type Participant = {
   upgrade_potential: UpgradePotential | null;
   times_led_groups: number;
   programme_tier: ProgrammeTier | null;
+  programme_id: string | null;
+  programme_started_at: string | null;
+  programme_expires_at: string | null;
   dharma_name: string | null;
   religion: string | null;
   attended_courses: AttendedCourse[] | null;
@@ -265,6 +270,35 @@ export default async function ParticipantDetailPage({ params }: Props) {
       ? `${p.region_id} · ${p.name_en ?? p.name_cn}`
       : p.name_en || p.name_cn || p.region_id || p.id.slice(0, 8);
 
+  // Programmes for the ScoringEditor dropdown: active list + the participant's
+  // current programme (even if since deactivated) so it stays selectable/shown.
+  const [activeProgrammes, programmeMap] = await Promise.all([
+    loadActiveProgrammes(),
+    loadProgrammeMap(),
+  ]);
+  const toOption = (pr: {
+    id: string;
+    name_en: string;
+    name_cn: string;
+    price_sgd: number;
+    on_site_sgd: number | null;
+    validity_months: number | null;
+    active: boolean;
+  }): ProgrammeOption => ({
+    id: pr.id,
+    name_en: pr.name_en,
+    name_cn: pr.name_cn,
+    price_sgd: pr.price_sgd,
+    on_site_sgd: pr.on_site_sgd,
+    validity_months: pr.validity_months,
+    active: pr.active,
+  });
+  const programmeOptions: ProgrammeOption[] = activeProgrammes.map(toOption);
+  const current = p.programme_id ? [...programmeMap.values()].find((pr) => pr.id === p.programme_id) : null;
+  if (current && !programmeOptions.some((o) => o.id === current.id)) {
+    programmeOptions.push(toOption(current));
+  }
+
   return (
     <div className="relative">
       <CrumbLabel segment={p.id} label={crumbLabel} />
@@ -385,12 +419,15 @@ export default async function ParticipantDetailPage({ params }: Props) {
 
           <ScoringEditor
             participantId={p.id}
+            programmes={programmeOptions}
             initial={{
               financial_score: p.financial_score,
               influence_score: p.influence_score,
               overall_score: p.overall_score,
               student_qualification: p.student_qualification,
-              programme_tier: p.programme_tier,
+              programme_id: p.programme_id,
+              programme_started_at: p.programme_started_at,
+              programme_expires_at: p.programme_expires_at,
               upgrade_potential: p.upgrade_potential,
               has_special_contribution: p.has_special_contribution ?? false,
             }}

@@ -11,13 +11,16 @@
 
 import { PROGRAMME_TIER_LABEL, type ProgrammeTier } from "@/lib/grouping/types";
 
-// The categories a tier can apply to: the 4 programme tiers + new/
-// returning + a catch-all `default`.
+// The categories a tier can apply to: a programme slug (now dynamic — any
+// programme created in the admin Programmes table) plus the fixed base
+// categories new/returning + a catch-all `default`. The `(string & {})`
+// keeps autocomplete for the known literals while allowing any slug.
 export type ParticipantPriceCategory =
-  | ProgrammeTier
   | "returning_student"
   | "new_student"
-  | "default";
+  | "default"
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  | (string & {});
 
 export const PARTICIPANT_PRICE_CATEGORIES: ParticipantPriceCategory[] = [
   "abundance",
@@ -69,10 +72,25 @@ export type PriceTier = {
 type EventLike = {
   price?: number | string | null;
   price_tiers?: PriceTier[] | null;
+  // Shared misc fee (会务费) everyone pays. A tier's `amount` is the per-tier
+  // COURSE FEE on top, so total = misc_fee + matched tier amount.
+  misc_fee?: number | string | null;
 };
 
+function miscOf(event: EventLike): number {
+  const m = Number(event.misc_fee ?? 0);
+  return Number.isFinite(m) ? m : 0;
+}
+
 type ParticipantLike = {
+  // Legacy enum — read as a fallback during the programme_tier→programmes
+  // transition. `programme_slug` (from the new programmes FK) takes priority.
   programme_tier?: ProgrammeTier | null;
+  programme_slug?: string | null;
+  // Frozen expiry of the participant's programme membership. When in the
+  // past, the programme is ignored and pricing reverts to new/returning.
+  // null ⇒ never expires.
+  programme_expires_at?: string | null;
   is_old_student?: boolean | null;
 };
 
@@ -81,12 +99,49 @@ type EnrollmentLike = {
   price_tier_key?: string | null;
 };
 
-/** Which pricing category does this participant fall into. */
+/**
+ * Which pricing category does this participant fall into. A participant with
+ * an active (non-expired) programme prices at that programme's slug; once the
+ * membership expires they revert to returning/new. `now` is injectable for
+ * tests/smoke.
+ */
 export function participantPriceCategory(
   p: ParticipantLike | null | undefined,
+  now: Date = new Date(),
 ): ParticipantPriceCategory {
-  if (p?.programme_tier) return p.programme_tier;
+  const slug = p?.programme_slug ?? p?.programme_tier ?? null;
+  const expired =
+    p?.programme_expires_at != null &&
+    new Date(p.programme_expires_at).getTime() <= now.getTime();
+  if (slug && !expired) return slug;
   return p?.is_old_student ? "returning_student" : "new_student";
+}
+
+/**
+ * Build the resolver input from a `participants` pricing row that embeds the
+ * programme slug, e.g.
+ *   .select("is_old_student, programme_expires_at, programmes(slug)")
+ * Falls back to the legacy `programme_tier` enum when the embed is absent.
+ * Tolerates the embed arriving as an object or a single-element array.
+ */
+export function pricingParticipantFromRow(
+  row:
+    | {
+        is_old_student?: boolean | null;
+        programme_expires_at?: string | null;
+        programme_tier?: string | null;
+        programmes?: { slug: string | null } | { slug: string | null }[] | null;
+      }
+    | null
+    | undefined,
+): ParticipantLike | null {
+  if (!row) return null;
+  const prog = Array.isArray(row.programmes) ? row.programmes[0] : row.programmes;
+  return {
+    is_old_student: row.is_old_student ?? null,
+    programme_expires_at: row.programme_expires_at ?? null,
+    programme_slug: prog?.slug ?? row.programme_tier ?? null,
+  };
 }
 
 function normalizeTiers(event: EventLike): PriceTier[] {
@@ -107,15 +162,17 @@ export function hasPriceTiers(event: EventLike): boolean {
 export function resolvePriceTier(
   event: EventLike,
   participant: ParticipantLike | null | undefined,
+  now: Date = new Date(),
 ): { tier_key: string; amount: number } | null {
   const tiers = normalizeTiers(event);
   if (tiers.length === 0) return null;
 
-  const category = participantPriceCategory(participant);
+  const category = participantPriceCategory(participant, now);
   const direct = tiers.find((t) => t.applies_to?.includes(category));
   const fallback = direct ?? tiers.find((t) => t.applies_to?.includes("default"));
   if (!fallback) return null;
-  return { tier_key: fallback.key, amount: Number(fallback.amount) };
+  // Total = shared misc fee + this tier's course fee.
+  return { tier_key: fallback.key, amount: miscOf(event) + Number(fallback.amount) };
 }
 
 /** Look up a tier row by key (e.g. to relabel an enrollment). */
@@ -142,10 +199,12 @@ export function enrollmentAmountDue(
   return price != null && Number.isFinite(Number(price)) ? Number(price) : 0;
 }
 
-/** Lowest tier amount, for a "from SGD X" display on listings. */
+/** Lowest total (misc + course) across tiers, for a "from SGD X" display. */
 export function lowestTierAmount(event: EventLike): number | null {
+  const misc = miscOf(event);
   const amounts = normalizeTiers(event)
     .map((t) => Number(t.amount))
-    .filter((n) => Number.isFinite(n) && n >= 0);
+    .filter((n) => Number.isFinite(n) && n >= 0)
+    .map((n) => misc + n);
   return amounts.length ? Math.min(...amounts) : null;
 }

@@ -216,7 +216,19 @@ async function loadParticipantMaster(
   }
 
   // Master-tab-specific filters not covered by ParticipantFilters:
-  if (filter.programme_tier) query = query.eq("programme_tier", filter.programme_tier);
+  // programme filter value is a programme SLUG. Resolve to the programme FK so
+  // newly-created programmes (no legacy enum value) still match; fall back to
+  // the legacy enum column if the slug doesn't resolve.
+  if (filter.programme_tier) {
+    const { data: prog } = await service
+      .from("programmes")
+      .select("id")
+      .eq("slug", filter.programme_tier)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (prog?.id) query = query.eq("programme_id", prog.id);
+    else query = query.eq("programme_tier", filter.programme_tier);
+  }
   if (filter.is_old_student !== null) query = query.eq("is_old_student", filter.is_old_student);
 
   // Email-required pre-filter (a cheap reducer before address resolution).

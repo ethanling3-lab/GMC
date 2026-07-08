@@ -11,8 +11,6 @@ import type {
 import { STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
 import { PAYMENT_METHODS } from "@/lib/event-update-schema";
 import {
-  PARTICIPANT_PRICE_CATEGORIES,
-  PRICE_CATEGORY_LABEL,
   type PriceTier,
   type ParticipantPriceCategory,
 } from "@/lib/pricing/tiers";
@@ -45,6 +43,8 @@ export type EventFull = {
   enrollment_closes_at: string | null;
   capacity: number | null;
   price: number | null;
+  // Shared misc fee (会务费) everyone pays; per-tier course fee on top.
+  misc_fee: number | null;
   currency: string;
   // Tiered pricing (migration 042). Empty ⇒ single-price mode (use `price`).
   price_tiers: PriceTier[];
@@ -151,15 +151,37 @@ type Props = {
   canEdit: boolean;
   canDelete: boolean;
   enrollmentCount: number;
+  // Active programmes (slug + bilingual name) for the price-tier "applies to"
+  // picker. Loaded server-side so newly-created programmes are priceable.
+  programmes: { slug: string; name_en: string; name_cn: string }[];
 };
+
+type PriceCategoryOption = { key: string; cn: string; en: string };
+
+// Base (non-programme) pricing categories, always available.
+const BASE_PRICE_CATEGORIES: PriceCategoryOption[] = [
+  { key: "returning_student", cn: "老学员", en: "Returning student" },
+  { key: "new_student", cn: "新人", en: "New student" },
+  { key: "default", cn: "其他", en: "Everyone else" },
+];
 
 export function EventEditor({
   event,
   canEdit,
   canDelete,
   enrollmentCount,
+  programmes,
 }: Props) {
   const router = useRouter();
+
+  // Programme slugs (dynamic) + the fixed base categories drive the
+  // price-tier "applies to" picker + its derived labels.
+  const priceCategories: PriceCategoryOption[] = [
+    ...programmes.map((p) => ({ key: p.slug, cn: p.name_cn, en: p.name_en })),
+    ...BASE_PRICE_CATEGORIES,
+  ];
+  const labelOfCategory = (key: string): { cn: string; en: string } =>
+    priceCategories.find((c) => c.key === key) ?? { cn: key, en: key };
   const [draft, setDraft] = useState(event);
   const [saving, setSaving] = useState(false);
   const [savingStatus, setSavingStatus] = useState(false);
@@ -293,6 +315,7 @@ export function EventEditor({
         enrollment_closes_at: draft.enrollment_closes_at,
         capacity: draft.capacity,
         price: draft.price,
+        misc_fee: draft.misc_fee ?? 0,
         currency: draft.currency,
         price_tiers: draft.price_tiers ?? [],
         payment_methods: draft.payment_methods,
@@ -906,18 +929,40 @@ export function EventEditor({
               className={inputCls("font-mono uppercase")}
             />
           </Field>
+          <Field
+            label="Misc fee"
+            labelZh="会务费"
+            hint="Everyone pays this. Each tier's course fee below is added on top."
+          >
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              // `|| ""` renders a 0 (the NOT-NULL column default) as a blank
+              // field so typing doesn't strand a leading "0" (e.g. "02323").
+              value={draft.misc_fee || ""}
+              onChange={(e) =>
+                update("misc_fee", e.target.value === "" ? 0 : Number(e.target.value))
+              }
+              disabled={!canEdit}
+              className={inputCls("tabular-nums")}
+            />
+          </Field>
         </div>
 
         <Field
-          label="Tiered pricing"
-          labelZh="分级定价"
-          hint="Optional. Add rows to charge different student categories different prices in this one event — the right tier is auto-applied from the participant's record. Leave empty to charge the single Price above for everyone."
+          label="Tiered pricing — course fee"
+          labelZh="分级定价 · 课程费"
+          hint="Optional. Each row sets the COURSE FEE (on top of the misc fee) for the chosen programme tiers — total = misc fee + course fee. The right tier is auto-applied from the participant's programme. Leave empty to charge the single Price above for everyone."
         >
           <PriceTiersEditor
             value={draft.price_tiers ?? []}
             currency={draft.currency}
+            miscFee={draft.misc_fee ?? 0}
             onChange={(next) => update("price_tiers", next)}
             disabled={!canEdit}
+            categories={priceCategories}
+            labelOf={labelOfCategory}
           />
         </Field>
 
@@ -1201,11 +1246,15 @@ function AppliesToDropdown({
   claimedTwice,
   disabled,
   onToggle,
+  categories,
+  labelOf,
 }: {
   value: ParticipantPriceCategory[];
   claimedTwice: Set<ParticipantPriceCategory>;
   disabled: boolean;
   onToggle: (cat: ParticipantPriceCategory) => void;
+  categories: PriceCategoryOption[];
+  labelOf: (key: string) => { cn: string; en: string };
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -1229,7 +1278,7 @@ function AppliesToDropdown({
   const summary =
     value.length === 0
       ? "Applies to…"
-      : value.map((c) => PRICE_CATEGORY_LABEL[c].cn).join(", ");
+      : value.map((c) => labelOf(c).cn).join(", ");
 
   return (
     <div ref={ref} className="relative flex-1 min-w-0">
@@ -1264,7 +1313,8 @@ function AppliesToDropdown({
       </svg>
       {open ? (
         <div className="absolute left-0 top-full z-30 mt-1 w-full min-w-[240px] rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] p-1.5 shadow-[var(--shadow-pop,0_8px_24px_rgba(0,0,0,0.12))]">
-          {PARTICIPANT_PRICE_CATEGORIES.map((cat) => {
+          {categories.map((opt) => {
+            const cat = opt.key;
             const on = value.includes(cat);
             const dup = on && claimedTwice.has(cat);
             return (
@@ -1290,7 +1340,7 @@ function AppliesToDropdown({
                   {on ? "✓" : ""}
                 </span>
                 <span className="flex-1">
-                  {PRICE_CATEGORY_LABEL[cat].cn} · {PRICE_CATEGORY_LABEL[cat].en}
+                  {labelOf(cat).cn} · {labelOf(cat).en}
                 </span>
               </button>
             );
@@ -1309,13 +1359,19 @@ function AppliesToDropdown({
 function PriceTiersEditor({
   value,
   currency,
+  miscFee,
   onChange,
   disabled,
+  categories,
+  labelOf,
 }: {
   value: PriceTier[];
   currency: string;
+  miscFee: number;
   onChange: (next: PriceTier[]) => void;
   disabled: boolean;
+  categories: PriceCategoryOption[];
+  labelOf: (key: string) => { cn: string; en: string };
 }) {
   // A tier is defined by its categories ("applies to") + amount. The
   // bilingual label is derived from the selected categories, so there are
@@ -1351,10 +1407,10 @@ function PriceTiersEditor({
           ? r.custom_label.trim()
           : "";
       const derived = r.applies_to
-        .map((c) => PRICE_CATEGORY_LABEL[c].cn)
+        .map((c) => labelOf(c).cn)
         .join(" / ");
       const derivedEn = r.applies_to
-        .map((c) => PRICE_CATEGORY_LABEL[c].en)
+        .map((c) => labelOf(c).en)
         .join(" / ");
       out.push({
         key: r.key,
@@ -1433,13 +1489,15 @@ function PriceTiersEditor({
               claimedTwice={claimedTwice}
               disabled={disabled}
               onToggle={(cat) => toggleCategory(i, cat)}
+              categories={categories}
+              labelOf={labelOf}
             />
             <span className="shrink-0 text-[11px] font-mono uppercase text-[var(--ink-faint)]">
               {currency}
             </span>
             {/* Fixed-width wrapper so inputCls's `w-full` fills 120px instead of
                 fighting a `w-[120px]` on the same element (Tailwind width conflict). */}
-            <div className="w-[120px] shrink-0">
+            <div className="w-[110px] shrink-0">
               <input
                 type="number"
                 step="0.01"
@@ -1447,10 +1505,16 @@ function PriceTiersEditor({
                 value={r.amount}
                 onChange={(e) => updateRow(i, { amount: e.target.value })}
                 disabled={disabled}
-                placeholder="865"
+                placeholder="course fee"
+                title="Course fee — added on top of the misc fee"
                 className={inputCls("tabular-nums")}
               />
             </div>
+            {Number.isFinite(Number(r.amount)) && r.amount !== "" ? (
+              <span className="shrink-0 text-[11px] tabular-nums text-[var(--ink-mute)] whitespace-nowrap">
+                = {currency} {(miscFee + Number(r.amount)).toLocaleString()}
+              </span>
+            ) : null}
             {!disabled ? (
               <button
                 type="button"

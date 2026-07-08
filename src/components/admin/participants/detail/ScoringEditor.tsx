@@ -2,19 +2,30 @@
 
 import { useState } from "react";
 import {
-  PROGRAMME_TIER_LABEL,
   STUDENT_QUALIFICATION_LABEL,
   scoreToQualification,
 } from "@/lib/grouping/types";
 import type {
-  ProgrammeTier,
   StudentQualification,
   UpgradePotential,
 } from "@/lib/grouping/types";
+import { validityLabel } from "@/lib/programmes/types";
 import { CardShell } from "./CardShell";
 import { ScoreBar } from "./ScoreBar";
 import { LabelRow, NumberInput, Toggle } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
+
+// The active programmes (+ the participant's current one even if since
+// deactivated) passed from the server parent for the dropdown + display.
+export type ProgrammeOption = {
+  id: string;
+  name_en: string;
+  name_cn: string;
+  price_sgd: number;
+  on_site_sgd: number | null;
+  validity_months: number | null;
+  active: boolean;
+};
 
 export type ScoringData = {
   financial_score: number | null;
@@ -27,13 +38,38 @@ export type ScoringData = {
   // factors warrant a downgrade (credit / legal / leverage issues) —
   // the underlying scores stay truthful.
   student_qualification: StudentQualification | null;
-  // Migration 023 / 032 — programme enrolment + upgrade potential.
-  programme_tier: ProgrammeTier | null;
+  // Migration 043 — programme membership (FK + frozen validity window).
+  programme_id: string | null;
+  programme_started_at: string | null;
+  programme_expires_at: string | null;
   upgrade_potential: UpgradePotential | null;
   // Migration 022 — moved here from ZuZhangProfileEditor since it's a
   // scoring-shaped signal (not a leader-role attribute).
   has_special_contribution: boolean;
 };
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-SG", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+// Bilingual validity status for the read view, given the frozen expiry +
+// the programme's validity term.
+function validityStatus(
+  expiresAt: string | null,
+  validityMonths: number | null,
+): { text: string; tone: "ok" | "warn" | "muted" } {
+  if (validityMonths == null) return { text: "No expiry · 永久有效", tone: "muted" };
+  if (!expiresAt) return { text: "Anchors on first payment · 付款后生效", tone: "warn" };
+  const expired = new Date(expiresAt).getTime() <= Date.now();
+  return expired
+    ? { text: `Expired ${fmtDate(expiresAt)} · 已过期（按新/老学员计价）`, tone: "warn" }
+    : { text: `Valid until ${fmtDate(expiresAt)} · 有效至`, tone: "ok" };
+}
 
 const QUALIFICATION_OPTIONS: Array<{
   value: StudentQualification | "";
@@ -45,14 +81,6 @@ const QUALIFICATION_OPTIONS: Array<{
   { value: "elite", label: "精英级 · Elite (3)" },
   { value: "excellence", label: "卓越级 · Excellence (4)" },
   { value: "strategic", label: "战略级 · Strategic (5)" },
-];
-
-const PROGRAMME_OPTIONS: Array<{ value: ProgrammeTier | ""; label: string }> = [
-  { value: "", label: "— Not enrolled in a programme" },
-  { value: "abundance", label: "丰盛 · Abundance" },
-  { value: "glorious_family", label: "荣贵 · Glorious Family" },
-  { value: "elite_cultural_heritage", label: "精英文化财 · Elite Cultural Heritage" },
-  { value: "glorious_cultural_heritage", label: "荣耀文化财 · Glorious Cultural Heritage" },
 ];
 
 const UPGRADE_OPTIONS: Array<{ value: UpgradePotential | ""; label: string }> = [
@@ -72,13 +100,20 @@ const SELECT_CLASS =
 export function ScoringEditor({
   participantId,
   initial,
+  programmes,
 }: {
   participantId: string;
   initial: ScoringData;
+  programmes: ProgrammeOption[];
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ScoringData>(initial);
   const { saving, error, setError, patch } = useParticipantPatch(participantId);
+
+  const programmeById = (id: string | null) =>
+    id ? programmes.find((p) => p.id === id) ?? null : null;
+  const initialProgramme = programmeById(initial.programme_id);
+  const draftProgramme = programmeById(draft.programme_id);
 
   function cancel() {
     setDraft(initial);
@@ -91,7 +126,10 @@ export function ScoringEditor({
       financial_score: draft.financial_score,
       influence_score: draft.influence_score,
       student_qualification: draft.student_qualification,
-      programme_tier: draft.programme_tier,
+      // Server derives the frozen validity window + legacy programme_tier
+      // enum from these. Empty start date ⇒ auto-anchor to latest paid enrol.
+      programme_id: draft.programme_id,
+      programme_started_at: draft.programme_started_at,
       upgrade_potential: draft.upgrade_potential,
       has_special_contribution: draft.has_special_contribution,
     });
@@ -129,22 +167,56 @@ export function ScoringEditor({
           <div className="grid md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-[var(--paper-shadow)]">
             <LabelRow label="Programme · 课程">
               <select
-                value={draft.programme_tier ?? ""}
-                onChange={(e) =>
+                value={draft.programme_id ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value || null;
                   setDraft({
                     ...draft,
-                    programme_tier:
-                      (e.target.value || null) as ProgrammeTier | null,
-                  })
-                }
+                    programme_id: id,
+                    // Clearing the programme clears the membership window.
+                    ...(id ? {} : { programme_started_at: null, programme_expires_at: null }),
+                  });
+                }}
                 className={SELECT_CLASS}
               >
-                {PROGRAMME_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
+                <option value="">— Not enrolled in a programme</option>
+                {programmes.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name_cn} · {p.name_en}
+                    {p.active ? "" : " (inactive)"}
                   </option>
                 ))}
               </select>
+              {draft.programme_id ? (
+                <div className="mt-2 space-y-1.5">
+                  <label className="block text-[11px] tracking-[0.04em] text-[var(--ink-mute)]">
+                    Member since · 入会日期{" "}
+                    <span className="text-[var(--ink-faint)]">(optional — blank auto-anchors to latest paid enrolment)</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={draft.programme_started_at ? draft.programme_started_at.slice(0, 10) : ""}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        programme_started_at: e.target.value
+                          ? new Date(e.target.value).toISOString()
+                          : null,
+                      })
+                    }
+                    className={SELECT_CLASS}
+                  />
+                  <p className="text-[11px] text-[var(--ink-faint)] leading-[1.5]">
+                    {draftProgramme
+                      ? `Validity: ${validityLabel(draftProgramme.validity_months)}. ${
+                          draftProgramme.validity_months == null
+                            ? "Never expires."
+                            : "Expiry is frozen at save (start + validity); a later payment won't extend it."
+                        }`
+                      : ""}
+                  </p>
+                </div>
+              ) : null}
             </LabelRow>
             <LabelRow label="Upgrade potential · 升级潜力">
               <select
@@ -260,14 +332,29 @@ export function ScoringEditor({
                 <span className="ml-1.5 text-[var(--ink-faint)]/70 normal-case tracking-[0.14em]">课程</span>
               </span>
               <span className="text-[14px] text-[var(--ink)] font-display tracking-[-0.005em]">
-                {initial.programme_tier
-                  ? `${PROGRAMME_TIER_LABEL[initial.programme_tier].cn} · ${PROGRAMME_TIER_LABEL[initial.programme_tier].en}`
+                {initialProgramme
+                  ? `${initialProgramme.name_cn} · ${initialProgramme.name_en}`
                   : "Not enrolled · 未报名课程"}
               </span>
-              {initial.programme_tier ? (
-                <span className="text-[11px] text-[var(--ink-faint)] tabular-nums">
-                  {fmtSgd(PROGRAMME_TIER_LABEL[initial.programme_tier].price_sgd)} (on-site {fmtSgd(PROGRAMME_TIER_LABEL[initial.programme_tier].on_site_sgd)})
-                </span>
+              {initialProgramme ? (
+                <>
+                  <span className="text-[11px] text-[var(--ink-faint)] tabular-nums">
+                    {fmtSgd(initialProgramme.price_sgd)}
+                    {initialProgramme.on_site_sgd != null
+                      ? ` (on-site ${fmtSgd(initialProgramme.on_site_sgd)})`
+                      : ""}
+                  </span>
+                  {(() => {
+                    const st = validityStatus(initial.programme_expires_at, initialProgramme.validity_months);
+                    const color =
+                      st.tone === "ok"
+                        ? "text-[#3a6b3b]"
+                        : st.tone === "warn"
+                          ? "text-[var(--cinnabar-deep)]"
+                          : "text-[var(--ink-faint)]";
+                    return <span className={`text-[11px] ${color}`}>{st.text}</span>;
+                  })()}
+                </>
               ) : null}
             </div>
             <div className="flex flex-col gap-1.5">

@@ -92,6 +92,8 @@ export const EventUpdateSchema = z
 
     capacity: z.number().int().min(0).max(10_000).nullable().optional(),
     price: z.number().min(0).max(1_000_000).nullable().optional(),
+    // Shared misc fee (会务费) everyone pays; per-tier course fee on top.
+    misc_fee: z.number().min(0).max(1_000_000).optional(),
     currency: z.string().length(3).optional(),
     payment_methods: z.array(z.enum(PAYMENT_METHODS)).optional(),
 
