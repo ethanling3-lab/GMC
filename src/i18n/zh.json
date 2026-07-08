@@ -21,11 +21,11 @@
   },
   "nav": {
     "about": "关于我们",
-    "programs": "课程项目",
+    "programs": "项目",
     "partners": "国际合作",
     "wugeApp": "吴歌 APP",
     "news": "动态",
-    "events": "活动"
+    "events": "课程"
   },
   "landing": {
     "eyebrow": "GMC · Glorious Melodies Consultancy",
@@ -33,7 +33,7 @@
     "heroSubheading": "将经典带入日常，以教育唤醒生命。",
     "heroBody": "GMC（Glorious Melodies Culture Education Singapore）总部位于新加坡，是一所立足亚洲、面向全球的教育与文化创新机构。我们致力于推动教育创新，促进人文交流与跨文化合作，为世界各地的学员带去智慧、启发与希望。",
     "ctaRegister": "立即报名",
-    "ctaEvents": "查看活动",
+    "ctaEvents": "查看课程",
     "ctaPrograms": "浏览课程",
     "missionEyebrow": "GMC 教育核心理念",
     "missionHeading": "知 · 行 · 觉 · 毅",

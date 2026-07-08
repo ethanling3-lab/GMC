@@ -508,7 +508,7 @@ function ExpiredShell({ locale }: { locale: "zh" | "en" }) {
           href="/events"
           className="mt-10 inline-flex items-center gap-2 h-11 px-5 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[13px] font-medium hover:bg-[var(--cinnabar-deep)] shadow-[0_4px_14px_rgba(37,99,235,0.28)] transition-[background-color] duration-[var(--dur-fast)]"
         >
-          {locale === "zh" ? "浏览活动" : "Browse events"}
+          {locale === "zh" ? "浏览课程" : "Browse courses"}
         </Link>
       </div>
     </div>

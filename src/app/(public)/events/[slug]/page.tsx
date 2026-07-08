@@ -112,7 +112,7 @@ function fmtPrice(
 export async function generateMetadata({ params }: PageProps) {
   const { slug } = await params;
   const event = await loadEvent(slug);
-  if (!event) return { title: "Events" };
+  if (!event) return { title: "Courses" };
   return {
     title:
       event.title_en ??
@@ -248,7 +248,7 @@ export default async function EventDetailPage({ params }: PageProps) {
           className="inline-flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-[var(--ink-mute)] hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)]"
         >
           <span aria-hidden="true">←</span>
-          {locale === "zh" ? "返回活动列表" : "All events"}
+          {locale === "zh" ? "返回课程列表" : "All courses"}
         </Link>
       </section>
 
@@ -571,7 +571,7 @@ export default async function EventDetailPage({ params }: PageProps) {
                          transition-[background-color,border-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
                          hover:bg-[var(--paper-warm)] hover:border-[var(--ink)]"
             >
-              {locale === "zh" ? "查看其他活动" : "Browse other events"}
+              {locale === "zh" ? "查看其他课程" : "Browse other courses"}
             </Link>
           </div>
         </div>

@@ -4,7 +4,7 @@ import { PagePreamble } from "@/components/marketing/PagePreamble";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 
-export const metadata = { title: "Events" };
+export const metadata = { title: "Courses" };
 export const revalidate = 60;
 
 async function loadOpenEvents(locale: "zh" | "en") {
@@ -57,8 +57,8 @@ export default async function EventsPage() {
   return (
     <>
       <PagePreamble
-        eyebrow={locale === "zh" ? "活动" : "Events"}
-        heading={locale === "zh" ? "近期活动与报名信息。" : "What's currently open."}
+        eyebrow={locale === "zh" ? "课程" : "Courses"}
+        heading={locale === "zh" ? "近期课程与报名信息。" : "What's currently open."}
         sub={locale === "zh" ? "查看近期开放报名的课程、工作坊与静修活动。" : "Browse upcoming courses, workshops, and retreats."}
       />
 
@@ -92,7 +92,7 @@ export default async function EventsPage() {
       <section className="mx-auto max-w-[1280px] px-6 md:px-10 pb-24">
         {events.length === 0 ? (
           <div className="py-16 text-center text-[var(--ink-mute)] bg-[var(--paper-warm)] border border-dashed border-[var(--paper-shadow)]">
-            <p className="text-[16px]">{locale === "zh" ? "目前暂无对外开放的活动。" : "No events are open for registration right now."}</p>
+            <p className="text-[16px]">{locale === "zh" ? "目前暂无对外开放的课程。" : "No courses are open for registration right now."}</p>
             <p className="mt-3 text-[13px]">
               {locale === "zh" ? "有问题？请先" : "Have a question? "}
               <Link href="/register" className="text-[var(--cinnabar)] underline underline-offset-4">

@@ -10,8 +10,8 @@ export function SiteFooter() {
 
   const colA = [
     { href: "/about", zh: "关于我们", en: "About" },
-    { href: "/programs", zh: "课程项目", en: "Programs" },
-    { href: "/events", zh: "活动", en: "Events" },
+    { href: "/programs", zh: "项目", en: "Programs" },
+    { href: "/events", zh: "课程", en: "Courses" },
   ];
   const colB = [
     { href: "/global-collaboration", zh: "国际合作", en: "Collaboration" },
