@@ -204,7 +204,7 @@ async function loadParticipantMaster(
   let query = service
     .from("participants")
     .select(
-      "id, name_cn, name_en, region_id, region, email, phone, language_fluency, status, is_old_student, programme_tier, archived_at, assigned_cs_id, motivation_tag, financial_score, influence_score",
+      "id, name_cn, name_en, region_id, region, email, phone, language_fluency, status, is_old_student, archived_at, assigned_cs_id, motivation_tag, financial_score, influence_score",
     )
     .limit(5000);
   query = applyParticipantFilters(query, pf);
@@ -216,9 +216,8 @@ async function loadParticipantMaster(
   }
 
   // Master-tab-specific filters not covered by ParticipantFilters:
-  // programme filter value is a programme SLUG. Resolve to the programme FK so
-  // newly-created programmes (no legacy enum value) still match; fall back to
-  // the legacy enum column if the slug doesn't resolve.
+  // programme filter value is a programme SLUG — resolve to the programme FK.
+  // No match (deleted/unknown slug) yields no rows, which is correct.
   if (filter.programme_tier) {
     const { data: prog } = await service
       .from("programmes")
@@ -226,8 +225,9 @@ async function loadParticipantMaster(
       .eq("slug", filter.programme_tier)
       .is("deleted_at", null)
       .maybeSingle();
-    if (prog?.id) query = query.eq("programme_id", prog.id);
-    else query = query.eq("programme_tier", filter.programme_tier);
+    query = prog?.id
+      ? query.eq("programme_id", prog.id)
+      : query.eq("programme_id", "00000000-0000-0000-0000-000000000000");
   }
   if (filter.is_old_student !== null) query = query.eq("is_old_student", filter.is_old_student);
 

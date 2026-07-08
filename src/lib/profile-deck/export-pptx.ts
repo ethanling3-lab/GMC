@@ -19,7 +19,6 @@ import type {
 } from "./types";
 import type {
   GroupClassKey,
-  ProgrammeTier,
   SeatRole,
 } from "@/components/admin/layout/types";
 
@@ -82,13 +81,6 @@ const REGION_NAME: Record<string, { en: string; cn: string }> = {
   TW: { en: "Taiwan", cn: "台湾" },
   HK: { en: "Hong Kong", cn: "香港" },
   CN: { en: "Mainland China", cn: "中国大陆" },
-};
-
-const PROGRAMME_LABEL: Record<ProgrammeTier, { en: string; cn: string }> = {
-  abundance: { en: "Abundance", cn: "丰盛" },
-  glorious_family: { en: "Glorious Family", cn: "荣贵" },
-  elite_cultural_heritage: { en: "Elite Cultural", cn: "精英文化财" },
-  glorious_cultural_heritage: { en: "Glorious Cultural", cn: "荣耀文化财" },
 };
 
 const CLASS_LABEL: Record<GroupClassKey, { en: string; cn: string }> = {
@@ -397,9 +389,11 @@ function buildParticipantSlide(
     });
   }
 
-  // ---- Programme tier badge (top-right) --------------------------------
-  if (row.programme_tier) {
-    const p = PROGRAMME_LABEL[row.programme_tier];
+  // ---- Programme badge (top-right) -------------------------------------
+  if (row.programme_name_cn || row.programme_name_en) {
+    const badgeLabel = [row.programme_name_cn, row.programme_name_en]
+      .filter(Boolean)
+      .join(" · ");
     slide.addShape("roundRect", {
       x: SLIDE_W - 2.5 - M,
       y: 0.8,
@@ -409,7 +403,7 @@ function buildParticipantSlide(
       line: { color: COLOR.paperShadow, width: 0.5 },
       rectRadius: 0.2,
     });
-    slide.addText(`${p.cn} · ${p.en}`, {
+    slide.addText(badgeLabel, {
       x: SLIDE_W - 2.5 - M,
       y: 0.83,
       w: 2.5,
@@ -843,7 +837,7 @@ function buildCompactCard(
   const chip2Y = innerY + chipH + 0.04;
   const chipSubH = 0.24;
   const chipGapX = 0.05;
-  const hasProgramme = !!row.programme_tier;
+  const hasProgramme = !!(row.programme_name_cn || row.programme_name_en);
   const chipW = hasProgramme
     ? (colW1 - chipGapX) / 2
     : colW1 * 0.65;
@@ -872,7 +866,7 @@ function buildCompactCard(
     valign: "middle",
   });
 
-  if (hasProgramme && row.programme_tier) {
+  if (hasProgramme) {
     const progChipX = col1X + chipW + chipGapX;
     slide.addShape("rect", {
       x: progChipX,
@@ -882,7 +876,7 @@ function buildCompactCard(
       fill: { color: COLOR.goldSoft },
       line: { color: COLOR.gold, width: 0.4 },
     });
-    slide.addText(PROGRAMME_LABEL[row.programme_tier].cn, {
+    slide.addText(row.programme_name_cn ?? row.programme_name_en ?? "", {
       x: progChipX,
       y: chip2Y,
       w: chipW,
@@ -1241,11 +1235,7 @@ function formatGender(g: string | null): string {
 function formatCourseList(list: AttendedCourse[]): string {
   if (!list || list.length === 0) return "—";
   return list
-    .map((c) => {
-      const tier = c.programme_tier ? PROGRAMME_LABEL[c.programme_tier].cn : null;
-      const tail = [tier, c.date].filter(Boolean).join(" · ");
-      return tail ? `${c.course_name} (${tail})` : c.course_name;
-    })
+    .map((c) => (c.date ? `${c.course_name} (${c.date})` : c.course_name))
     .join("   ·   ");
 }
 

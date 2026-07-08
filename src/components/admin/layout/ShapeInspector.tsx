@@ -7,7 +7,6 @@
 // Closing the panel (✕ or click empty canvas) clears selection.
 
 import {
-  PROGRAMME_ABBREV,
   SHAPE_LABEL_CN,
   SHAPE_LABEL_EN,
   type GroupRoster,
@@ -655,9 +654,7 @@ function AssignGroupField({
                   : m.role === "pai_zhang"
                   ? "排"
                   : null;
-              const programmeChar = m.programme_tier
-                ? PROGRAMME_ABBREV[m.programme_tier]
-                : null;
+              const programmeChar = m.programme_abbrev ?? null;
               return (
                 <li
                   key={m.participant_id}
@@ -700,7 +697,7 @@ function AssignGroupField({
                     <span
                       className="text-[9.5px] tracking-[0.16em] shrink-0"
                       style={{ color: "var(--ink-mute)" }}
-                      title={`Programme · ${m.programme_tier}`}
+                      title={`Programme · ${m.programme_name_cn ?? m.programme_slug ?? ""}`}
                     >
                       {programmeChar}
                     </span>

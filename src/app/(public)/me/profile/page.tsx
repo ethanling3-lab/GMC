@@ -105,11 +105,6 @@ export default async function MeProfilePage() {
                     {String(i + 1).padStart(2, "0")}
                   </span>
                   <span className="flex-1 text-[var(--ink)]">{c.course_name}</span>
-                  {c.programme_tier ? (
-                    <span className="text-[10.5px] tracking-[0.14em] uppercase text-[var(--cinnabar-deep)]">
-                      {c.programme_tier}
-                    </span>
-                  ) : null}
                   {c.date ? (
                     <span className="text-[10.5px] tabular-nums text-[var(--ink-mute)]">
                       {c.date}

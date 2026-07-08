@@ -19,7 +19,6 @@ import type {
   GroupClassKey,
   GroupRoster,
   GroupRosterMember,
-  ProgrammeTier,
   SeatRole,
 } from "@/components/admin/layout/types";
 import type { EventMeta } from "./export-pdf";
@@ -64,13 +63,6 @@ const ROLE_LABEL: Record<SeatRole, string> = {
   fu_zu_zhang: "副组长",
   pai_zhang: "排长",
   participant: "",
-};
-
-const PROGRAMME_LABEL: Record<ProgrammeTier, string> = {
-  abundance: "丰",
-  glorious_family: "贵",
-  elite_cultural_heritage: "精",
-  glorious_cultural_heritage: "耀",
 };
 
 // LAYOUT_WIDE = 13.333" × 7.5". Margins use a single unit (inches) so the
@@ -510,7 +502,7 @@ function buildMemberRow(m: GroupRosterMember, seatNo: number): PptxGenJSType.Tab
     cell(m.region_id ?? "—", { fontSize: 11, color: COLOR.inkSoft }),
     cell(m.name_cn ?? "—", { fontSize: 12, color: COLOR.ink, bold: true }),
     cell(m.name_en ?? "—", { fontSize: 11, color: COLOR.inkSoft }),
-    cell(m.programme_tier ? PROGRAMME_LABEL[m.programme_tier] : "", {
+    cell(m.programme_abbrev ?? "", {
       fontSize: 11,
       color: COLOR.cinnabar,
       bold: true,

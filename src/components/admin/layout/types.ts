@@ -66,20 +66,9 @@ export type GroupClassKey =
   | "growth"
   | "maintenance";
 
-export type ProgrammeTier =
-  | "abundance"
-  | "glorious_family"
-  | "elite_cultural_heritage"
-  | "glorious_cultural_heritage";
-
-// Single-character bilingual abbrev shown next to seat names. Maps to the
-// four GMC paid-programme tiers (丰盛 / 荣贵 / 精英文化财 / 荣耀文化财).
-export const PROGRAMME_ABBREV: Record<ProgrammeTier, string> = {
-  abundance: "丰",
-  glorious_family: "贵",
-  elite_cultural_heritage: "精",
-  glorious_cultural_heritage: "耀",
-};
+// Programme membership is now resolved dynamically from the `programmes`
+// table (slug + abbrev + bilingual name), joined at load time. The single-
+// character abbrev (e.g. 丰 / 贵 / 精 / 耀) rides on the member below.
 
 export type StudentQualificationKey =
   | "basic"
@@ -96,7 +85,10 @@ export type GroupRosterMember = {
   name_en: string | null;
   name_cn: string | null;
   role: SeatRole;
-  programme_tier: ProgrammeTier | null;
+  // Resolved from the participant's programmes join at load time.
+  programme_slug: string | null;
+  programme_abbrev: string | null;
+  programme_name_cn: string | null;
   is_old_student: boolean;
   // M6.6 chip-cluster signals (added 2026-05-09): drive the seat-name
   // chip row — gender (男/女), priority (战/卓 for excellence+), and

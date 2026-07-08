@@ -103,10 +103,10 @@ async function main() {
     // Build a synthetic participant record that resolves to this category.
     const p =
       cat === "returning_student"
-        ? { programme_tier: null, is_old_student: true }
+        ? { programme_slug: null, is_old_student: true }
         : cat === "new_student"
-          ? { programme_tier: null, is_old_student: false }
-          : { programme_tier: cat as Exclude<ParticipantPriceCategory, "returning_student" | "new_student" | "default">, is_old_student: false };
+          ? { programme_slug: null, is_old_student: false }
+          : { programme_slug: cat as string, is_old_student: false };
 
     const derivedCat = participantPriceCategory(p);
     const tier = resolvePriceTier(ev, p);

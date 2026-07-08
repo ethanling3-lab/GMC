@@ -33,7 +33,6 @@ export type SelfProfile = {
   front_photo_url: string | null;
   attended_courses: Array<{
     course_name: string;
-    programme_tier?: string | null;
     date?: string | null;
   }>;
 };

@@ -18,7 +18,6 @@ import { FaceReadingCard } from "@/components/admin/participants/detail/FaceRead
 import type { FaceMeasurements } from "@/lib/face-reading/archetypes";
 import type {
   GrowthDimension,
-  ProgrammeTier,
   StudentQualification,
   UpgradePotential,
   ZuZhangCoreTrait,
@@ -64,7 +63,6 @@ type Participant = {
   has_special_contribution: boolean;
   upgrade_potential: UpgradePotential | null;
   times_led_groups: number;
-  programme_tier: ProgrammeTier | null;
   programme_id: string | null;
   programme_started_at: string | null;
   programme_expires_at: string | null;

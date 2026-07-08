@@ -12,7 +12,6 @@ import type {
   GroupClassKey,
   GroupRoster,
   GroupRosterMember,
-  ProgrammeTier,
   SeatRole,
   Shape,
   SquareSeats,
@@ -164,7 +163,11 @@ export default async function LayoutPage({
     region_id: string | null;
     name_en: string | null;
     name_cn: string | null;
-    programme_tier: ProgrammeTier | null;
+    programme_id: string | null;
+    programmes:
+      | { slug: string | null; abbrev: string | null; name_cn: string | null }
+      | { slug: string | null; abbrev: string | null; name_cn: string | null }[]
+      | null;
     is_old_student: boolean | null;
     gender: string | null;
     student_qualification: "basic" | "rising" | "elite" | "excellence" | "strategic" | null;
@@ -180,7 +183,7 @@ export default async function LayoutPage({
     const { data: parts, error: pErr } = await supabase
       .from("participants")
       .select(
-        "id, region_id, name_en, name_cn, programme_tier, is_old_student, gender, student_qualification, upgrade_potential",
+        "id, region_id, name_en, name_cn, programme_id, programmes(slug, abbrev, name_cn), is_old_student, gender, student_qualification, upgrade_potential",
       )
       .in("id", participantIds)
       .returns<ParticipantLite[]>();
@@ -199,13 +202,16 @@ export default async function LayoutPage({
       .filter((a) => a.group_id === g.id)
       .map((a) => {
         const p = participantById.get(a.participant_id);
+        const prog = Array.isArray(p?.programmes) ? p?.programmes[0] : p?.programmes;
         return {
           participant_id: a.participant_id,
           region_id: p?.region_id ?? null,
           name_en: p?.name_en ?? null,
           name_cn: p?.name_cn ?? null,
           role: a.role,
-          programme_tier: p?.programme_tier ?? null,
+          programme_slug: prog?.slug ?? null,
+          programme_abbrev: prog?.abbrev ?? null,
+          programme_name_cn: prog?.name_cn ?? null,
           is_old_student: p?.is_old_student === true,
           gender: p?.gender ?? null,
           student_qualification: p?.student_qualification ?? null,

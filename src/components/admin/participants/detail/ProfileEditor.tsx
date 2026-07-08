@@ -5,7 +5,6 @@ import { CardShell } from "./CardShell";
 import { Empty } from "./Field";
 import { LabelRow, TextInput, Textarea } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
-import type { ProgrammeTier } from "@/lib/grouping/types";
 
 // M6.8 Profile card — what shows up on the per-participant briefing deck.
 // Owns ONLY deck-rendered fields. Identity facts (region / dharma /
@@ -25,7 +24,6 @@ import type { ProgrammeTier } from "@/lib/grouping/types";
 
 export type AttendedCourse = {
   course_name: string;
-  programme_tier?: ProgrammeTier | null;
   date?: string | null;
 };
 
@@ -77,7 +75,6 @@ export function ProfileEditor({
     const cleaned = draft.attended_courses
       .map((c) => ({
         course_name: c.course_name.trim(),
-        programme_tier: c.programme_tier ?? null,
         date: c.date?.trim() || null,
       }))
       .filter((c) => c.course_name !== "");
@@ -121,7 +118,7 @@ export function ProfileEditor({
       ...draft,
       attended_courses: [
         ...draft.attended_courses,
-        { course_name: "", programme_tier: null, date: null },
+        { course_name: "", date: null },
       ],
     });
   }

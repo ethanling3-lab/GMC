@@ -66,19 +66,6 @@ export type GroupClass = "strategic" | "key" | "growth" | "maintenance";
 
 export type UpgradePotential = "low" | "medium" | "high";
 
-// Programme tier — paid GMC course a student is enrolled in. Grants
-// entitlement to attend events for just the 会务 (misc fee). Pricing
-// (informational, not enforced):
-//   abundance                S$16,135 / on-site S$15,135
-//   glorious_family          S$38,135 / on-site S$36,135
-//   elite_cultural_heritage  S$70,000 / on-site S$65,000
-//   glorious_cultural_heritage S$104,000 / on-site S$96,000
-export type ProgrammeTier =
-  | "abundance"
-  | "glorious_family"
-  | "elite_cultural_heritage"
-  | "glorious_cultural_heritage";
-
 // Categorical core traits — admin picks which of these define the
 // group leader (multi-select). Used by future matching logic.
 export type ZuZhangCoreTrait =
@@ -373,34 +360,4 @@ export const ZU_ZHANG_TRAIT_LABEL: Record<
   adaptability: { en: "Adaptability", cn: "灵动性" },
   goal_orientation: { en: "Goal Orientation", cn: "目标性" },
   attention_to_detail: { en: "Attention to Detail", cn: "严谨性" },
-};
-
-export const PROGRAMME_TIER_LABEL: Record<
-  ProgrammeTier,
-  { en: string; cn: string; price_sgd: number; on_site_sgd: number }
-> = {
-  abundance: {
-    en: "Abundance",
-    cn: "丰盛",
-    price_sgd: 16135,
-    on_site_sgd: 15135,
-  },
-  glorious_family: {
-    en: "Glorious Family",
-    cn: "荣贵",
-    price_sgd: 38135,
-    on_site_sgd: 36135,
-  },
-  elite_cultural_heritage: {
-    en: "Elite Cultural Heritage",
-    cn: "精英文化财",
-    price_sgd: 70000,
-    on_site_sgd: 65000,
-  },
-  glorious_cultural_heritage: {
-    en: "Glorious Cultural Heritage",
-    cn: "荣耀文化财",
-    price_sgd: 104000,
-    on_site_sgd: 96000,
-  },
 };

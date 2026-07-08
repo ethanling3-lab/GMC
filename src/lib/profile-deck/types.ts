@@ -7,13 +7,11 @@
 
 import type {
   GroupClassKey,
-  ProgrammeTier,
   SeatRole,
 } from "@/components/admin/layout/types";
 
 export type AttendedCourse = {
   course_name: string;
-  programme_tier?: ProgrammeTier | null;
   date?: string | null;
 };
 
@@ -58,8 +56,9 @@ export type ProfileDeckRow = {
   recommended_courses: string | null;
   forbidden_courses: string | null;
   cs_evaluation: string | null;
-  // Programme + history
-  programme_tier: ProgrammeTier | null;
+  // Programme + history (resolved from the programmes join)
+  programme_name_en: string | null;
+  programme_name_cn: string | null;
   attended_courses: AttendedCourse[];
   // Visual asset
   front_photo_url: string | null;

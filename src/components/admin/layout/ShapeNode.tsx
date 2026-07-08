@@ -22,7 +22,6 @@ import { memo } from "react";
 import type { ReactNode } from "react";
 import type { DragHandle } from "./FloorPlanCanvas";
 import {
-  PROGRAMME_ABBREV,
   type GroupRoster,
   type GroupRosterMember,
   type Shape,
@@ -337,14 +336,16 @@ function memberFlags(member: GroupRosterMember): MemberChip[] {
   if (member.upgrade_potential === "high") {
     out.push({ char: "潜", tone: "premium-outline" });
   }
-  // 4. 已购 programme tier — 贵 / 耀 are premium (gold solid), 丰 / 精
-  //    are entry-level (informational neutral).
-  if (member.programme_tier) {
+  // 4. 已购 programme — 贵 / 耀 are premium (gold solid), others render
+  //    informational neutral. Abbrev comes from the programmes join; premium
+  //    is still keyed off the two legacy premium slugs (new dynamic
+  //    programmes render neutral until a premium flag is added).
+  if (member.programme_abbrev) {
     const isPremium =
-      member.programme_tier === "glorious_family" ||
-      member.programme_tier === "glorious_cultural_heritage";
+      member.programme_slug === "glorious_family" ||
+      member.programme_slug === "glorious_cultural_heritage";
     out.push({
-      char: PROGRAMME_ABBREV[member.programme_tier],
+      char: member.programme_abbrev,
       tone: isPremium ? "premium-solid" : "neutral-fill",
     });
   }

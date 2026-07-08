@@ -9,8 +9,6 @@
 // and persist the resolved amount on the enrollment. Empty `price_tiers`
 // ⇒ single-price mode (callers fall back to `event.price`).
 
-import { PROGRAMME_TIER_LABEL, type ProgrammeTier } from "@/lib/grouping/types";
-
 // The categories a tier can apply to: a programme slug (now dynamic — any
 // programme created in the admin Programmes table) plus the fixed base
 // categories new/returning + a catch-all `default`. The `(string & {})`
@@ -21,38 +19,6 @@ export type ParticipantPriceCategory =
   | "default"
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {});
-
-export const PARTICIPANT_PRICE_CATEGORIES: ParticipantPriceCategory[] = [
-  "abundance",
-  "glorious_family",
-  "elite_cultural_heritage",
-  "glorious_cultural_heritage",
-  "returning_student",
-  "new_student",
-  "default",
-];
-
-export const PRICE_CATEGORY_LABEL: Record<
-  ParticipantPriceCategory,
-  { en: string; cn: string }
-> = {
-  abundance: { en: PROGRAMME_TIER_LABEL.abundance.en, cn: PROGRAMME_TIER_LABEL.abundance.cn },
-  glorious_family: {
-    en: PROGRAMME_TIER_LABEL.glorious_family.en,
-    cn: PROGRAMME_TIER_LABEL.glorious_family.cn,
-  },
-  elite_cultural_heritage: {
-    en: PROGRAMME_TIER_LABEL.elite_cultural_heritage.en,
-    cn: PROGRAMME_TIER_LABEL.elite_cultural_heritage.cn,
-  },
-  glorious_cultural_heritage: {
-    en: PROGRAMME_TIER_LABEL.glorious_cultural_heritage.en,
-    cn: PROGRAMME_TIER_LABEL.glorious_cultural_heritage.cn,
-  },
-  returning_student: { en: "Returning student", cn: "老学员" },
-  new_student: { en: "New student", cn: "新人" },
-  default: { en: "Everyone else", cn: "其他" },
-};
 
 export type PriceTier = {
   key: string;
@@ -83,9 +49,7 @@ function miscOf(event: EventLike): number {
 }
 
 type ParticipantLike = {
-  // Legacy enum — read as a fallback during the programme_tier→programmes
-  // transition. `programme_slug` (from the new programmes FK) takes priority.
-  programme_tier?: ProgrammeTier | null;
+  // Programme membership resolved from the programmes FK.
   programme_slug?: string | null;
   // Frozen expiry of the participant's programme membership. When in the
   // past, the programme is ignored and pricing reverts to new/returning.
@@ -109,7 +73,7 @@ export function participantPriceCategory(
   p: ParticipantLike | null | undefined,
   now: Date = new Date(),
 ): ParticipantPriceCategory {
-  const slug = p?.programme_slug ?? p?.programme_tier ?? null;
+  const slug = p?.programme_slug ?? null;
   const expired =
     p?.programme_expires_at != null &&
     new Date(p.programme_expires_at).getTime() <= now.getTime();
@@ -121,7 +85,6 @@ export function participantPriceCategory(
  * Build the resolver input from a `participants` pricing row that embeds the
  * programme slug, e.g.
  *   .select("is_old_student, programme_expires_at, programmes(slug)")
- * Falls back to the legacy `programme_tier` enum when the embed is absent.
  * Tolerates the embed arriving as an object or a single-element array.
  */
 export function pricingParticipantFromRow(
@@ -129,7 +92,6 @@ export function pricingParticipantFromRow(
     | {
         is_old_student?: boolean | null;
         programme_expires_at?: string | null;
-        programme_tier?: string | null;
         programmes?: { slug: string | null } | { slug: string | null }[] | null;
       }
     | null
@@ -140,7 +102,7 @@ export function pricingParticipantFromRow(
   return {
     is_old_student: row.is_old_student ?? null,
     programme_expires_at: row.programme_expires_at ?? null,
-    programme_slug: prog?.slug ?? row.programme_tier ?? null,
+    programme_slug: prog?.slug ?? null,
   };
 }
 

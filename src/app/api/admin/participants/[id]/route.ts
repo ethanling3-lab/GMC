@@ -8,7 +8,6 @@ import { applyRoleScope } from "@/lib/participants-query";
 import {
   ParticipantUpdateSchema,
   SCOPED_ALLOWED_FIELDS,
-  PROGRAMME_TIERS,
   type ParticipantUpdate,
 } from "@/lib/participant-update-schema";
 import { writeAuditLog } from "@/lib/audit";
@@ -17,11 +16,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type RouteCtx = { params: Promise<{ id: string }> };
-
-// Slugs the legacy `programme_tier` enum can still represent. New dynamic
-// programmes have slugs outside this set — the enum is left null for them
-// (their FK `programme_id` is the source of truth).
-const LEGACY_PROGRAMME_SLUGS = new Set<string>(PROGRAMME_TIERS);
 
 function addMonths(iso: string, months: number): string {
   const d = new Date(iso);
@@ -89,20 +83,19 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     const programmeId = columnPatch.programme_id as string | null;
     if (!programmeId) {
       columnPatch.programme_id = null;
-      columnPatch.programme_tier = null;
       columnPatch.programme_started_at = null;
       columnPatch.programme_expires_at = null;
     } else {
       const { data: prog } = await service
         .from("programmes")
-        .select("slug, validity_months")
+        .select("validity_months")
         .eq("id", programmeId)
         .is("deleted_at", null)
         .maybeSingle();
       if (!prog) {
         return NextResponse.json({ error: "Programme not found" }, { status: 400 });
       }
-      const p = prog as { slug: string; validity_months: number | null };
+      const p = prog as { validity_months: number | null };
       let startedAt = (columnPatch.programme_started_at as string | null) ?? null;
       if (!startedAt) {
         const { data: paidRows } = await service
@@ -118,7 +111,6 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       columnPatch.programme_started_at = startedAt;
       columnPatch.programme_expires_at =
         p.validity_months == null ? null : addMonths(startedAt, p.validity_months);
-      columnPatch.programme_tier = LEGACY_PROGRAMME_SLUGS.has(p.slug) ? p.slug : null;
     }
   }
 

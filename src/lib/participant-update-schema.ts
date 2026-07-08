@@ -37,13 +37,6 @@ export const STUDENT_QUALIFICATIONS = [
 
 export const UPGRADE_POTENTIALS = ["low", "medium", "high"] as const;
 
-export const PROGRAMME_TIERS = [
-  "abundance",
-  "glorious_family",
-  "elite_cultural_heritage",
-  "glorious_cultural_heritage",
-] as const;
-
 export const ZU_ZHANG_CORE_TRAITS = [
   "logical_thinking",
   "social_intelligence",
@@ -55,15 +48,12 @@ export const ZU_ZHANG_CORE_TRAITS = [
 export const ENERGY_PROFILES = ["high", "medium", "quiet"] as const;
 export const LANGUAGE_FLUENCIES = ["en", "cn", "both"] as const;
 
-// M6.8 — profile-deck fields. attended_courses is admin-maintained;
-// each entry can carry an optional programme_tier tag + free-form date
-// (year-month or full date string — kept as text to absorb partial
-// dates like "2024-03").
+// M6.8 — profile-deck fields. attended_courses is admin-maintained; each
+// entry carries a course name + free-form date (year-month or full date
+// string — kept as text to absorb partial dates like "2024-03"). The legacy
+// per-course programme_tier tag was retired with the programme-enum cutover.
 const attendedCourseEntry = z.object({
   course_name: z.string().trim().min(1).max(200),
-  programme_tier: z
-    .union([z.enum(PROGRAMME_TIERS), z.null()])
-    .optional(),
   date: z
     .union([z.string().trim().max(20), z.null()])
     .optional(),
@@ -164,7 +154,6 @@ export const ParticipantUpdateSchema = z
       .optional(),
     has_special_contribution: z.boolean().optional(),
     upgrade_potential: z.union([z.enum(UPGRADE_POTENTIALS), z.null()]).optional(),
-    programme_tier: z.union([z.enum(PROGRAMME_TIERS), z.null()]).optional(),
     // Migration 043 — dynamic programme membership. `programme_id` is the FK;
     // `programme_started_at` is an optional admin override of the validity
     // anchor (else the PATCH route auto-anchors to the latest paid enrolment).
@@ -254,7 +243,6 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "student_qualification",
   "has_special_contribution",
   "upgrade_potential",
-  "programme_tier",
   "programme_id",
   "programme_started_at",
   "dharma_name",

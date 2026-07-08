@@ -70,7 +70,7 @@ export async function loadProfileDeck(
   const { data: parts, error: pErr } = await supabase
     .from("participants")
     .select(
-      "id, region, region_id, name_en, name_cn, dharma_name, gender, birth_date, occupation, industry, religion, is_old_student, cs_notes, programme_tier, attended_courses, front_photo_url, sub_region, training_level, health_status, family_situation, dietary_needs, interaction_notes, course_needs, suggested_group_leader_notes, recommended_courses, forbidden_courses, cs_evaluation, language_fluency, referrer_name, personality, upgrade_potential",
+      "id, region, region_id, name_en, name_cn, dharma_name, gender, birth_date, occupation, industry, religion, is_old_student, cs_notes, programme_id, programmes(name_en, name_cn), attended_courses, front_photo_url, sub_region, training_level, health_status, family_situation, dietary_needs, interaction_notes, course_needs, suggested_group_leader_notes, recommended_courses, forbidden_courses, cs_evaluation, language_fluency, referrer_name, personality, upgrade_potential",
     )
     .in("id", participantIds);
   if (pErr) throw new Error(pErr.message);
@@ -172,6 +172,7 @@ export async function loadProfileDeck(
   const rows: ProfileDeckRow[] = enrollments.map((e) => {
     const p = participantById.get(e.participant_id);
     const seat = seatByPid.get(e.participant_id);
+    const prog = Array.isArray(p?.programmes) ? p?.programmes[0] : p?.programmes;
     return {
       enrollment_id: e.id,
       participant_id: e.participant_id,
@@ -200,7 +201,8 @@ export async function loadProfileDeck(
       cs_evaluation: p?.cs_evaluation ?? null,
       language_fluency:
         (p?.language_fluency as "en" | "cn" | "both" | null | undefined) ?? null,
-      programme_tier: p?.programme_tier ?? null,
+      programme_name_en: prog?.name_en ?? null,
+      programme_name_cn: prog?.name_cn ?? null,
       attended_courses: Array.isArray(p?.attended_courses)
         ? (p!.attended_courses as AttendedCourse[])
         : [],
