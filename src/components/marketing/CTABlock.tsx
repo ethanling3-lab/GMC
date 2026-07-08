@@ -17,7 +17,10 @@ export function CTABlock({ eyebrow, heading, body, cta, secondary }: Props) {
           {heading}
         </h2>
         {body ? (
-          <p className="mt-6 text-[16px] md:text-[17px] leading-[1.7] text-[var(--ink-soft)] max-w-[640px] mx-auto">
+          <p
+            className="mt-6 text-[16px] md:text-[17px] leading-[1.7] text-[var(--ink-soft)] max-w-[640px] mx-auto"
+            style={{ marginInline: "auto" }}
+          >
             {body}
           </p>
         ) : null}
@@ -30,6 +33,7 @@ export function CTABlock({ eyebrow, heading, body, cta, secondary }: Props) {
                        transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
                        hover:-translate-y-[1px] hover:bg-[var(--cinnabar-deep)] hover:shadow-[0_10px_24px_rgba(37,99,235,0.38)]
                        active:translate-y-0"
+            style={{ color: "#ffffff" }}
           >
             {cta.label}
             <span

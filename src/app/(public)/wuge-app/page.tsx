@@ -37,6 +37,7 @@ export default async function WugeAppPage() {
                        transition-[transform,box-shadow] duration-[var(--dur-base)] ease-[var(--ease-spring)]
                        hover:-translate-y-[1px] hover:shadow-[var(--shadow-paper-2)]
                        active:translate-y-0"
+            style={{ color: "var(--paper-warm)" }}
           >
             App Store
             <span aria-hidden="true" className="w-4 h-px bg-current" />
@@ -45,7 +46,7 @@ export default async function WugeAppPage() {
             href="#"
             className="inline-flex items-center gap-3 h-12 px-6 border border-[var(--ink)] text-[var(--ink)] text-[13px] font-semibold tracking-[0.12em] uppercase
                        transition-[background-color,color,transform] duration-[var(--dur-base)] ease-[var(--ease-spring)]
-                       hover:bg-[var(--ink)] hover:text-[var(--paper-warm)]"
+                       hover:bg-[var(--ink)] hover:!text-[var(--paper-warm)]"
           >
             Google Play
           </a>

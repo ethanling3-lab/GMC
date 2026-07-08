@@ -106,6 +106,7 @@ export function VideoHero({ video }: Props) {
                          transition-[transform,box-shadow,background-color] duration-[var(--dur-base)] ease-[var(--ease-spring)]
                          hover:-translate-y-[1px] hover:bg-[var(--cinnabar-deep)] hover:shadow-[0_12px_30px_rgba(37,99,235,0.55)]
                          active:translate-y-0"
+              style={{ color: "#ffffff" }}
             >
               {t("landing.ctaRegister")}
               <span
@@ -120,6 +121,7 @@ export function VideoHero({ video }: Props) {
                          transition-[background-color,border-color,transform] duration-[var(--dur-base)] ease-[var(--ease-spring)]
                          hover:bg-[var(--paper-warm)]/10 hover:border-[var(--paper-warm)]
                          active:translate-y-[1px]"
+              style={{ color: "#ffffff" }}
             >
               {t("landing.ctaPrograms")}
             </Link>

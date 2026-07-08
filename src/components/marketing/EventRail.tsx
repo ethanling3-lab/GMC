@@ -55,9 +55,9 @@ export function EventRail({ items, eyebrow, heading, sub, viewAllHref, emptyLabe
   }
 
   return (
-    <section className="mx-auto max-w-[1440px] px-6 md:px-10 py-20 md:py-28">
-      <header className="flex flex-col md:flex-row md:items-end gap-6 pb-8 border-b border-[var(--paper-shadow)]">
-        <div className="max-w-[620px] flex-1">
+    <section className="mx-auto max-w-[1280px] px-6 md:px-10 py-20 md:py-28">
+      <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 pb-8 border-b border-[var(--paper-shadow)]">
+        <div className="max-w-[620px]">
           <span className="eyebrow">{eyebrow}</span>
           <h2 className="mt-4 font-display">{heading}</h2>
           {sub ? <p className="mt-4 text-[16px] leading-[1.7] text-[var(--ink-soft)]">{sub}</p> : null}
