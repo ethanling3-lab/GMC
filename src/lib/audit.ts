@@ -138,7 +138,19 @@ export type AuditAction =
   | "recording.access_granted"
   | "recording.access_revoked"
   | "recording.played"
-  | "recruit.lead_added";
+  | "recruit.lead_added"
+  | "assignment.created"
+  | "assignment.updated"
+  | "assignment.deleted"
+  | "submission.saved_draft"
+  | "submission.submitted"
+  | "group_report_template.created"
+  | "group_report_template.updated"
+  | "group_report_template.deleted"
+  | "event.group_report_template_changed"
+  | "group_report.saved_draft"
+  | "group_report.submitted"
+  | "group_report.exported_xlsx";
 
 export type WriteAuditLog = {
   actor_id: string | null;

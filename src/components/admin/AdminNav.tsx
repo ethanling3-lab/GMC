@@ -18,6 +18,7 @@ type IconName =
   | "broadcasts"
   | "finance"
   | "programmes"
+  | "reports"
   | "transfer";
 
 const PRIMARY: NavItem[] = [
@@ -26,6 +27,7 @@ const PRIMARY: NavItem[] = [
   { href: "/admin/broadcasts", label: "Broadcasts", labelZh: "群发", icon: "broadcasts" },
   { href: "/admin/participants", label: "Participants", labelZh: "学员", icon: "participants" },
   { href: "/admin/events", label: "Events", labelZh: "活动", icon: "events" },
+  { href: "/admin/group-reports", label: "Group reports", labelZh: "小组报告", icon: "reports" },
   { href: "/admin/programmes", label: "Programmes", labelZh: "课程", icon: "programmes" },
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance" },
 ];
@@ -121,6 +123,14 @@ function NavIcon({ name }: { name: IconName }) {
           <path d="M11 7h2l1 2v2h-3" />
           <circle cx="5" cy="12" r="1.2" />
           <circle cx="12" cy="12" r="1.2" />
+        </svg>
+      );
+    case "reports":
+      return (
+        <svg {...common}>
+          <path d="M4 2.5h5l3 3v8H4z" />
+          <path d="M9 2.5v3h3" />
+          <path d="M6 8h4M6 10.5h4" />
         </svg>
       );
   }

@@ -27,6 +27,13 @@ export default async function MeHomePage() {
 
       <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <DashCard
+          eyebrow="Courses · 课程"
+          title="My courses"
+          body="Watch recordings, submit homework & reports."
+          href="/me/courses"
+          highlight
+        />
+        <DashCard
           eyebrow="Profile · 资料"
           title="Your details"
           body="Name, contact, language, region."
