@@ -73,12 +73,16 @@ export async function GET(_req: Request, { params }: RouteCtx) {
       const primaryGoal = m.goal_dimensions[0];
       const secondaryGoal = m.goal_dimensions[1];
       rows.push({
+        // Human identity — this is how admins read + match people. Student ID
+        // (region_id) is the primary import key: unique, stable, readable.
+        "Student ID": m.region_id ?? "",
+        "Name CN": m.name_cn ?? "",
+        "Name EN": m.name_en ?? "",
         "Group #": g.group_no,
+        "Group Name EN": g.name_en ?? "",
+        "Group Name CN": g.name_cn ?? "",
         Class: `${GROUP_CLASS_LABEL[g.group_class].cn} · ${GROUP_CLASS_LABEL[g.group_class].en}`,
         Role: ROLE_LABEL[m.role] ?? m.role,
-        "Region ID": m.region_id ?? "",
-        "Name EN": m.name_en ?? "",
-        "Name CN": m.name_cn ?? "",
         Tier: tierLabel,
         Grade: m.zu_zhang_grade ?? "",
         Financial: m.financial_score ?? "",
@@ -95,18 +99,23 @@ export async function GET(_req: Request, { params }: RouteCtx) {
               ? `→ #${m.pinned_group_no}`
               : "",
         "Family Partners": m.family_partner_region_ids.join(" / "),
+        // Safety-net key, last column. Import prefers this uuid but falls
+        // back to Student ID, so admins can ignore (and never edit) it.
+        "Participant ID (do not edit)": m.participant_id,
       });
     }
   }
 
   const sheet = XLSX.utils.json_to_sheet(rows, {
     header: [
+      "Student ID",
+      "Name CN",
+      "Name EN",
       "Group #",
+      "Group Name EN",
+      "Group Name CN",
       "Class",
       "Role",
-      "Region ID",
-      "Name EN",
-      "Name CN",
       "Tier",
       "Grade",
       "Financial",
@@ -118,15 +127,17 @@ export async function GET(_req: Request, { params }: RouteCtx) {
       "Secondary Goal",
       "Pinned",
       "Family Partners",
+      "Participant ID (do not edit)",
     ],
   });
   // Reasonable starting column widths (XLSX still autosizes when admin
-  // double-clicks the column edge in Excel).
+  // double-clicks the column edge in Excel). Identity columns lead; the
+  // uuid safety-net column trails at the end.
   sheet["!cols"] = [
-    { wch: 8 }, { wch: 22 }, { wch: 14 }, { wch: 10 }, { wch: 22 },
-    { wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 9 }, { wch: 9 },
-    { wch: 22 }, { wch: 12 }, { wch: 5 }, { wch: 12 }, { wch: 12 },
-    { wch: 8 }, { wch: 28 },
+    { wch: 10 }, { wch: 16 }, { wch: 22 }, { wch: 8 }, { wch: 18 },
+    { wch: 16 }, { wch: 22 }, { wch: 14 }, { wch: 6 }, { wch: 6 },
+    { wch: 9 }, { wch: 9 }, { wch: 22 }, { wch: 12 }, { wch: 5 },
+    { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 28 }, { wch: 38 },
   ];
 
   const wb = XLSX.utils.book_new();

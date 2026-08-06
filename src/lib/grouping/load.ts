@@ -106,33 +106,37 @@ export async function loadGroupingInputs(
 
   let enrolmentRows = (enrolments ?? []).filter((e) => e.participant);
 
-  // Pass 2 — locked groups: read their assignments so we can exclude
-  // those participants from the to-be-assigned pool AND keep their
-  // group_no values reserved for the persist step.
-  const { data: lockedGroups, error: lgErr } = await supabase
+  // Pass 2 + migration 048 — PROTECTED groups (locked OR edited): read
+  // their assignments so we can exclude those participants from the
+  // to-be-assigned pool AND keep their group_no values reserved for the
+  // persist step. This MUST match persistGroupingResult's protected set
+  // (locked OR edited) — otherwise the algorithm re-groups a protected
+  // member whose assignment persist won't wipe, and the fresh insert
+  // collides on the unique (event_id, participant_id) constraint (a 500).
+  const { data: protectedGroups, error: lgErr } = await supabase
     .from("event_groups")
     .select("id, group_no")
     .eq("event_id", eventId)
-    .eq("locked", true)
+    .or("locked.eq.true,edited.eq.true")
     .returns<Array<{ id: string; group_no: number }>>();
-  if (lgErr) return { error: `locked_groups:${lgErr.message}` };
-  const lockedGroupIds = (lockedGroups ?? []).map((g) => g.id);
-  const lockedGroupNos = (lockedGroups ?? [])
+  if (lgErr) return { error: `protected_groups:${lgErr.message}` };
+  const protectedGroupIds = (protectedGroups ?? []).map((g) => g.id);
+  const lockedGroupNos = (protectedGroups ?? [])
     .map((g) => g.group_no)
     .sort((a, b) => a - b);
-  const lockedPids = new Set<string>();
-  if (lockedGroupIds.length > 0) {
-    const { data: lockedAssigns, error: laErr } = await supabase
+  const protectedPids = new Set<string>();
+  if (protectedGroupIds.length > 0) {
+    const { data: protectedAssigns, error: laErr } = await supabase
       .from("event_seat_assignments")
       .select("participant_id")
-      .in("group_id", lockedGroupIds)
+      .in("group_id", protectedGroupIds)
       .returns<Array<{ participant_id: string }>>();
-    if (laErr) return { error: `locked_assignments:${laErr.message}` };
-    for (const a of lockedAssigns ?? []) lockedPids.add(a.participant_id);
+    if (laErr) return { error: `protected_assignments:${laErr.message}` };
+    for (const a of protectedAssigns ?? []) protectedPids.add(a.participant_id);
   }
-  if (lockedPids.size > 0) {
+  if (protectedPids.size > 0) {
     enrolmentRows = enrolmentRows.filter(
-      (e) => !lockedPids.has(e.participant!.id),
+      (e) => !protectedPids.has(e.participant!.id),
     );
   }
 

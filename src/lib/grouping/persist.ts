@@ -18,6 +18,12 @@ import type { GroupingResult } from "./types";
 // by the algorithm (group_no 1..k) are renumbered to skip locked
 // group_no values so locked groups keep their identity.
 //
+// Auto-protect (migration 048): groups with edited=true are ALSO
+// preserved, on the exact same footing as locked. `edited` is stamped
+// automatically the moment an admin hand-touches a group, so manual
+// tuning survives Regenerate without the admin remembering to lock.
+// "Protected" below means (locked OR edited).
+//
 // NOT atomic in the strict sense — Supabase REST has no native cross-
 // table transaction. We accept a brief window of empty state. The route
 // is super-admin gated and idempotent so an interrupted call can be
@@ -35,29 +41,29 @@ export async function persistGroupingResult(
 ): Promise<PersistResult | { error: string }> {
   const service = createSupabaseServiceClient();
 
-  // Snapshot locked groups BEFORE the wipe so we know which group_no
-  // values to skip when renumbering fresh groups.
-  const { data: lockedGroups, error: lgErr } = await service
+  // Snapshot PROTECTED groups (locked OR edited) BEFORE the wipe so we
+  // know which group_no values to skip when renumbering fresh groups.
+  const { data: protectedGroups, error: lgErr } = await service
     .from("event_groups")
     .select("id, group_no")
     .eq("event_id", eventId)
-    .eq("locked", true)
+    .or("locked.eq.true,edited.eq.true")
     .returns<Array<{ id: string; group_no: number }>>();
   if (lgErr) return { error: lgErr.message };
-  const lockedIds = (lockedGroups ?? []).map((g) => g.id);
-  const lockedNos = new Set((lockedGroups ?? []).map((g) => g.group_no));
+  const protectedIds = (protectedGroups ?? []).map((g) => g.id);
+  const protectedNos = new Set((protectedGroups ?? []).map((g) => g.group_no));
 
-  // Wipe previous NON-LOCKED state. Order matters: assignments → groups
-  // so the group_id FK doesn't block the delete.
+  // Wipe previous NON-PROTECTED state. Order matters: assignments →
+  // groups so the group_id FK doesn't block the delete.
   let assignDelete = service
     .from("event_seat_assignments")
     .delete()
     .eq("event_id", eventId);
-  if (lockedIds.length > 0) {
-    // Postgrest `.not(col, "in", "(...)")` excludes locked groups'
+  if (protectedIds.length > 0) {
+    // Postgrest `.not(col, "in", "(...)")` excludes protected groups'
     // assignments + the cushion-mode rows where group_id is null.
     assignDelete = assignDelete.or(
-      `group_id.not.in.(${lockedIds.join(",")}),group_id.is.null`,
+      `group_id.not.in.(${protectedIds.join(",")}),group_id.is.null`,
     );
   }
   const { error: delAssignErr } = await assignDelete;
@@ -67,8 +73,9 @@ export async function persistGroupingResult(
     .from("event_groups")
     .delete()
     .eq("event_id", eventId);
-  if (lockedIds.length > 0) {
-    groupDelete = groupDelete.eq("locked", false);
+  if (protectedIds.length > 0) {
+    // Delete every group that isn't protected (locked OR edited).
+    groupDelete = groupDelete.not("id", "in", `(${protectedIds.join(",")})`);
   }
   const { error: delGroupsErr } = await groupDelete;
   if (delGroupsErr) return { error: delGroupsErr.message };
@@ -123,7 +130,7 @@ export async function persistGroupingResult(
     return {
       groups_inserted: 0,
       assignments_inserted: 0,
-      locked_groups_preserved: lockedNos.size,
+      locked_groups_preserved: protectedNos.size,
     };
   }
 
@@ -134,7 +141,7 @@ export async function persistGroupingResult(
   const renumber = new Map<number, number>();
   let nextNo = 1;
   for (const g of populatedGroups) {
-    while (lockedNos.has(nextNo)) nextNo += 1;
+    while (protectedNos.has(nextNo)) nextNo += 1;
     renumber.set(g.group_no, nextNo);
     nextNo += 1;
   }
@@ -225,7 +232,7 @@ export async function persistGroupingResult(
     return {
       groups_inserted: insertedGroups.length,
       assignments_inserted: 0,
-      locked_groups_preserved: lockedNos.size,
+      locked_groups_preserved: protectedNos.size,
     };
   }
 
@@ -237,6 +244,6 @@ export async function persistGroupingResult(
   return {
     groups_inserted: insertedGroups.length,
     assignments_inserted: assignmentRows.length,
-    locked_groups_preserved: lockedNos.size,
+    locked_groups_preserved: protectedNos.size,
   };
 }

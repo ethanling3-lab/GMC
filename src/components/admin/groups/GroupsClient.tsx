@@ -32,6 +32,7 @@ import type {
   StudentQualification,
   ZuZhangTier,
 } from "@/lib/grouping/types";
+import { GroupsImportDialog } from "./GroupsImportDialog";
 
 // Mode-aware client surface for the GroupBuilder. Table mode renders a
 // stack of group cards with dnd-kit drag-drop reassign + role override
@@ -58,6 +59,7 @@ export function GroupsClient(props: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   // Single open role-popover across the whole page. Click another row
   // → previous popover closes. Click anywhere outside a row → all close.
   const [openMemberId, setOpenMemberId] = useState<string | null>(null);
@@ -177,6 +179,38 @@ export function GroupsClient(props: Props) {
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? "Lock update failed");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResetToAuto(groupId: string) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/members`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "set_edited",
+            group_id: groupId,
+            edited: false,
+          }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Reset failed");
         return;
       }
       router.refresh();
@@ -435,6 +469,20 @@ export function GroupsClient(props: Props) {
             Export XLSX
           </a>
         ) : null}
+        {props.canEdit && props.mode === "tables" ? (
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="inline-flex items-center gap-2 h-9 px-3.5 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[12px] tracking-[0.04em] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] transition-[background-color,color,border-color] duration-[var(--dur-fast)]"
+            aria-label="Import edited grouping spreadsheet"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 10.5v-6M3.5 7L6 4.5 8.5 7" />
+              <path d="M2 2.5V2a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v0.5" />
+            </svg>
+            Import Excel
+          </button>
+        ) : null}
         {props.canGenerate ? (
           <button
             type="button"
@@ -446,6 +494,17 @@ export function GroupsClient(props: Props) {
           </button>
         ) : null}
       </div>
+
+      {importOpen ? (
+        <GroupsImportDialog
+          eventId={props.eventId}
+          onClose={() => setImportOpen(false)}
+          onApplied={() => {
+            setImportOpen(false);
+            router.refresh();
+          }}
+        />
+      ) : null}
 
       {hasShortfalls ? (
         <RosterShortfallBanner
@@ -495,6 +554,7 @@ export function GroupsClient(props: Props) {
                 onSetPin={handleSetPin}
                 onSetName={handleSetName}
                 onSetLocked={handleSetLocked}
+                onResetToAuto={handleResetToAuto}
                 onDeleteGroup={handleDeleteGroup}
                 onSetQualification={handleSetQualification}
                 openMemberId={openMemberId}
@@ -755,6 +815,7 @@ function GroupCard({
   onSetPin,
   onSetName,
   onSetLocked,
+  onResetToAuto,
   onDeleteGroup,
   onSetQualification,
   openMemberId,
@@ -775,6 +836,7 @@ function GroupCard({
   ) => Promise<void>;
   onSetName: (groupId: string, nameEn: string, nameCn: string) => Promise<void>;
   onSetLocked: (groupId: string, locked: boolean) => Promise<void>;
+  onResetToAuto: (groupId: string) => Promise<void>;
   onDeleteGroup: (groupId: string, groupNo: number) => Promise<void>;
   onSetQualification: (
     participantId: string,
@@ -882,6 +944,14 @@ function GroupCard({
               🔒
             </span>
           ) : null}
+          {group.edited && !group.locked ? (
+            <span
+              title="Hand-edited — auto-protected from Regenerate. Use 'reset to auto' to hand it back to the algorithm."
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/50 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)]"
+            >
+              手动 · edited
+            </span>
+          ) : null}
           {!hasZuZhang ? (
             <span
               className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
@@ -900,6 +970,16 @@ function GroupCard({
           ) : null}
         </div>
         <div className="inline-flex items-center gap-3">
+          {canEdit && group.edited && !group.locked ? (
+            <button
+              type="button"
+              onClick={() => onResetToAuto(group.id)}
+              className="text-[10.5px] tracking-[0.04em] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
+              title="Clear the hand-edited flag so the next Regenerate can rebuild this group."
+            >
+              reset to auto
+            </button>
+          ) : null}
           {canEdit && group.members.length === 0 ? (
             <button
               type="button"

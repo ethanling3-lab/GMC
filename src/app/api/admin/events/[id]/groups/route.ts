@@ -11,8 +11,9 @@ export const runtime = "nodejs";
 //
 // Pass 2 — manually create a fresh empty group on the event. Lands at
 // max(group_no) + 1. Admin then drags members in and curates leaders.
-// Created groups default to locked=false so a Regenerate run that
-// happens to bump them out is non-fatal — admin can re-add them.
+// Created groups are stamped edited=true (migration 048) so this
+// deliberate manual scaffolding survives a Regenerate run — the admin
+// can hand it back to the algorithm with "Reset to auto" if unwanted.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -77,6 +78,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
       event_id: eventId,
       group_no: nextNo,
       group_class: body.group_class,
+      edited: true,
     })
     .select("id, group_no, group_class")
     .single();

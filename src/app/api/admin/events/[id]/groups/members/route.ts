@@ -66,6 +66,15 @@ const LockedBody = z.object({
   locked: z.boolean(),
 });
 
+// "Reset to auto" — clears the implicit `edited` protection so the next
+// Regenerate can reclaim this group. Does NOT touch `locked` (an admin
+// who explicitly locked a group keeps that hard fence).
+const EditedBody = z.object({
+  action: z.literal("set_edited"),
+  group_id: z.string().uuid(),
+  edited: z.boolean(),
+});
+
 const Body = z.discriminatedUnion("action", [
   MoveBody,
   RoleBody,
@@ -73,7 +82,23 @@ const Body = z.discriminatedUnion("action", [
   ClassBody,
   NameBody,
   LockedBody,
+  EditedBody,
 ]);
+
+// Stamp a group as hand-edited so persistGroupingResult protects it from
+// Regenerate (migration 048). Fire-and-forget: a failure here must not
+// fail the edit that already succeeded — the group is simply reclaimable
+// on the next Regenerate, which is the pre-048 behaviour.
+async function markGroupEdited(
+  service: ReturnType<typeof createSupabaseServiceClient>,
+  groupId: string,
+): Promise<void> {
+  await service
+    .from("event_groups")
+    .update({ edited: true })
+    .eq("id", groupId)
+    .eq("edited", false);
+}
 
 export async function PATCH(req: Request, { params }: RouteCtx) {
   const admin = await requireAdmin();
@@ -113,6 +138,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       })
       .eq("id", body.group_id);
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    await markGroupEdited(service, body.group_id);
     await writeAuditLog({
       actor_id: admin.id,
       action: "groups.rationale_edited",
@@ -150,6 +176,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       .update({ name_en: nameEn, name_cn: nameCn })
       .eq("id", body.group_id);
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    await markGroupEdited(service, body.group_id);
     await writeAuditLog({
       actor_id: admin.id,
       action: "groups.name_changed",
@@ -191,6 +218,35 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ ok: true });
   }
 
+  if (body.action === "set_edited") {
+    const { data: before } = await service
+      .from("event_groups")
+      .select("id, event_id, edited")
+      .eq("id", body.group_id)
+      .maybeSingle();
+    if (!before || before.event_id !== eventId) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    if (before.edited === body.edited) {
+      return NextResponse.json({ ok: true, unchanged: true });
+    }
+    const { error: updErr } = await service
+      .from("event_groups")
+      .update({ edited: body.edited })
+      .eq("id", body.group_id);
+    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.reset_to_auto",
+      entity: "event_groups",
+      entity_id: body.group_id,
+      before: { edited: before.edited },
+      after: { edited: body.edited },
+      metadata: { event_id: eventId },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
   if (body.action === "set_class") {
     const { data: before } = await service
       .from("event_groups")
@@ -208,6 +264,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       .update({ group_class: body.group_class })
       .eq("id", body.group_id);
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    await markGroupEdited(service, body.group_id);
     await writeAuditLog({
       actor_id: admin.id,
       action: "groups.class_changed",
@@ -253,6 +310,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         .update({ leader_participant_id: assignment.participant_id })
         .eq("id", assignment.group_id);
     }
+    await markGroupEdited(service, assignment.group_id);
 
     await writeAuditLog({
       actor_id: admin.id,
@@ -392,6 +450,10 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       .update({ leader_participant_id: null })
       .eq("id", source.group_id);
   }
+
+  // Both groups changed shape — protect them from Regenerate.
+  await markGroupEdited(service, source.group_id);
+  await markGroupEdited(service, targetGroup.id);
 
   await writeAuditLog({
     actor_id: admin.id,

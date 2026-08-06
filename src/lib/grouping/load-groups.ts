@@ -97,6 +97,9 @@ export type GroupBuilderGroup = {
   name_cn: string | null;
   // Pass 2 — true = group survives Regenerate runs intact.
   locked: boolean;
+  // Migration 048 — auto-set on any admin edit. Soft-protects the group
+  // from Regenerate (like locked, but still freely editable).
+  edited: boolean;
   rationale_en: string | null;
   rationale_cn: string | null;
   leader_participant_id: string | null;
@@ -151,6 +154,7 @@ type GroupRow = {
   name_en: string | null;
   name_cn: string | null;
   locked: boolean;
+  edited: boolean;
   rationale_en: string | null;
   rationale_cn: string | null;
   leader_participant_id: string | null;
@@ -222,7 +226,7 @@ export async function loadGroupBuilder(
     supabase
       .from("event_groups")
       .select(
-        "id, group_no, group_class, name_en, name_cn, locked, rationale_en, rationale_cn, leader_participant_id",
+        "id, group_no, group_class, name_en, name_cn, locked, edited, rationale_en, rationale_cn, leader_participant_id",
       )
       .eq("event_id", eventId)
       .order("group_no", { ascending: true })
@@ -446,6 +450,7 @@ export async function loadGroupBuilder(
       name_en: g.name_en,
       name_cn: g.name_cn,
       locked: g.locked,
+      edited: g.edited,
       rationale_en: g.rationale_en,
       rationale_cn: g.rationale_cn,
       leader_participant_id: g.leader_participant_id,
