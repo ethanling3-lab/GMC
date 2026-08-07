@@ -120,10 +120,27 @@ export type GroupBuilderCushion = {
   role: GroupMemberRole | null;
 };
 
+// Enrolled (approved/paid) participants with NO current group assignment.
+// Rendered in the "Unassigned" pool so admins can drag them into a group
+// (or a removed member lands back here). Lightweight — just chip fields.
+export type GroupBuilderUnassigned = {
+  participant_id: string;
+  enrollment_id: string | null;
+  region_id: string | null;
+  name_en: string | null;
+  name_cn: string | null;
+  is_old_student: boolean;
+  qualification: StudentQualification | null;
+  effective_class: GroupClass;
+  zu_zhang_tier: ZuZhangTier | null;
+};
+
 export type GroupBuilderData = {
   event: GroupBuilderEvent;
   // Tables-mode payload.
   groups: GroupBuilderGroup[];
+  // Enrolled-but-unassigned participants (tables mode).
+  unassigned: GroupBuilderUnassigned[];
   // Cushion-mode payload.
   cushions: GroupBuilderCushion[];
   // Total approved + paid enrolments (used by the generate button + the
@@ -581,9 +598,43 @@ export async function loadGroupBuilder(
     rosterShortfalls = computeRosterShortfalls(roster, kByClass);
   }
 
+  // Unassigned pool — enrolled (approved/paid) participants with no current
+  // group assignment. participantById was hydrated above to cover every
+  // enrolled participant (missingPids block), so lookups resolve.
+  const assignedPids = new Set(
+    assignments.filter((a) => a.group_id).map((a) => a.participant_id),
+  );
+  const unassigned: GroupBuilderUnassigned[] = [];
+  for (const e of enrolPinsRes.data ?? []) {
+    if (assignedPids.has(e.participant_id)) continue;
+    const p = participantById.get(e.participant_id);
+    if (!p) continue;
+    unassigned.push({
+      participant_id: p.id,
+      enrollment_id: e.id,
+      region_id: p.region_id,
+      name_en: p.name_en,
+      name_cn: p.name_cn,
+      is_old_student: p.is_old_student ?? false,
+      qualification: effectiveQualification({
+        financial_score: p.financial_score,
+        influence_score: p.influence_score,
+        student_qualification_override: p.student_qualification,
+      }),
+      effective_class: participantToClass({
+        financial_score: p.financial_score,
+        influence_score: p.influence_score,
+        student_qualification_override: p.student_qualification,
+      }),
+      zu_zhang_tier: p.zu_zhang_tier ?? null,
+    });
+  }
+  unassigned.sort((a, b) => (a.region_id ?? "").localeCompare(b.region_id ?? ""));
+
   return {
     event,
     groups: builderGroups,
+    unassigned,
     cushions,
     enrolment_count: enrolCountRes.count ?? 0,
     roster_shortfalls: rosterShortfalls,

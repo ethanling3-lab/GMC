@@ -83,6 +83,7 @@ export default async function GroupsPage({
           groupSizeMax={ev.group_size_max}
           enrolmentCount={data.enrolment_count}
           groups={data.groups}
+          unassigned={data.unassigned}
           cushions={data.cushions}
           canEdit={!isReadOnly}
           canGenerate={canGenerate}

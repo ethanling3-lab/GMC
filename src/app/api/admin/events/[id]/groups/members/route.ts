@@ -75,6 +75,21 @@ const EditedBody = z.object({
   edited: z.boolean(),
 });
 
+// Seat an enrolled participant into a group (from the Unassigned pool, or
+// relocate someone who already has a row). Upserts on (event_id,
+// participant_id) so it works whether or not they're currently seated.
+const AddMemberBody = z.object({
+  action: z.literal("add_member"),
+  participant_id: z.string().uuid(),
+  to_group_no: z.number().int().min(1).max(999),
+});
+
+// Remove a member from their group → back to the Unassigned pool.
+const RemoveMemberBody = z.object({
+  action: z.literal("remove_member"),
+  assignment_id: z.string().uuid(),
+});
+
 const Body = z.discriminatedUnion("action", [
   MoveBody,
   RoleBody,
@@ -83,6 +98,8 @@ const Body = z.discriminatedUnion("action", [
   NameBody,
   LockedBody,
   EditedBody,
+  AddMemberBody,
+  RemoveMemberBody,
 ]);
 
 // Stamp a group as hand-edited so persistGroupingResult protects it from
@@ -328,6 +345,155 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ ok: true });
   }
 
+  if (body.action === "remove_member") {
+    const { data: assignment } = await service
+      .from("event_seat_assignments")
+      .select("id, event_id, group_id, participant_id, role")
+      .eq("id", body.assignment_id)
+      .maybeSingle();
+    if (!assignment || assignment.event_id !== eventId || !assignment.group_id) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    const { data: grp } = await service
+      .from("event_groups")
+      .select("id, group_no, locked")
+      .eq("id", assignment.group_id)
+      .maybeSingle();
+    if (grp?.locked) {
+      return NextResponse.json(
+        {
+          error: "group_locked",
+          detail: `Group ${grp.group_no} is locked. Unlock it before removing members.`,
+        },
+        { status: 409 },
+      );
+    }
+    const { error: delErr } = await service
+      .from("event_seat_assignments")
+      .delete()
+      .eq("id", body.assignment_id);
+    if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+    if (assignment.role === "zu_zhang") {
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: null })
+        .eq("id", assignment.group_id);
+    }
+    await markGroupEdited(service, assignment.group_id);
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.member_removed",
+      entity: "event_seat_assignments",
+      entity_id: body.assignment_id,
+      before: { group_id: assignment.group_id, role: assignment.role },
+      after: { group_id: null },
+      metadata: { event_id: eventId, participant_id: assignment.participant_id },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "add_member") {
+    // Participant must be an approved/paid enrolment for this event.
+    const { data: enrol } = await service
+      .from("enrollments")
+      .select("id, status")
+      .eq("event_id", eventId)
+      .eq("participant_id", body.participant_id)
+      .in("status", ["approved", "paid"])
+      .maybeSingle();
+    if (!enrol) {
+      return NextResponse.json(
+        { error: "not_enrolled", detail: "Not an approved/paid enrolment." },
+        { status: 409 },
+      );
+    }
+
+    const { data: targetGroup } = await service
+      .from("event_groups")
+      .select("id, group_no, locked")
+      .eq("event_id", eventId)
+      .eq("group_no", body.to_group_no)
+      .maybeSingle();
+    if (!targetGroup) {
+      return NextResponse.json({ error: "target_group_not_found" }, { status: 404 });
+    }
+    if (targetGroup.locked) {
+      return NextResponse.json(
+        {
+          error: "target_group_locked",
+          detail: `Group ${targetGroup.group_no} is locked. Unlock it before adding members.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    const { data: targetMembers } = await service
+      .from("event_seat_assignments")
+      .select("id, participant_id")
+      .eq("group_id", targetGroup.id);
+
+    // Already in this group? No-op.
+    const existingHere = (targetMembers ?? []).some(
+      (m) => m.participant_id === body.participant_id,
+    );
+    if (existingHere) {
+      return NextResponse.json({ ok: true, unchanged: true });
+    }
+
+    // Group size + family are SOFT for manual adds — no block on exceeding
+    // max or on placing family together (the group card flags both). Only
+    // lock stays a hard fence. The auto-generator still splits families.
+
+    // If they already have an assignment elsewhere, clear that group's
+    // leader pointer if they led it (upsert moves the single row).
+    const { data: prior } = await service
+      .from("event_seat_assignments")
+      .select("id, group_id, role")
+      .eq("event_id", eventId)
+      .eq("participant_id", body.participant_id)
+      .maybeSingle();
+    if (prior?.group_id && prior.group_id !== targetGroup.id && prior.role === "zu_zhang") {
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: null })
+        .eq("id", prior.group_id);
+    }
+
+    const { error: upErr } = await service
+      .from("event_seat_assignments")
+      .upsert(
+        {
+          event_id: eventId,
+          participant_id: body.participant_id,
+          group_id: targetGroup.id,
+          role: "participant",
+          shape_id: null,
+          seat_no: null,
+        },
+        { onConflict: "event_id,participant_id" },
+      );
+    if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
+
+    await markGroupEdited(service, targetGroup.id);
+    if (prior?.group_id && prior.group_id !== targetGroup.id) {
+      await markGroupEdited(service, prior.group_id);
+    }
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.member_added",
+      entity: "event_seat_assignments",
+      entity_id: prior?.id ?? targetGroup.id,
+      after: { group_id: targetGroup.id, role: "participant" },
+      metadata: {
+        event_id: eventId,
+        participant_id: body.participant_id,
+        to_group_no: body.to_group_no,
+        from_group_id: prior?.group_id ?? null,
+      },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
   // body.action === "move"
   const { data: event } = await service
     .from("events")
@@ -387,48 +553,11 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     );
   }
 
-  // Pull both groups' current memberships + the moving participant's family.
-  const { data: sourceMembers } = await service
-    .from("event_seat_assignments")
-    .select("id, participant_id, role")
-    .eq("group_id", source.group_id);
-  const { data: targetMembers } = await service
-    .from("event_seat_assignments")
-    .select("id, participant_id, role")
-    .eq("group_id", targetGroup.id);
-
-  // Size check (only the upper bound matters — moving someone OUT of a
-  // group can drop it below min, but admin can fix that with a counter
-  // move; we don't auto-revert).
-  if ((targetMembers?.length ?? 0) + 1 > event.group_size_max) {
-    return NextResponse.json(
-      {
-        error: "target_group_too_large",
-        detail: `Group ${body.to_group_no} would exceed max size ${event.group_size_max}.`,
-      },
-      { status: 409 },
-    );
-  }
-
-  // Family check — pull the participants table for the moving + target
-  // members and verify no shared family chain.
-  const memberPids = (targetMembers ?? []).map((m) => m.participant_id);
-  const targetParticipantIds = [...memberPids, source.participant_id];
-  const { data: parts } = await service
-    .from("participants")
-    .select("id, family_of_participant_id")
-    .in("id", targetParticipantIds)
-    .returns<Array<{ id: string; family_of_participant_id: string | null }>>();
-  if (parts && wouldCreateFamilyConflict(parts, source.participant_id, memberPids)) {
-    return NextResponse.json(
-      {
-        error: "family_conflict",
-        detail:
-          "Moving this person would put two family members in the same group.",
-      },
-      { status: 409 },
-    );
-  }
+  // Group size + family are SOFT for manual moves: admins may deliberately
+  // over-fill a group or place family together (the group card flags family
+  // co-occurrence + an out-of-range pax chip). Only lock stays a hard fence
+  // here. The auto-generator still splits families — this leniency is
+  // manual-only. `event` above doubles as the existence check.
 
   // Apply the move + reparent the assignment with role reset.
   const { error: moveErr } = await service
@@ -472,40 +601,5 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   });
 
   return NextResponse.json({ ok: true });
-}
-
-function wouldCreateFamilyConflict(
-  parts: Array<{ id: string; family_of_participant_id: string | null }>,
-  movingPid: string,
-  targetMemberPids: string[],
-): boolean {
-  // Build the same connected-component family-chain map, then check
-  // whether the moving participant shares a chain with anyone already
-  // in the target group.
-  const adj = new Map<string, Set<string>>();
-  for (const p of parts) {
-    if (!adj.has(p.id)) adj.set(p.id, new Set());
-    if (p.family_of_participant_id) {
-      const a = p.id;
-      const b = p.family_of_participant_id;
-      if (!adj.has(b)) adj.set(b, new Set());
-      adj.get(a)!.add(b);
-      adj.get(b)!.add(a);
-    }
-  }
-  // BFS from movingPid; if we hit any target member, conflict.
-  const seen = new Set<string>([movingPid]);
-  const queue = [movingPid];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    if (cur !== movingPid && targetMemberPids.includes(cur)) return true;
-    for (const neigh of adj.get(cur) ?? []) {
-      if (!seen.has(neigh)) {
-        seen.add(neigh);
-        queue.push(neigh);
-      }
-    }
-  }
-  return false;
 }
 

@@ -2,19 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  DndContext,
-  PointerSensor,
-  useDroppable,
-  useDraggable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
 import type {
   GroupBuilderCushion,
   GroupBuilderGroup,
   GroupBuilderMember,
+  GroupBuilderUnassigned,
 } from "@/lib/grouping/load-groups";
 import {
   GROUP_CLASS_LABEL,
@@ -35,9 +27,9 @@ import type {
 import { GroupsImportDialog } from "./GroupsImportDialog";
 
 // Mode-aware client surface for the GroupBuilder. Table mode renders a
-// stack of group cards with dnd-kit drag-drop reassign + role override
-// menu + inline rationale edit. Cushion mode renders a flat ranked
-// preview list (the actual seat-swap UI lands in M6.6 floor-plan editor).
+// stack of group cards; all reassignment is click-based (member menu →
+// Move to #N / Unassign, and the Unassigned pool's + → #N) — no drag-drop.
+// Cushion mode renders a flat ranked preview list.
 
 type Props = {
   eventId: string;
@@ -46,6 +38,7 @@ type Props = {
   groupSizeMax: number;
   enrolmentCount: number;
   groups: GroupBuilderGroup[];
+  unassigned: GroupBuilderUnassigned[];
   cushions: GroupBuilderCushion[];
   canEdit: boolean;
   canGenerate: boolean;
@@ -65,14 +58,15 @@ export function GroupsClient(props: Props) {
   const [openMemberId, setOpenMemberId] = useState<string | null>(null);
   // Single open detail row across the page (mirrors role popover).
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
-  // dnd-kit's useDraggable injects `aria-describedby="DndDescribedBy-N"`
-  // with an auto-incrementing N; SSR + hydrate generate different N
-  // values which throws a hydration mismatch error. Defer the dnd-aware
-  // grid render until after mount so the IDs only generate client-side.
-  const [mounted, setMounted] = useState(false);
+
+  // Auto-dismiss the toast after a while so it doesn't linger; errors get
+  // longer than success confirmations.
   useEffect(() => {
-    setMounted(true);
-  }, []);
+    if (!error) return;
+    const ms = error.startsWith("✓") ? 4000 : 8000;
+    const t = setTimeout(() => setError(null), ms);
+    return () => clearTimeout(t);
+  }, [error]);
 
   useEffect(() => {
     if (!openMemberId) return;
@@ -330,24 +324,10 @@ export function GroupsClient(props: Props) {
     }
   }
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
-
-  async function handleDragEnd(e: DragEndEvent) {
-    setError(null);
-    const assignmentId = String(e.active.id);
-    const overId = e.over?.id;
-    if (!overId) return;
-    const toGroupNo = Number(String(overId).replace(/^group-/, ""));
-    if (!Number.isFinite(toGroupNo)) return;
-
-    // Find current group of this assignment.
-    const sourceGroup = props.groups.find((g) =>
-      g.members.some((m) => m.assignment_id === assignmentId),
-    );
-    if (!sourceGroup || sourceGroup.group_no === toGroupNo) return;
-
+  async function patchMembers(
+    payload: Record<string, unknown>,
+    failMsg: string,
+  ) {
     setBusy(true);
     try {
       const res = await fetch(
@@ -355,11 +335,7 @@ export function GroupsClient(props: Props) {
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            action: "move",
-            assignment_id: assignmentId,
-            to_group_no: toGroupNo,
-          }),
+          body: JSON.stringify(payload),
         },
       );
       const json = (await res.json().catch(() => ({}))) as {
@@ -367,7 +343,7 @@ export function GroupsClient(props: Props) {
         detail?: string;
       };
       if (!res.ok) {
-        setError(json.detail ?? json.error ?? "Move failed");
+        setError(json.detail ?? json.error ?? failMsg);
         return;
       }
       router.refresh();
@@ -376,6 +352,29 @@ export function GroupsClient(props: Props) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleAddMember(participantId: string, toGroupNo: number) {
+    setError(null);
+    await patchMembers(
+      { action: "add_member", participant_id: participantId, to_group_no: toGroupNo },
+      "Add failed",
+    );
+  }
+
+  async function handleRemoveMember(assignmentId: string) {
+    setError(null);
+    await patchMembers(
+      { action: "remove_member", assignment_id: assignmentId },
+      "Remove failed",
+    );
+  }
+
+  async function handleAddMemberMove(assignmentId: string, toGroupNo: number) {
+    await patchMembers(
+      { action: "move", assignment_id: assignmentId, to_group_no: toGroupNo },
+      "Move failed",
+    );
   }
 
   async function handleSetRole(
@@ -521,9 +520,27 @@ export function GroupsClient(props: Props) {
         />
       ) : null}
 
+      {/* Floating toast — fixed so a rejected move/add is visible no matter
+          where on the page the admin acted (a group card can be scrolled far
+          below the old top-of-page banner). Success messages start with ✓. */}
       {error ? (
-        <div className="mb-4 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] px-4 py-2.5 text-[12px] text-[var(--ink-soft)]">
-          {error}
+        <div
+          role="status"
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] max-w-[92vw] flex items-center gap-3 rounded-[var(--radius-md)] border px-4 py-2.5 text-[12.5px] shadow-[var(--shadow-elevated)] ${
+            error.startsWith("✓")
+              ? "border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink-soft)]"
+              : "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+          }`}
+        >
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="text-current/70 hover:text-current text-[14px] leading-none"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
         </div>
       ) : null}
 
@@ -531,15 +548,15 @@ export function GroupsClient(props: Props) {
         <CushionPreview cushions={props.cushions} />
       ) : totalGroups === 0 ? (
         <EmptyState enrolmentCount={props.enrolmentCount} canGenerate={props.canGenerate} />
-      ) : !mounted ? (
-        <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)]/40 px-6 py-12 text-center text-[12px] text-[var(--ink-faint)]">
-          Loading groups…
-        </div>
       ) : (
-        <DndContext
-          sensors={sensors}
-          onDragEnd={props.canEdit ? handleDragEnd : undefined}
-        >
+        <>
+          {props.canEdit ? (
+            <UnassignedPool
+              items={props.unassigned}
+              onAdd={handleAddMember}
+              groupNos={props.groups.map((g) => g.group_no)}
+            />
+          ) : null}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {props.groups.map((g) => (
               <GroupCard
@@ -549,6 +566,9 @@ export function GroupsClient(props: Props) {
                 groupSizeMax={props.groupSizeMax}
                 groupSizeMin={props.groupSizeMin}
                 canEdit={props.canEdit}
+                groupNos={props.groups.map((g) => g.group_no)}
+                onMove={handleAddMemberMove}
+                onRemove={handleRemoveMember}
                 onSetRole={handleSetRole}
                 onSetClass={handleSetClass}
                 onSetPin={handleSetPin}
@@ -569,9 +589,118 @@ export function GroupsClient(props: Props) {
               <AddGroupButton onAdd={handleAddGroup} disabled={busy} />
             </div>
           ) : null}
-        </DndContext>
+        </>
       )}
     </div>
+  );
+}
+
+function UnassignedPool({
+  items,
+  onAdd,
+  groupNos,
+}: {
+  items: GroupBuilderUnassigned[];
+  onAdd: (participantId: string, toGroupNo: number) => Promise<void>;
+  groupNos: number[];
+}) {
+  return (
+    <section className="mb-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)]/40 p-4">
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
+          Unassigned · 未编排
+        </span>
+        <span className="text-[11px] tabular-nums text-[var(--ink-soft)]">
+          {items.length}
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-[11.5px] text-[var(--ink-faint)]">
+          Everyone is assigned. Use a member&rsquo;s menu → Unassign to move them here.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((p) => (
+            <UnassignedChip
+              key={p.participant_id}
+              p={p}
+              onAdd={onAdd}
+              groupNos={groupNos}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UnassignedChip({
+  p,
+  onAdd,
+  groupNos,
+}: {
+  p: GroupBuilderUnassigned;
+  onAdd: (participantId: string, toGroupNo: number) => Promise<void>;
+  groupNos: number[];
+}) {
+  const [picking, setPicking] = useState(false);
+  const name = p.name_cn ?? p.name_en ?? p.region_id ?? "—";
+  const qual = p.qualification
+    ? STUDENT_QUALIFICATION_LABEL[p.qualification].short_cn
+    : null;
+  return (
+    <span className="inline-flex items-center gap-1.5 h-[24px] pl-2 pr-1 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11.5px] text-[var(--ink)]">
+      <span className="inline-flex items-center gap-1.5">
+        {qual ? (
+          <span className="text-[9px] text-[var(--cinnabar-deep)]">{qual}</span>
+        ) : null}
+        <span>{name}</span>
+        {p.region_id ? (
+          <span className="text-[10px] tabular-nums text-[var(--ink-faint)]">
+            {p.region_id}
+          </span>
+        ) : null}
+        {p.is_old_student ? (
+          <span className="text-[9px] text-[var(--gold-deep)]">旧</span>
+        ) : null}
+      </span>
+      {groupNos.length > 0 ? (
+        picking ? (
+          <select
+            autoFocus
+            defaultValue=""
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n > 0) onAdd(p.participant_id, n);
+              setPicking(false);
+            }}
+            onBlur={() => setPicking(false)}
+            className="h-[18px] text-[10px] rounded bg-[var(--paper-deep)] border border-[var(--paper-shadow)]"
+          >
+            <option value="" disabled>
+              → #
+            </option>
+            {groupNos.map((n) => (
+              <option key={n} value={n}>
+                #{n}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setPicking(true)}
+            className="inline-flex items-center justify-center w-[16px] h-[16px] rounded-full text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] transition-colors"
+            title="Add to a group"
+            aria-label={`Add ${name} to a group`}
+          >
+            +
+          </button>
+        )
+      ) : null}
+    </span>
   );
 }
 
@@ -818,6 +947,9 @@ function GroupCard({
   onResetToAuto,
   onDeleteGroup,
   onSetQualification,
+  onMove,
+  onRemove,
+  groupNos,
   openMemberId,
   setOpenMemberId,
   expandedMemberId,
@@ -828,6 +960,9 @@ function GroupCard({
   groupSizeMax: number;
   groupSizeMin: number;
   canEdit: boolean;
+  groupNos: number[];
+  onMove: (assignmentId: string, toGroupNo: number) => Promise<void>;
+  onRemove: (assignmentId: string) => Promise<void>;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
   onSetClass: (groupId: string, groupClass: GroupClass) => Promise<void>;
   onSetPin: (
@@ -848,10 +983,6 @@ function GroupCard({
   setExpandedMemberId: (id: string | null) => void;
 }) {
   const router = useRouter();
-  const { isOver, setNodeRef } = useDroppable({
-    id: `group-${group.group_no}`,
-    disabled: group.locked,
-  });
   const sizeChip =
     group.members.length > groupSizeMax || group.members.length < groupSizeMin
       ? "out"
@@ -890,17 +1021,24 @@ function GroupCard({
   const hasFuZuZhang = group.members.some((m) => m.role === "fu_zu_zhang");
   const needsLeader = !hasZuZhang || !hasFuZuZhang;
 
+  // Family co-occurrence — allowed for manual placement, but flagged. A
+  // member is "family together" when one of their family-partner region_ids
+  // is also present in this same group.
+  const groupRegionSet = new Set(
+    group.members.map((m) => m.region_id).filter((r): r is string => !!r),
+  );
+  const familyTogether = group.members.filter((m) =>
+    m.family_partner_region_ids.some((r) => groupRegionSet.has(r)),
+  );
+
   return (
     <section
-      ref={setNodeRef}
       className={`relative rounded-[var(--radius-lg)] border p-4 transition-colors ${
-        isOver
-          ? "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)]/30 shadow-[var(--shadow-focus)]"
-          : group.locked
-            ? "border-[var(--ink)]/30 bg-[var(--paper-deep)]/50 shadow-[var(--shadow-paper-1)]"
-            : needsLeader
-              ? "border-[var(--cinnabar)]/35 bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
-              : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
+        group.locked
+          ? "border-[var(--ink)]/30 bg-[var(--paper-deep)]/50 shadow-[var(--shadow-paper-1)]"
+          : needsLeader
+            ? "border-[var(--cinnabar)]/35 bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
+            : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]"
       }`}
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
@@ -966,6 +1104,16 @@ function GroupCard({
               title="No 副组长 seated."
             >
               missing 副组长
+            </span>
+          ) : null}
+          {familyTogether.length > 0 ? (
+            <span
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/55 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)]"
+              title={`Family members placed together (allowed manually, but the auto-generator avoids it): ${familyTogether
+                .map((m) => m.region_id ?? memberLabel(m))
+                .join(", ")}`}
+            >
+              ⚠ 家人同组 · family
             </span>
           ) : null}
         </div>
@@ -1087,11 +1235,11 @@ function GroupCard({
                   member={m}
                   groupClass={group.group_class}
                   groupNo={group.group_no}
+                  groupNos={groupNos}
+                  familyInGroup={m.family_partner_region_ids.filter((r) =>
+                    groupRegionSet.has(r),
+                  )}
                   canEdit={canEdit}
-                  // Lock blocks drag (member can't leave a locked group).
-                  // Other mutations on the row stay open: role, pin,
-                  // qualification override are all fine on locked rows.
-                  canDrag={!group.locked}
                   // Flip popover upward when the row is in the bottom
                   // half — otherwise the qualification submenu (~280px
                   // tall) extends past the card.
@@ -1099,6 +1247,8 @@ function GroupCard({
                   onSetRole={onSetRole}
                   onSetPin={onSetPin}
                   onSetQualification={onSetQualification}
+                  onMove={onMove}
+                  onRemove={onRemove}
                   isOpen={openMemberId === m.assignment_id}
                   setOpen={(v) =>
                     setOpenMemberId(v ? m.assignment_id : null)
@@ -1146,12 +1296,15 @@ function MemberRow({
   member,
   groupClass,
   groupNo,
+  groupNos,
+  familyInGroup,
   canEdit,
-  canDrag,
   popoverFlipUp,
   onSetRole,
   onSetPin,
   onSetQualification,
+  onMove,
+  onRemove,
   isOpen,
   setOpen,
   isExpanded,
@@ -1160,8 +1313,11 @@ function MemberRow({
   member: GroupBuilderMember;
   groupClass: GroupClass;
   groupNo: number;
+  groupNos: number[];
+  // Region IDs of this member's family partners who are ALSO in this group
+  // (empty = none). Non-empty highlights the row + shows a 家人 marker.
+  familyInGroup: string[];
   canEdit: boolean;
-  canDrag: boolean;
   popoverFlipUp: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
   onSetPin: (
@@ -1172,15 +1328,13 @@ function MemberRow({
     participantId: string,
     qualification: StudentQualification | null,
   ) => Promise<void>;
+  onMove: (assignmentId: string, toGroupNo: number) => Promise<void>;
+  onRemove: (assignmentId: string) => Promise<void>;
   isOpen: boolean;
   setOpen: (v: boolean) => void;
   isExpanded: boolean;
   setExpanded: (v: boolean) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: member.assignment_id,
-    disabled: !canEdit || !canDrag,
-  });
   const name = memberLabel(member);
   const isLeader = member.role === "zu_zhang" || member.role === "fu_zu_zhang";
   const roleTone =
@@ -1194,35 +1348,20 @@ function MemberRow({
   const classMismatch = !isLeader && member.effective_class !== groupClass;
   const pinnedHere =
     member.pinned_group_no != null && member.pinned_group_no === groupNo;
-
-  const style: React.CSSProperties | undefined = transform
-    ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-        opacity: isDragging ? 0.5 : 1,
-        position: "relative",
-      }
-    : undefined;
+  const hasFamilyHere = familyInGroup.length > 0;
 
   return (
     <>
       <tr
-        ref={setNodeRef}
-        style={style}
         data-member-row={member.assignment_id}
-        {...listeners}
-        {...attributes}
         className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${
-          canEdit
-            ? canDrag
-              ? "cursor-grab active:cursor-grabbing hover:bg-[var(--paper-deep)]/35"
-              : "cursor-pointer hover:bg-[var(--paper-deep)]/35"
-            : ""
+          hasFamilyHere ? "ring-1 ring-inset ring-[var(--gold)]/60 bg-[var(--gold-soft)]/30" : ""
+        } ${
+          canEdit ? "cursor-pointer hover:bg-[var(--paper-deep)]/35" : ""
         }`}
         title={
           canEdit
-            ? canDrag
-              ? "Drag to another group · click to set role / pin"
-              : "Group locked — unlock to drag · click to set role / pin / qualification"
+            ? "Click to set role / move / unassign / pin"
             : undefined
         }
         onClick={(e) => {
@@ -1252,7 +1391,17 @@ function MemberRow({
           {member.region_id ?? ""}
         </td>
         <td className="px-2 py-1.5 align-middle text-[var(--ink)]">
-          {name}
+          <span className="inline-flex items-center gap-1.5">
+            {name}
+            {hasFamilyHere ? (
+              <span
+                className="inline-flex items-center h-[15px] px-1 rounded-[var(--radius-pill)] border border-[var(--gold)]/60 bg-[var(--gold-soft)] text-[8.5px] tracking-[0.04em] text-[var(--gold-deep)]"
+                title={`Family with ${familyInGroup.join(", ")} in this group`}
+              >
+                👪 家人
+              </span>
+            ) : null}
+          </span>
         </td>
         <td className="px-2 py-1.5 align-middle">
           {isLeader && member.zu_zhang_tier ? (
@@ -1319,6 +1468,51 @@ function MemberRow({
                   {r === "zu_zhang" ? "组长" : r === "fu_zu_zhang" ? "副组长" : "participant"}
                 </button>
               ))}
+              {groupNos.length > 1 ? (
+                <>
+                  <span className="border-t border-[var(--paper-shadow)]/60" />
+                  <div className="px-2.5 py-1 flex items-center gap-1.5">
+                    <span className="text-[var(--ink-mute)] whitespace-nowrap">
+                      Move to · 移至
+                    </span>
+                    <select
+                      defaultValue=""
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={async (e) => {
+                        const n = Number(e.target.value);
+                        setOpen(false);
+                        if (Number.isFinite(n) && n > 0 && n !== groupNo) {
+                          await onMove(member.assignment_id, n);
+                        }
+                      }}
+                      className="h-[20px] text-[11px] rounded bg-[var(--paper)] border border-[var(--paper-shadow)]"
+                    >
+                      <option value="" disabled>
+                        #…
+                      </option>
+                      {groupNos
+                        .filter((n) => n !== groupNo)
+                        .map((n) => (
+                          <option key={n} value={n}>
+                            #{n}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </>
+              ) : null}
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  await onRemove(member.assignment_id);
+                }}
+                className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] text-[var(--ink-mute)] whitespace-nowrap"
+              >
+                Unassign · 移出
+              </button>
               {member.enrollment_id ? (
                 <>
                   <span className="border-t border-[var(--paper-shadow)]/60" />
