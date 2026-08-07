@@ -28,6 +28,14 @@ export const runtime = "nodejs";
 //       them in from anywhere (unassigned, another group, another
 //       group's leadership) in a single call.
 //
+//   { action: "bulk_move" | "bulk_remove", assignment_ids[], to_group_no? }
+//     - Same as move/remove over a multi-selection. Partial success:
+//       members sitting in a locked group are skipped and reported.
+//
+//   { action: "swap", assignment_id_a, assignment_id_b }
+//     - Exchange two members across two groups, sizes unchanged. Roles
+//       survive only when both sides hold the same role.
+//
 // Audits as groups.member_moved / groups.role_changed /
 // groups.leader_assigned accordingly.
 
@@ -108,6 +116,32 @@ const AssignLeaderBody = z.object({
   role: z.enum(["zu_zhang", "fu_zu_zhang"]),
 });
 
+// Phase 4 — bulk edits over a multi-selection, and the pairwise swap.
+//
+// Bulk ops are deliberately PARTIAL-SUCCESS: a locked source group skips
+// just its own members and is reported back, rather than failing the whole
+// batch. With 20 people selected across a dozen cards, an all-or-nothing
+// reject would leave the admin hunting for the one blocker.
+const BulkMoveBody = z.object({
+  action: z.literal("bulk_move"),
+  assignment_ids: z.array(z.string().uuid()).min(1).max(200),
+  to_group_no: z.number().int().min(1).max(999),
+});
+
+const BulkRemoveBody = z.object({
+  action: z.literal("bulk_remove"),
+  assignment_ids: z.array(z.string().uuid()).min(1).max(200),
+});
+
+// Exchange two members between two different groups, keeping both group
+// sizes constant — the rebalancing move you can't express as two
+// independent moves without transiently busting sizes.
+const SwapBody = z.object({
+  action: z.literal("swap"),
+  assignment_id_a: z.string().uuid(),
+  assignment_id_b: z.string().uuid(),
+});
+
 const Body = z.discriminatedUnion("action", [
   MoveBody,
   RoleBody,
@@ -119,6 +153,9 @@ const Body = z.discriminatedUnion("action", [
   AddMemberBody,
   RemoveMemberBody,
   AssignLeaderBody,
+  BulkMoveBody,
+  BulkRemoveBody,
+  SwapBody,
 ]);
 
 // Stamp a group as hand-edited so persistGroupingResult protects it from
@@ -325,14 +362,16 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     if (assignment.role === body.role) {
       return NextResponse.json({ ok: true, unchanged: true });
     }
-    // If promoting to zu_zhang, demote any existing zu_zhang in the same
-    // group to participant first.
+    // 组长 is unique per group, so promoting demotes the incumbent.
+    // 副组长 is NOT — a group may carry several, and promoting one must
+    // never silently demote another.
     if (body.role === "zu_zhang") {
       await service
         .from("event_seat_assignments")
         .update({ role: "participant" })
         .eq("group_id", assignment.group_id)
-        .eq("role", "zu_zhang");
+        .eq("role", "zu_zhang")
+        .neq("id", body.assignment_id);
     }
     const { error: updErr } = await service
       .from("event_seat_assignments")
@@ -345,6 +384,21 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         .from("event_groups")
         .update({ leader_participant_id: assignment.participant_id })
         .eq("id", assignment.group_id);
+    } else {
+      // Demoting the group's own 组长 (to 副组长 or plain member) leaves
+      // leader_participant_id pointing at someone who no longer holds the
+      // role — same clean-up assign_leader does.
+      const { data: grp } = await service
+        .from("event_groups")
+        .select("leader_participant_id")
+        .eq("id", assignment.group_id)
+        .maybeSingle();
+      if (grp?.leader_participant_id === assignment.participant_id) {
+        await service
+          .from("event_groups")
+          .update({ leader_participant_id: null })
+          .eq("id", assignment.group_id);
+      }
     }
     await markGroupEdited(service, assignment.group_id);
 
@@ -409,6 +463,300 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       metadata: { event_id: eventId, participant_id: assignment.participant_id },
     });
     return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "bulk_move" || body.action === "bulk_remove") {
+    const ids = body.assignment_ids;
+    const { data: rows } = await service
+      .from("event_seat_assignments")
+      .select("id, event_id, group_id, participant_id, role")
+      .in("id", ids)
+      .eq("event_id", eventId);
+    const seated = (rows ?? []).filter((r) => r.group_id);
+    if (seated.length === 0) {
+      return NextResponse.json({ error: "no_valid_members" }, { status: 404 });
+    }
+
+    // Resolve every group in play (sources + target) in one round-trip.
+    const sourceGroupIds = Array.from(
+      new Set(seated.map((r) => r.group_id as string)),
+    );
+    const { data: sourceGroups } = await service
+      .from("event_groups")
+      .select("id, group_no, locked")
+      .eq("event_id", eventId)
+      .in("id", sourceGroupIds);
+    const groupById = new Map(
+      (sourceGroups ?? []).map((g) => [g.id, g]),
+    );
+
+    let target: { id: string; group_no: number; locked: boolean } | null = null;
+    if (body.action === "bulk_move") {
+      const { data: tg } = await service
+        .from("event_groups")
+        .select("id, group_no, locked")
+        .eq("event_id", eventId)
+        .eq("group_no", body.to_group_no)
+        .maybeSingle();
+      if (!tg) {
+        return NextResponse.json(
+          { error: "target_group_not_found" },
+          { status: 404 },
+        );
+      }
+      if (tg.locked) {
+        return NextResponse.json(
+          {
+            error: "target_group_locked",
+            detail: `Group ${tg.group_no} is locked. Unlock it before moving members in.`,
+          },
+          { status: 409 },
+        );
+      }
+      target = tg;
+    }
+
+    // Partial success: locked sources drop out, everything else proceeds.
+    const skippedGroupNos = new Set<number>();
+    const actionable = seated.filter((r) => {
+      const g = groupById.get(r.group_id as string);
+      if (g?.locked) {
+        skippedGroupNos.add(g.group_no);
+        return false;
+      }
+      // Already sitting in the destination — nothing to do.
+      if (target && r.group_id === target.id) return false;
+      return true;
+    });
+
+    if (actionable.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        affected: 0,
+        skipped_locked: skippedGroupNos.size,
+        skipped_group_nos: [...skippedGroupNos].sort((a, b) => a - b),
+      });
+    }
+
+    const actionableIds = actionable.map((r) => r.id);
+    if (body.action === "bulk_move") {
+      const { error: mvErr } = await service
+        .from("event_seat_assignments")
+        .update({
+          group_id: target!.id,
+          role: "participant",
+          shape_id: null,
+          seat_no: null,
+        })
+        .in("id", actionableIds);
+      if (mvErr) {
+        return NextResponse.json({ error: mvErr.message }, { status: 500 });
+      }
+    } else {
+      const { error: delErr } = await service
+        .from("event_seat_assignments")
+        .delete()
+        .in("id", actionableIds);
+      if (delErr) {
+        return NextResponse.json({ error: delErr.message }, { status: 500 });
+      }
+    }
+
+    // Any source group that just lost its 组长 needs its pointer cleared.
+    const orphanedLeaderGroups = Array.from(
+      new Set(
+        actionable
+          .filter((r) => r.role === "zu_zhang")
+          .map((r) => r.group_id as string),
+      ),
+    );
+    for (const gid of orphanedLeaderGroups) {
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: null })
+        .eq("id", gid);
+    }
+
+    const touched = new Set(actionable.map((r) => r.group_id as string));
+    if (target) touched.add(target.id);
+    for (const gid of touched) await markGroupEdited(service, gid);
+
+    // One audit row for the batch — N rows would bury the signal.
+    await writeAuditLog({
+      actor_id: admin.id,
+      action:
+        body.action === "bulk_move"
+          ? "groups.member_moved"
+          : "groups.member_removed",
+      entity: "event_seat_assignments",
+      entity_id: actionableIds[0],
+      after:
+        body.action === "bulk_move"
+          ? { group_id: target!.id }
+          : { group_id: null },
+      metadata: {
+        event_id: eventId,
+        via: "bulk",
+        count: actionable.length,
+        participant_ids: actionable.map((r) => r.participant_id),
+        from_group_nos: [
+          ...new Set(
+            actionable
+              .map((r) => groupById.get(r.group_id as string)?.group_no)
+              .filter((n): n is number => n != null),
+          ),
+        ].sort((a, b) => a - b),
+        to_group_no: target?.group_no ?? null,
+        skipped_locked_group_nos: [...skippedGroupNos].sort((a, b) => a - b),
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      affected: actionable.length,
+      skipped_locked: skippedGroupNos.size,
+      skipped_group_nos: [...skippedGroupNos].sort((a, b) => a - b),
+    });
+  }
+
+  if (body.action === "swap") {
+    if (body.assignment_id_a === body.assignment_id_b) {
+      return NextResponse.json(
+        { error: "same_member", detail: "Pick two different people." },
+        { status: 400 },
+      );
+    }
+    const { data: pair } = await service
+      .from("event_seat_assignments")
+      .select("id, event_id, group_id, participant_id, role")
+      .in("id", [body.assignment_id_a, body.assignment_id_b])
+      .eq("event_id", eventId);
+    const a = pair?.find((r) => r.id === body.assignment_id_a);
+    const b = pair?.find((r) => r.id === body.assignment_id_b);
+    if (!a || !b || !a.group_id || !b.group_id) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    if (a.group_id === b.group_id) {
+      return NextResponse.json(
+        {
+          error: "same_group",
+          detail: "Both are already in the same group — nothing to swap.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const { data: groups } = await service
+      .from("event_groups")
+      .select("id, group_no, locked, leader_participant_id")
+      .in("id", [a.group_id, b.group_id]);
+    const ga = groups?.find((g) => g.id === a.group_id);
+    const gb = groups?.find((g) => g.id === b.group_id);
+    if (!ga || !gb) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    const lockedGroup = ga.locked ? ga : gb.locked ? gb : null;
+    if (lockedGroup) {
+      return NextResponse.json(
+        {
+          error: "group_locked",
+          detail: `Group ${lockedGroup.group_no} is locked. Unlock it before swapping.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    // Role rule: a swap between two people holding the SAME role keeps
+    // that role on both sides (swapping two 组长 is a real ops move and
+    // must not strip either group of its leader). Mixed roles are
+    // ambiguous — which group keeps a leader? — so both reset to
+    // participant rather than guess.
+    const rolesPreserved = a.role === b.role;
+    const roleForA = rolesPreserved ? a.role : "participant";
+    const roleForB = rolesPreserved ? b.role : "participant";
+
+    const { error: aErr } = await service
+      .from("event_seat_assignments")
+      .update({
+        group_id: b.group_id,
+        role: roleForA,
+        shape_id: null,
+        seat_no: null,
+      })
+      .eq("id", a.id);
+    if (aErr) return NextResponse.json({ error: aErr.message }, { status: 500 });
+    const { error: bErr } = await service
+      .from("event_seat_assignments")
+      .update({
+        group_id: a.group_id,
+        role: roleForB,
+        shape_id: null,
+        seat_no: null,
+      })
+      .eq("id", b.id);
+    if (bErr) return NextResponse.json({ error: bErr.message }, { status: 500 });
+
+    // Leader pointers. Preserved 组长 roles trade places; anything else
+    // that pointed at a swapped participant is now stale.
+    if (rolesPreserved && a.role === "zu_zhang") {
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: b.participant_id })
+        .eq("id", ga.id);
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: a.participant_id })
+        .eq("id", gb.id);
+    } else {
+      if (ga.leader_participant_id === a.participant_id) {
+        await service
+          .from("event_groups")
+          .update({ leader_participant_id: null })
+          .eq("id", ga.id);
+      }
+      if (gb.leader_participant_id === b.participant_id) {
+        await service
+          .from("event_groups")
+          .update({ leader_participant_id: null })
+          .eq("id", gb.id);
+      }
+    }
+
+    await markGroupEdited(service, ga.id);
+    await markGroupEdited(service, gb.id);
+
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.member_moved",
+      entity: "event_seat_assignments",
+      entity_id: a.id,
+      before: { group_id: a.group_id, role: a.role },
+      after: { group_id: b.group_id, role: roleForA },
+      metadata: {
+        event_id: eventId,
+        via: "swap",
+        roles_preserved: rolesPreserved,
+        a: {
+          participant_id: a.participant_id,
+          from_group_no: ga.group_no,
+          to_group_no: gb.group_no,
+          role: roleForA,
+        },
+        b: {
+          participant_id: b.participant_id,
+          from_group_no: gb.group_no,
+          to_group_no: ga.group_no,
+          role: roleForB,
+        },
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      roles_preserved: rolesPreserved,
+      a_to_group_no: gb.group_no,
+      b_to_group_no: ga.group_no,
+    });
   }
 
   if (body.action === "assign_leader") {
@@ -477,24 +825,28 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       return NextResponse.json({ ok: true, unchanged: true });
     }
 
-    // Demote whoever currently holds this slot in the target group.
-    const { data: incumbents } = await service
-      .from("event_seat_assignments")
-      .select("id, participant_id")
-      .eq("group_id", target.id)
-      .eq("role", body.role)
-      .neq("participant_id", body.participant_id);
-    const demoted = incumbents?.[0]?.participant_id ?? null;
-    if (incumbents && incumbents.length > 0) {
-      const { error: demoteErr } = await service
+    // Only 主组长 is a single seat, so only that pick displaces anyone.
+    // A group may carry several 副组长 — picking one ADDS to them.
+    let demoted: string | null = null;
+    if (body.role === "zu_zhang") {
+      const { data: incumbents } = await service
         .from("event_seat_assignments")
-        .update({ role: "participant" })
-        .in(
-          "id",
-          incumbents.map((i) => i.id),
-        );
-      if (demoteErr) {
-        return NextResponse.json({ error: demoteErr.message }, { status: 500 });
+        .select("id, participant_id")
+        .eq("group_id", target.id)
+        .eq("role", "zu_zhang")
+        .neq("participant_id", body.participant_id);
+      demoted = incumbents?.[0]?.participant_id ?? null;
+      if (incumbents && incumbents.length > 0) {
+        const { error: demoteErr } = await service
+          .from("event_seat_assignments")
+          .update({ role: "participant" })
+          .in(
+            "id",
+            incumbents.map((i) => i.id),
+          );
+        if (demoteErr) {
+          return NextResponse.json({ error: demoteErr.message }, { status: 500 });
+        }
       }
     }
 

@@ -26,6 +26,7 @@ import type {
   ZuZhangTier,
 } from "@/lib/grouping/types";
 import { GroupsImportDialog } from "./GroupsImportDialog";
+import { GroupsBulkBar } from "./GroupsBulkBar";
 import { LeaderPickerDialog } from "./LeaderPickerDialog";
 import type { LeaderRole } from "./LeaderPickerDialog";
 
@@ -61,6 +62,8 @@ export function GroupsClient(props: Props) {
   const [leaderPick, setLeaderPick] = useState<
     { groupId: string; role: LeaderRole } | null
   >(null);
+  // Phase 4 — multi-selection, keyed on assignment_id and spanning cards.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   // Single open role-popover across the whole page. Click another row
   // → previous popover closes. Click anywhere outside a row → all close.
   const [openMemberId, setOpenMemberId] = useState<string | null>(null);
@@ -534,6 +537,185 @@ export function GroupsClient(props: Props) {
     }
   }
 
+  // Where each selectable member currently sits, for the bulk bar's
+  // summary and the swap precondition.
+  const memberIndex = useMemo(() => {
+    const idx = new Map<
+      string,
+      { member: GroupBuilderMember; groupNo: number; groupId: string }
+    >();
+    for (const g of props.groups) {
+      for (const m of g.members) {
+        idx.set(m.assignment_id, {
+          member: m,
+          groupNo: g.group_no,
+          groupId: g.id,
+        });
+      }
+    }
+    return idx;
+  }, [props.groups]);
+
+  // A refresh can retire assignment rows out from under the selection —
+  // someone else's edit, or our own bulk unassign. Drop the dead ids so a
+  // later bulk call never ships a stale one.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set([...prev].filter((id) => memberIndex.has(id)));
+      return live.size === prev.size ? prev : live;
+    });
+  }, [memberIndex]);
+
+  const selectedIds = useMemo(() => [...selected], [selected]);
+  const selectedGroupNos = useMemo(() => {
+    const nos = new Set<number>();
+    for (const id of selectedIds) {
+      const hit = memberIndex.get(id);
+      if (hit) nos.add(hit.groupNo);
+    }
+    return [...nos].sort((a, b) => a - b);
+  }, [selectedIds, memberIndex]);
+
+  // Swap is defined only for two people in two different groups.
+  const canSwap = selectedIds.length === 2 && selectedGroupNos.length === 2;
+  const swapHint =
+    selectedIds.length !== 2
+      ? "Select exactly two people to swap."
+      : selectedGroupNos.length !== 2
+        ? "Both are in the same group — pick one from each."
+        : "";
+
+  function toggleMember(assignmentId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(assignmentId)) next.delete(assignmentId);
+      else next.add(assignmentId);
+      return next;
+    });
+  }
+
+  function toggleGroup(assignmentIds: string[], select: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of assignmentIds) {
+        if (select) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
+
+  async function bulkPatch(
+    payload: Record<string, unknown>,
+    describe: (json: {
+      affected?: number;
+      skipped_locked?: number;
+      skipped_group_nos?: number[];
+      roles_preserved?: boolean;
+      a_to_group_no?: number;
+      b_to_group_no?: number;
+    }) => string,
+    failMsg: string,
+  ) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/members`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+        affected?: number;
+        skipped_locked?: number;
+        skipped_group_nos?: number[];
+        roles_preserved?: boolean;
+        a_to_group_no?: number;
+        b_to_group_no?: number;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? failMsg);
+        return;
+      }
+      setError(describe(json));
+      setSelected(new Set());
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBulkMove(toGroupNo: number) {
+    await bulkPatch(
+      {
+        action: "bulk_move",
+        assignment_ids: selectedIds,
+        to_group_no: toGroupNo,
+      },
+      (json) => {
+        const n = json.affected ?? 0;
+        const parts = [`✓ Moved ${n} → #${toGroupNo}`];
+        if (json.skipped_group_nos?.length) {
+          parts.push(
+            `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
+          );
+        }
+        if (n > 0) parts.push("roles reset to member");
+        return parts.join(" · ");
+      },
+      "Bulk move failed",
+    );
+  }
+
+  async function handleBulkUnassign() {
+    await bulkPatch(
+      { action: "bulk_remove", assignment_ids: selectedIds },
+      (json) => {
+        const n = json.affected ?? 0;
+        const parts = [`✓ Unassigned ${n}`];
+        if (json.skipped_group_nos?.length) {
+          parts.push(
+            `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
+          );
+        }
+        return parts.join(" · ");
+      },
+      "Bulk unassign failed",
+    );
+  }
+
+  async function handleSwap() {
+    if (!canSwap) return;
+    const [idA, idB] = selectedIds;
+    const a = memberIndex.get(idA);
+    const b = memberIndex.get(idB);
+    await bulkPatch(
+      { action: "swap", assignment_id_a: idA, assignment_id_b: idB },
+      (json) => {
+        const nameA = a ? memberLabel(a.member) : "A";
+        const nameB = b ? memberLabel(b.member) : "B";
+        const parts = [
+          `✓ Swapped ${nameA} ⇄ ${nameB} (#${a?.groupNo} ⇄ #${b?.groupNo})`,
+        ];
+        parts.push(
+          json.roles_preserved
+            ? "roles kept"
+            : "mixed roles — both reset to member",
+        );
+        return parts.join(" · ");
+      },
+      "Swap failed",
+    );
+  }
+
   async function handleGenerate() {
     if (!props.canGenerate) return;
     if (busy) return;
@@ -645,9 +827,10 @@ export function GroupsClient(props: Props) {
             zu_zhang:
               pickGroup.members.find((m) => m.role === "zu_zhang")
                 ?.participant_id ?? null,
-            fu_zu_zhang:
-              pickGroup.members.find((m) => m.role === "fu_zu_zhang")
-                ?.participant_id ?? null,
+            // Several 副组长 per group is normal, so this is a list.
+            fu_zu_zhang: pickGroup.members
+              .filter((m) => m.role === "fu_zu_zhang")
+              .map((m) => m.participant_id),
           }}
           onPick={(participantId, role) =>
             handleAssignLeader(pickGroup.id, participantId, role)
@@ -673,11 +856,14 @@ export function GroupsClient(props: Props) {
 
       {/* Floating toast — fixed so a rejected move/add is visible no matter
           where on the page the admin acted (a group card can be scrolled far
-          below the old top-of-page banner). Success messages start with ✓. */}
+          below the old top-of-page banner). Success messages start with ✓.
+          Rides above the bulk bar when a selection is live. */}
       {error ? (
         <div
           role="status"
-          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] max-w-[92vw] flex items-center gap-3 rounded-[var(--radius-md)] border px-4 py-2.5 text-[12.5px] shadow-[var(--shadow-elevated)] ${
+          className={`fixed ${
+            selected.size > 0 ? "bottom-[76px]" : "bottom-6"
+          } left-1/2 -translate-x-1/2 z-[70] max-w-[92vw] flex items-center gap-3 rounded-[var(--radius-md)] border px-4 py-2.5 text-[12.5px] shadow-[var(--shadow-elevated)] ${
             error.startsWith("✓")
               ? "border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink-soft)]"
               : "border-[var(--cinnabar)]/50 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
@@ -731,6 +917,9 @@ export function GroupsClient(props: Props) {
                 onPickLeader={(role) =>
                   setLeaderPick({ groupId: g.id, role })
                 }
+                selectedIds={selected}
+                onToggleMember={toggleMember}
+                onToggleGroup={toggleGroup}
                 openMemberId={openMemberId}
                 setOpenMemberId={setOpenMemberId}
                 expandedMemberId={expandedMemberId}
@@ -742,6 +931,20 @@ export function GroupsClient(props: Props) {
             <div className="mt-4">
               <AddGroupButton onAdd={handleAddGroup} disabled={busy} />
             </div>
+          ) : null}
+          {props.canEdit && selected.size > 0 ? (
+            <GroupsBulkBar
+              count={selected.size}
+              groupNos={selectedGroupNos}
+              allGroupNos={props.groups.map((g) => g.group_no)}
+              canSwap={canSwap}
+              swapHint={swapHint}
+              busy={busy}
+              onMove={handleBulkMove}
+              onUnassign={handleBulkUnassign}
+              onSwap={handleSwap}
+              onClear={() => setSelected(new Set())}
+            />
           ) : null}
         </>
       )}
@@ -1102,6 +1305,9 @@ function GroupCard({
   onDeleteGroup,
   onSetQualification,
   onPickLeader,
+  selectedIds,
+  onToggleMember,
+  onToggleGroup,
   onMove,
   onRemove,
   groupNos,
@@ -1133,6 +1339,9 @@ function GroupCard({
     qualification: StudentQualification | null,
   ) => Promise<void>;
   onPickLeader: (role: LeaderRole) => void;
+  selectedIds: Set<string>;
+  onToggleMember: (assignmentId: string) => void;
+  onToggleGroup: (assignmentIds: string[], select: boolean) => void;
   openMemberId: string | null;
   setOpenMemberId: (id: string | null) => void;
   expandedMemberId: string | null;
@@ -1180,6 +1389,13 @@ function GroupCard({
   // picker there — unlock is the deliberate first step.
   const canPickLeader = canEdit && !group.locked;
 
+  const selectedHere = group.members.filter((m) =>
+    selectedIds.has(m.assignment_id),
+  ).length;
+  const allSelected =
+    group.members.length > 0 && selectedHere === group.members.length;
+  const someSelected = selectedHere > 0;
+
   // Family co-occurrence — allowed for manual placement, but flagged. A
   // member is "family together" when one of their family-partner region_ids
   // is also present in this same group.
@@ -1188,6 +1404,12 @@ function GroupCard({
   );
   const familyTogether = group.members.filter((m) =>
     m.family_partner_region_ids.some((r) => groupRegionSet.has(r)),
+  );
+
+  // Suspected duplicate people. Unlike family, the twin's location doesn't
+  // matter — the same person being in the event twice is the problem.
+  const duplicated = group.members.filter(
+    (m) => m.duplicate_partners.length > 0,
   );
 
   return (
@@ -1295,6 +1517,26 @@ function GroupCard({
                 .join(", ")}`}
             >
               ⚠ 家人同组 · family
+            </span>
+          ) : null}
+          {duplicated.length > 0 ? (
+            <span
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/55 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
+              title={`Same person appears more than once in this event (matched on phone/email). Merge or drop the extra record before finalising: ${duplicated
+                .map(
+                  (m) =>
+                    `${m.region_id ?? memberLabel(m)} ↔ ${m.duplicate_partners
+                      .map(
+                        (d) =>
+                          `${d.region_id ?? d.label}${
+                            d.group_no ? ` (#${d.group_no})` : " (unassigned)"
+                          }`,
+                      )
+                      .join(", ")}`,
+                )
+                .join(" · ")}`}
+            >
+              ⧉ 疑似重复 · duplicate
             </span>
           ) : null}
         </div>
@@ -1410,6 +1652,27 @@ function GroupCard({
           <table className="w-full text-[11.5px]">
             <thead className="bg-[var(--paper-deep)]/40 border-b border-[var(--paper-shadow)]/60 text-[9.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
               <tr>
+                {canEdit ? (
+                  <th className="text-left px-1.5 py-1.5 font-medium w-[22px]">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={(el) => {
+                        // Partial selection reads as neither on nor off.
+                        if (el) el.indeterminate = someSelected && !allSelected;
+                      }}
+                      onChange={(e) =>
+                        onToggleGroup(
+                          group.members.map((m) => m.assignment_id),
+                          e.target.checked,
+                        )
+                      }
+                      className="accent-[var(--cinnabar)] align-middle cursor-pointer"
+                      aria-label={`Select all in group ${group.group_no}`}
+                      title={`Select all in #${group.group_no}`}
+                    />
+                  </th>
+                ) : null}
                 <th className="text-left px-2 py-1.5 font-medium w-[26px]" aria-label="Role" />
                 <th className="text-left px-2 py-1.5 font-medium w-[60px]">ID</th>
                 <th className="text-left px-2 py-1.5 font-medium">Name</th>
@@ -1431,6 +1694,8 @@ function GroupCard({
                     groupRegionSet.has(r),
                   )}
                   canEdit={canEdit}
+                  isSelected={selectedIds.has(m.assignment_id)}
+                  onToggleSelect={onToggleMember}
                   // Flip popover upward when the row is in the bottom
                   // half — otherwise the qualification submenu (~280px
                   // tall) extends past the card.
@@ -1490,6 +1755,8 @@ function MemberRow({
   groupNos,
   familyInGroup,
   canEdit,
+  isSelected,
+  onToggleSelect,
   popoverFlipUp,
   onSetRole,
   onSetPin,
@@ -1509,6 +1776,8 @@ function MemberRow({
   // (empty = none). Non-empty highlights the row + shows a 家人 marker.
   familyInGroup: string[];
   canEdit: boolean;
+  isSelected: boolean;
+  onToggleSelect: (assignmentId: string) => void;
   popoverFlipUp: boolean;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
   onSetPin: (
@@ -1548,6 +1817,10 @@ function MemberRow({
         className={`relative border-b border-[var(--paper-shadow)]/40 last:border-b-0 ${roleTone} ${
           hasFamilyHere ? "ring-1 ring-inset ring-[var(--gold)]/60 bg-[var(--gold-soft)]/30" : ""
         } ${
+          isSelected
+            ? "ring-1 ring-inset ring-[var(--cinnabar)]/55 bg-[var(--cinnabar-wash)]/45"
+            : ""
+        } ${
           canEdit ? "cursor-pointer hover:bg-[var(--paper-deep)]/35" : ""
         }`}
         title={
@@ -1561,6 +1834,23 @@ function MemberRow({
           setOpen(!isOpen);
         }}
       >
+        {canEdit ? (
+          // Checkbox owns its own click so ticking someone for a bulk
+          // action never also pops their role menu open.
+          <td
+            className="px-1.5 py-1.5 align-middle"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggleSelect(member.assignment_id)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="accent-[var(--cinnabar)] align-middle cursor-pointer"
+              aria-label={`Select ${name}`}
+            />
+          </td>
+        ) : null}
         <td className="px-2 py-1.5 align-middle">
           {member.role === "zu_zhang" ? (
             <span
@@ -1590,6 +1880,21 @@ function MemberRow({
                 title={`Family with ${familyInGroup.join(", ")} in this group`}
               >
                 👪 家人
+              </span>
+            ) : null}
+            {member.duplicate_partners.length > 0 ? (
+              <span
+                className="inline-flex items-center h-[15px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/60 bg-[var(--cinnabar-wash)] text-[8.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
+                title={`Looks like the same person as ${member.duplicate_partners
+                  .map(
+                    (d) =>
+                      `${d.region_id ?? d.label}${
+                        d.group_no ? ` in #${d.group_no}` : " (unassigned)"
+                      } — same ${d.matched_on}`,
+                  )
+                  .join("; ")}`}
+              >
+                ⧉ 重复
               </span>
             ) : null}
           </span>
@@ -1813,7 +2118,7 @@ function MemberRow({
       </tr>
       {isExpanded ? (
         <tr className="border-b border-[var(--paper-shadow)]/40 bg-[var(--paper)]/60">
-          <td colSpan={7} className="px-3 py-2.5">
+          <td colSpan={canEdit ? 8 : 7} className="px-3 py-2.5">
             <MemberDetail member={member} />
           </td>
         </tr>

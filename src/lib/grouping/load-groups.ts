@@ -44,6 +44,25 @@ export type GroupBuilderEvent = {
   group_size_max: number;
 };
 
+// Another participant record that looks like the SAME HUMAN as this one —
+// a returning student who registered twice under a second email, say. The
+// DB's UNIQUE (event_id, participant_id) stops one record being seated
+// twice; it can do nothing about one person holding two records, which is
+// what actually shows up as the same face in two groups.
+//
+// Deliberately carries no phone/email — the match is computed server-side
+// and only the verdict crosses the wire.
+export type DuplicatePartner = {
+  participant_id: string;
+  region_id: string | null;
+  // Display name; duplicates frequently pre-date region_id assignment.
+  label: string;
+  // Where the other record currently sits. null = unassigned.
+  group_no: number | null;
+  // "phone", "email", or "phone + email".
+  matched_on: string;
+};
+
 export type GroupBuilderMember = {
   // event_seat_assignments.id — the row-level identity used by drag-drop.
   assignment_id: string;
@@ -87,6 +106,10 @@ export type GroupBuilderMember = {
   language_fluency: "en" | "cn" | "both" | null;
   // Region IDs of conflict-pair partners enrolled in the same event.
   conflict_partner_region_ids: string[];
+  // Other enrolled records that look like the same person. Unlike family
+  // (only a problem in the SAME group), a duplicate is a problem wherever
+  // the twin sits, so this spans groups.
+  duplicate_partners: DuplicatePartner[];
 };
 
 export type GroupBuilderGroup = {
@@ -236,6 +259,9 @@ type ParticipantRow = {
   family_of_participant_id: string | null;
   energy_profile: "high" | "medium" | "quiet" | null;
   language_fluency: "en" | "cn" | "both" | null;
+  // Duplicate-person detection only. Never forwarded to the client.
+  phone: string | null;
+  email: string | null;
 };
 
 type EnrollmentPin = {
@@ -323,7 +349,8 @@ export async function loadGroupBuilder(
          goal_dimensions, student_qualification,
          motivation_tag, has_special_contribution, times_led_groups,
          family_of_participant_id,
-         energy_profile, language_fluency`,
+         energy_profile, language_fluency,
+         phone, email`,
       )
       .in("id", allParticipantIds)
       .returns<ParticipantRow[]>();
@@ -488,6 +515,9 @@ export async function loadGroupBuilder(
           energy_profile: p?.energy_profile ?? null,
           language_fluency: p?.language_fluency ?? null,
           conflict_partner_region_ids: p ? conflictPartnerRegionIds(p.id) : [],
+          // Filled in below — detection needs every enrolled participant
+          // hydrated, which happens after this map runs.
+          duplicate_partners: [],
         };
       })
       .sort((a, b) => roleOrder(a.role) - roleOrder(b.role));
@@ -575,7 +605,8 @@ export async function loadGroupBuilder(
            zu_zhang_dimensions, zu_zhang_core_traits,
            goal_dimensions, student_qualification,
            motivation_tag, has_special_contribution, times_led_groups,
-           family_of_participant_id`,
+           family_of_participant_id,
+           phone, email`,
         )
         .in("id", missingPids)
         .returns<ParticipantRow[]>();
@@ -642,6 +673,88 @@ export async function loadGroupBuilder(
     const groupNo = groupNoById.get(a.group_id);
     if (groupNo == null) continue;
     placementByPid.set(a.participant_id, { group_no: groupNo, role: a.role });
+  }
+
+  // Duplicate-person detection across the enrolled roster.
+  //
+  // Matched on phone and email ONLY. Name is deliberately excluded: with a
+  // few hundred Chinese names, collisions are routine and legitimate — a
+  // name-based scan of this event returned 150+ pairs, essentially all
+  // false. Phone and email are near-conclusive by comparison.
+  //
+  // Phone keys on the LAST 8 DIGITS so the same number written with and
+  // without a country code still matches (+65 8611 1315 vs 8611 1315),
+  // which is how these records diverge in practice.
+  //
+  // Email is matched exactly — `+tag` addresses are NOT folded together,
+  // because a `+student` variant is usually a deliberate second account.
+  function phoneKey(raw: string | null): string | null {
+    const digits = (raw ?? "").replace(/\D/g, "");
+    if (digits.length < 7) return null;
+    return digits.length >= 8 ? digits.slice(-8) : digits;
+  }
+  function emailKey(raw: string | null): string | null {
+    const e = (raw ?? "").trim().toLowerCase();
+    return e.length > 0 ? e : null;
+  }
+
+  const dupAdj = new Map<string, Map<string, Set<string>>>();
+  {
+    const buckets = new Map<string, string[]>();
+    for (const e of enrolPinsRes.data ?? []) {
+      const p = participantById.get(e.participant_id);
+      if (!p) continue;
+      const pk = phoneKey(p.phone);
+      if (pk) {
+        const k = `phone:${pk}`;
+        buckets.set(k, [...(buckets.get(k) ?? []), p.id]);
+      }
+      const ek = emailKey(p.email);
+      if (ek) {
+        const k = `email:${ek}`;
+        buckets.set(k, [...(buckets.get(k) ?? []), p.id]);
+      }
+    }
+    for (const [key, pids] of buckets) {
+      if (pids.length < 2) continue;
+      const kind = key.startsWith("phone:") ? "phone" : "email";
+      for (const a of pids) {
+        for (const b of pids) {
+          if (a === b) continue;
+          if (!dupAdj.has(a)) dupAdj.set(a, new Map());
+          const inner = dupAdj.get(a)!;
+          if (!inner.has(b)) inner.set(b, new Set());
+          inner.get(b)!.add(kind);
+        }
+      }
+    }
+  }
+
+  function duplicatePartners(pid: string): DuplicatePartner[] {
+    const partners = dupAdj.get(pid);
+    if (!partners) return [];
+    const out: DuplicatePartner[] = [];
+    for (const [otherId, kinds] of partners) {
+      const other = participantById.get(otherId);
+      if (!other) continue;
+      out.push({
+        participant_id: otherId,
+        region_id: other.region_id,
+        label:
+          other.name_cn ?? other.name_en ?? other.region_id ?? "unnamed record",
+        group_no: placementByPid.get(otherId)?.group_no ?? null,
+        matched_on: [...kinds].sort().join(" + "),
+      });
+    }
+    return out.sort((a, b) =>
+      (a.region_id ?? "").localeCompare(b.region_id ?? ""),
+    );
+  }
+
+  for (const g of builderGroups) {
+    for (const m of g.members) {
+      m.duplicate_partners = duplicatePartners(m.participant_id);
+    }
   }
 
   const zuZhangRoster: GroupBuilderLeaderCandidate[] = [];

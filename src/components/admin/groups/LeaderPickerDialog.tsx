@@ -50,9 +50,9 @@ type Props = {
   // Primary growth goals declared by this group's current members. Used to
   // show how much of the group's demand a candidate's strengths cover.
   groupGoals: GrowthDimension[];
-  // Who holds each slot right now, so the dialog can mark them and label
-  // the action as a replacement.
-  currentHolders: Record<LeaderRole, string | null>;
+  // Who currently holds each role in this group. 主组长 is a single seat
+  // (picking replaces); a group may carry several 副组长 (picking adds).
+  currentHolders: { zu_zhang: string | null; fu_zu_zhang: string[] };
   onPick: (participantId: string, role: LeaderRole) => Promise<void>;
   onClose: () => void;
 };
@@ -157,7 +157,14 @@ export function LeaderPickerDialog({
   }, [candidates, query, rosterOnly, wantedTier, goalSet]);
 
   const rosterCount = candidates.filter((c) => c.serving).length;
-  const holder = currentHolders[role];
+  // Everyone already holding the picked role here — one for 主, possibly
+  // several for 副.
+  const heldBy =
+    role === "zu_zhang"
+      ? currentHolders.zu_zhang
+        ? [currentHolders.zu_zhang]
+        : []
+      : currentHolders.fu_zu_zhang;
 
   async function pick(participantId: string) {
     if (pending) return;
@@ -226,11 +233,15 @@ export function LeaderPickerDialog({
                 }`}
               >
                 {ROLE_LABEL[r].cn}
-                {currentHolders[r] ? (
-                  <span className="ml-1.5 text-[9.5px] opacity-70">seated</span>
-                ) : (
-                  <span className="ml-1.5 text-[9.5px] opacity-70">empty</span>
-                )}
+                <span className="ml-1.5 text-[9.5px] opacity-70">
+                  {r === "zu_zhang"
+                    ? currentHolders.zu_zhang
+                      ? "seated"
+                      : "empty"
+                    : currentHolders.fu_zu_zhang.length > 0
+                      ? `${currentHolders.fu_zu_zhang.length} seated`
+                      : "empty"}
+                </span>
               </button>
             ))}
           </div>
@@ -253,10 +264,15 @@ export function LeaderPickerDialog({
               All enrolled · 全部
             </label>
           </div>
-          {holder ? (
+          {role === "zu_zhang" && heldBy.length > 0 ? (
             <p className="text-[11px] text-[var(--ink-faint)]">
-              Picking replaces the current {ROLE_LABEL[role].cn} — they stay in
-              the group as a member.
+              主组长 is a single seat — picking replaces the current one, who
+              stays in the group as a member.
+            </p>
+          ) : role === "fu_zu_zhang" ? (
+            <p className="text-[11px] text-[var(--ink-faint)]">
+              A group can carry several 副组长 — picking adds one, it doesn&rsquo;t
+              replace anyone.
             </p>
           ) : null}
         </div>
@@ -281,7 +297,7 @@ export function LeaderPickerDialog({
           ) : (
             <ul className="flex flex-col gap-1">
               {rows.map(({ c, covers, tierMatch }) => {
-                const isHolder = holder === c.participant_id;
+                const isHolder = heldBy.includes(c.participant_id);
                 const busy = pending === c.participant_id;
                 return (
                   <li key={c.participant_id}>
