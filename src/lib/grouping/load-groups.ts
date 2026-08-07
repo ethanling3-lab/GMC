@@ -14,6 +14,7 @@ import type {
   RosterShortfall,
   SeatingMode,
   StudentQualification,
+  ZuZhangCoreTrait,
   ZuZhangTier,
 } from "./types";
 import type { MotivationTag } from "@/lib/participants-query";
@@ -135,12 +136,42 @@ export type GroupBuilderUnassigned = {
   zu_zhang_tier: ZuZhangTier | null;
 };
 
+// One pickable 组长 for the leader picker (Phase 3). Sourced from the
+// per-event curated roster (enrollments.serving_as_zu_zhang) and hydrated
+// with the effective tier/grade the algorithm would use, plus where they
+// currently sit in THIS event so the picker can warn about poaching a
+// leader who is already seated elsewhere.
+//
+// `serving: false` entries are never produced by the loader — the client
+// synthesises them from the groups/unassigned payload when the admin
+// widens the picker beyond the curated roster.
+export type GroupBuilderLeaderCandidate = {
+  participant_id: string;
+  region_id: string | null;
+  name_en: string | null;
+  name_cn: string | null;
+  is_old_student: boolean;
+  // true = on the event's curated 组长 roster.
+  serving: boolean;
+  // Effective tier/grade (per-event override ?? participant global).
+  tier: ZuZhangTier | null;
+  grade: number | null;
+  dimensions: GrowthDimension[];
+  core_traits: ZuZhangCoreTrait[];
+  times_led_groups: number;
+  // Current placement in this event. null group_no = unassigned.
+  current_group_no: number | null;
+  current_role: GroupMemberRole | null;
+};
+
 export type GroupBuilderData = {
   event: GroupBuilderEvent;
   // Tables-mode payload.
   groups: GroupBuilderGroup[];
   // Enrolled-but-unassigned participants (tables mode).
   unassigned: GroupBuilderUnassigned[];
+  // Curated 组长 roster — feeds the per-group leader picker.
+  zu_zhang_roster: GroupBuilderLeaderCandidate[];
   // Cushion-mode payload.
   cushions: GroupBuilderCushion[];
   // Total approved + paid enrolments (used by the generate button + the
@@ -598,6 +629,63 @@ export async function loadGroupBuilder(
     rosterShortfalls = computeRosterShortfalls(roster, kByClass);
   }
 
+  // Curated 组长 roster for the leader picker. Runs after the block above
+  // because that's what hydrates participantById for enrolled participants
+  // who aren't seated in any group yet.
+  const groupNoById = new Map(groups.map((g) => [g.id, g.group_no]));
+  const placementByPid = new Map<
+    string,
+    { group_no: number; role: GroupMemberRole }
+  >();
+  for (const a of assignments) {
+    if (!a.group_id) continue;
+    const groupNo = groupNoById.get(a.group_id);
+    if (groupNo == null) continue;
+    placementByPid.set(a.participant_id, { group_no: groupNo, role: a.role });
+  }
+
+  const zuZhangRoster: GroupBuilderLeaderCandidate[] = [];
+  for (const e of enrolPinsRes.data ?? []) {
+    if (!e.serving_as_zu_zhang) continue;
+    const p = participantById.get(e.participant_id);
+    if (!p) continue;
+    const placement = placementByPid.get(p.id) ?? null;
+    zuZhangRoster.push({
+      participant_id: p.id,
+      region_id: p.region_id,
+      name_en: p.name_en,
+      name_cn: p.name_cn,
+      is_old_student: p.is_old_student ?? false,
+      serving: true,
+      // Untiered curated leaders are still listed (the picker flags them);
+      // the ALGORITHM skips them, which is exactly why the admin needs to
+      // see and place them by hand.
+      tier: e.zu_zhang_tier_for_event ?? p.zu_zhang_tier ?? null,
+      grade: e.zu_zhang_grade_for_event ?? p.zu_zhang_grade ?? null,
+      dimensions: p.zu_zhang_dimensions ?? [],
+      core_traits: (p.zu_zhang_core_traits ?? []) as ZuZhangCoreTrait[],
+      times_led_groups: p.times_led_groups ?? 0,
+      current_group_no: placement?.group_no ?? null,
+      current_role: placement?.role ?? null,
+    });
+  }
+  const TIER_ORDER: Record<ZuZhangTier, number> = {
+    key_recruitment: 0,
+    recruitment: 1,
+    maintenance: 2,
+    auxiliary: 3,
+  };
+  zuZhangRoster.sort((a, b) => {
+    const ta = a.tier ? TIER_ORDER[a.tier] : 9;
+    const tb = b.tier ? TIER_ORDER[b.tier] : 9;
+    if (ta !== tb) return ta - tb;
+    // Higher grade = more prominent leader, so it sorts first.
+    const ga = a.grade ?? -1;
+    const gb = b.grade ?? -1;
+    if (ga !== gb) return gb - ga;
+    return (a.region_id ?? "").localeCompare(b.region_id ?? "");
+  });
+
   // Unassigned pool — enrolled (approved/paid) participants with no current
   // group assignment. participantById was hydrated above to cover every
   // enrolled participant (missingPids block), so lookups resolve.
@@ -635,6 +723,7 @@ export async function loadGroupBuilder(
     event,
     groups: builderGroups,
     unassigned,
+    zu_zhang_roster: zuZhangRoster,
     cushions,
     enrolment_count: enrolCountRes.count ?? 0,
     roster_shortfalls: rosterShortfalls,

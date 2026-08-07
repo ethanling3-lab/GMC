@@ -23,7 +23,13 @@ export const runtime = "nodejs";
 //       held that role in the same group when the new role is unique
 //       (zu_zhang).
 //
-// Audits as groups.member_moved or groups.role_changed accordingly.
+//   { action: "assign_leader", group_id, participant_id, role }
+//     - Seat a curated 组长 straight into a group's 主/副 slot, moving
+//       them in from anywhere (unassigned, another group, another
+//       group's leadership) in a single call.
+//
+// Audits as groups.member_moved / groups.role_changed /
+// groups.leader_assigned accordingly.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -90,6 +96,18 @@ const RemoveMemberBody = z.object({
   assignment_id: z.string().uuid(),
 });
 
+// Seat a curated 组长 directly into a group's 主/副 leader slot in ONE
+// call — the roster picker's write path. Collapses the old three-step
+// dance (find in pool → add_member → set_role) and works whether the
+// pick is currently unassigned, a plain member elsewhere, or leading
+// another group. Whoever held the slot is demoted to participant.
+const AssignLeaderBody = z.object({
+  action: z.literal("assign_leader"),
+  group_id: z.string().uuid(),
+  participant_id: z.string().uuid(),
+  role: z.enum(["zu_zhang", "fu_zu_zhang"]),
+});
+
 const Body = z.discriminatedUnion("action", [
   MoveBody,
   RoleBody,
@@ -100,6 +118,7 @@ const Body = z.discriminatedUnion("action", [
   EditedBody,
   AddMemberBody,
   RemoveMemberBody,
+  AssignLeaderBody,
 ]);
 
 // Stamp a group as hand-edited so persistGroupingResult protects it from
@@ -390,6 +409,164 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       metadata: { event_id: eventId, participant_id: assignment.participant_id },
     });
     return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "assign_leader") {
+    const { data: target } = await service
+      .from("event_groups")
+      .select("id, event_id, group_no, locked, leader_participant_id")
+      .eq("id", body.group_id)
+      .maybeSingle();
+    if (!target || target.event_id !== eventId) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    if (target.locked) {
+      return NextResponse.json(
+        {
+          error: "target_group_locked",
+          detail: `Group ${target.group_no} is locked. Unlock it before changing its leaders.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    const { data: enrol } = await service
+      .from("enrollments")
+      .select("id")
+      .eq("event_id", eventId)
+      .eq("participant_id", body.participant_id)
+      .in("status", ["approved", "paid"])
+      .maybeSingle();
+    if (!enrol) {
+      return NextResponse.json(
+        { error: "not_enrolled", detail: "Not an approved/paid enrolment." },
+        { status: 409 },
+      );
+    }
+
+    const { data: prior } = await service
+      .from("event_seat_assignments")
+      .select("id, group_id, role")
+      .eq("event_id", eventId)
+      .eq("participant_id", body.participant_id)
+      .maybeSingle();
+
+    // Pulling someone OUT of a locked group is the same hard fence the
+    // move path enforces. Tier mismatch / group size / family stay soft —
+    // the picker flags them, the admin decides.
+    let priorGroupNo: number | null = null;
+    if (prior?.group_id && prior.group_id !== target.id) {
+      const { data: priorGroup } = await service
+        .from("event_groups")
+        .select("id, group_no, locked")
+        .eq("id", prior.group_id)
+        .maybeSingle();
+      if (priorGroup?.locked) {
+        return NextResponse.json(
+          {
+            error: "source_group_locked",
+            detail: `Group ${priorGroup.group_no} is locked. Unlock it before moving that person out.`,
+          },
+          { status: 409 },
+        );
+      }
+      priorGroupNo = priorGroup?.group_no ?? null;
+    }
+
+    if (prior && prior.group_id === target.id && prior.role === body.role) {
+      return NextResponse.json({ ok: true, unchanged: true });
+    }
+
+    // Demote whoever currently holds this slot in the target group.
+    const { data: incumbents } = await service
+      .from("event_seat_assignments")
+      .select("id, participant_id")
+      .eq("group_id", target.id)
+      .eq("role", body.role)
+      .neq("participant_id", body.participant_id);
+    const demoted = incumbents?.[0]?.participant_id ?? null;
+    if (incumbents && incumbents.length > 0) {
+      const { error: demoteErr } = await service
+        .from("event_seat_assignments")
+        .update({ role: "participant" })
+        .in(
+          "id",
+          incumbents.map((i) => i.id),
+        );
+      if (demoteErr) {
+        return NextResponse.json({ error: demoteErr.message }, { status: 500 });
+      }
+    }
+
+    // Upsert on (event_id, participant_id) so this one call handles all
+    // three source states. Seats are cleared — the grouping changed, so
+    // any floor-plan placement is stale until Auto-place re-runs.
+    const { error: upErr } = await service
+      .from("event_seat_assignments")
+      .upsert(
+        {
+          event_id: eventId,
+          participant_id: body.participant_id,
+          group_id: target.id,
+          role: body.role,
+          shape_id: null,
+          seat_no: null,
+        },
+        { onConflict: "event_id,participant_id" },
+      );
+    if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
+
+    // Leader-pointer bookkeeping. leader_participant_id tracks the 主组长
+    // only, so it follows a zu_zhang pick and clears when the group's own
+    // 组长 is demoted into the 副 slot.
+    if (body.role === "zu_zhang") {
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: body.participant_id })
+        .eq("id", target.id);
+    } else if (target.leader_participant_id === body.participant_id) {
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: null })
+        .eq("id", target.id);
+    }
+    if (prior?.group_id && prior.group_id !== target.id && prior.role === "zu_zhang") {
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: null })
+        .eq("id", prior.group_id);
+    }
+
+    await markGroupEdited(service, target.id);
+    if (prior?.group_id && prior.group_id !== target.id) {
+      await markGroupEdited(service, prior.group_id);
+    }
+
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.leader_assigned",
+      entity: "event_groups",
+      entity_id: target.id,
+      before: {
+        group_id: prior?.group_id ?? null,
+        role: prior?.role ?? null,
+      },
+      after: { group_id: target.id, role: body.role },
+      metadata: {
+        event_id: eventId,
+        participant_id: body.participant_id,
+        to_group_no: target.group_no,
+        from_group_no: priorGroupNo,
+        demoted_participant_id: demoted,
+        via: "leader_picker",
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      demoted_participant_id: demoted,
+      from_group_no: priorGroupNo,
+    });
   }
 
   if (body.action === "add_member") {

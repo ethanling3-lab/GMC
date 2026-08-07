@@ -84,6 +84,7 @@ export default async function GroupsPage({
           enrolmentCount={data.enrolment_count}
           groups={data.groups}
           unassigned={data.unassigned}
+          zuZhangRoster={data.zu_zhang_roster}
           cushions={data.cushions}
           canEdit={!isReadOnly}
           canGenerate={canGenerate}

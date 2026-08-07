@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   GroupBuilderCushion,
   GroupBuilderGroup,
+  GroupBuilderLeaderCandidate,
   GroupBuilderMember,
   GroupBuilderUnassigned,
 } from "@/lib/grouping/load-groups";
@@ -25,6 +26,8 @@ import type {
   ZuZhangTier,
 } from "@/lib/grouping/types";
 import { GroupsImportDialog } from "./GroupsImportDialog";
+import { LeaderPickerDialog } from "./LeaderPickerDialog";
+import type { LeaderRole } from "./LeaderPickerDialog";
 
 // Mode-aware client surface for the GroupBuilder. Table mode renders a
 // stack of group cards; all reassignment is click-based (member menu →
@@ -39,6 +42,7 @@ type Props = {
   enrolmentCount: number;
   groups: GroupBuilderGroup[];
   unassigned: GroupBuilderUnassigned[];
+  zuZhangRoster: GroupBuilderLeaderCandidate[];
   cushions: GroupBuilderCushion[];
   canEdit: boolean;
   canGenerate: boolean;
@@ -53,6 +57,10 @@ export function GroupsClient(props: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  // Which group's leader picker is open, and which slot it opened on.
+  const [leaderPick, setLeaderPick] = useState<
+    { groupId: string; role: LeaderRole } | null
+  >(null);
   // Single open role-popover across the whole page. Click another row
   // → previous popover closes. Click anywhere outside a row → all close.
   const [openMemberId, setOpenMemberId] = useState<string | null>(null);
@@ -412,6 +420,120 @@ export function GroupsClient(props: Props) {
     }
   }
 
+  // Candidate list for the leader picker: the curated roster from the
+  // server, plus everyone else enrolled synthesised from the payload the
+  // page already holds (so widening past the roster costs no extra bytes
+  // on the wire). Roster entries win on collision — they carry the
+  // per-event tier/grade overrides and core traits.
+  const leaderCandidates: GroupBuilderLeaderCandidate[] = useMemo(() => {
+    const byId = new Map<string, GroupBuilderLeaderCandidate>();
+    for (const c of props.zuZhangRoster) byId.set(c.participant_id, c);
+    for (const g of props.groups) {
+      for (const m of g.members) {
+        if (byId.has(m.participant_id)) continue;
+        byId.set(m.participant_id, {
+          participant_id: m.participant_id,
+          region_id: m.region_id,
+          name_en: m.name_en,
+          name_cn: m.name_cn,
+          is_old_student: m.is_old_student,
+          serving: false,
+          tier: m.zu_zhang_tier,
+          grade: m.zu_zhang_grade,
+          dimensions: m.zu_zhang_dimensions,
+          core_traits: [],
+          times_led_groups: m.times_led_groups,
+          current_group_no: g.group_no,
+          current_role: m.role,
+        });
+      }
+    }
+    for (const u of props.unassigned) {
+      if (byId.has(u.participant_id)) continue;
+      byId.set(u.participant_id, {
+        participant_id: u.participant_id,
+        region_id: u.region_id,
+        name_en: u.name_en,
+        name_cn: u.name_cn,
+        is_old_student: u.is_old_student,
+        serving: false,
+        tier: u.zu_zhang_tier,
+        // The unassigned chip payload is deliberately lightweight — these
+        // only populate for roster members and seated participants.
+        grade: null,
+        dimensions: [],
+        core_traits: [],
+        times_led_groups: 0,
+        current_group_no: null,
+        current_role: null,
+      });
+    }
+    return [...byId.values()];
+  }, [props.zuZhangRoster, props.groups, props.unassigned]);
+
+  const pickGroup = leaderPick
+    ? (props.groups.find((g) => g.id === leaderPick.groupId) ?? null)
+    : null;
+
+  async function handleAssignLeader(
+    groupId: string,
+    participantId: string,
+    role: LeaderRole,
+  ) {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/members`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "assign_leader",
+            group_id: groupId,
+            participant_id: participantId,
+            role,
+          }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+        demoted_participant_id?: string | null;
+        from_group_no?: number | null;
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Leader assignment failed");
+        return;
+      }
+      const group = props.groups.find((g) => g.id === groupId);
+      const who =
+        leaderCandidates.find((c) => c.participant_id === participantId);
+      const name =
+        who?.name_cn ?? who?.name_en ?? who?.region_id ?? "Leader";
+      const roleCn = role === "zu_zhang" ? "主组长" : "副组长";
+      const parts = [`✓ ${roleCn} · #${group?.group_no ?? "?"} → ${name}`];
+      if (json.from_group_no != null) {
+        parts.push(`moved from #${json.from_group_no}`);
+      }
+      if (json.demoted_participant_id) {
+        const prev = props.groups
+          .flatMap((g) => g.members)
+          .find((m) => m.participant_id === json.demoted_participant_id);
+        parts.push(
+          `${prev ? memberLabel(prev) : "previous holder"} → member`,
+        );
+      }
+      setError(parts.join(" · "));
+      setLeaderPick(null);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleGenerate() {
     if (!props.canGenerate) return;
     if (busy) return;
@@ -505,6 +627,35 @@ export function GroupsClient(props: Props) {
         />
       ) : null}
 
+      {leaderPick && pickGroup ? (
+        <LeaderPickerDialog
+          groupNo={pickGroup.group_no}
+          groupClass={pickGroup.group_class}
+          groupLabel={
+            pickGroup.name_cn
+            ?? pickGroup.name_en
+            ?? GROUP_CLASS_LABEL[pickGroup.group_class].cn
+          }
+          initialRole={leaderPick.role}
+          candidates={leaderCandidates}
+          groupGoals={pickGroup.members
+            .map((m) => m.goal_dimensions[0])
+            .filter((d): d is GrowthDimension => !!d)}
+          currentHolders={{
+            zu_zhang:
+              pickGroup.members.find((m) => m.role === "zu_zhang")
+                ?.participant_id ?? null,
+            fu_zu_zhang:
+              pickGroup.members.find((m) => m.role === "fu_zu_zhang")
+                ?.participant_id ?? null,
+          }}
+          onPick={(participantId, role) =>
+            handleAssignLeader(pickGroup.id, participantId, role)
+          }
+          onClose={() => setLeaderPick(null)}
+        />
+      ) : null}
+
       {hasShortfalls ? (
         <RosterShortfallBanner
           eventId={props.eventId}
@@ -577,6 +728,9 @@ export function GroupsClient(props: Props) {
                 onResetToAuto={handleResetToAuto}
                 onDeleteGroup={handleDeleteGroup}
                 onSetQualification={handleSetQualification}
+                onPickLeader={(role) =>
+                  setLeaderPick({ groupId: g.id, role })
+                }
                 openMemberId={openMemberId}
                 setOpenMemberId={setOpenMemberId}
                 expandedMemberId={expandedMemberId}
@@ -947,6 +1101,7 @@ function GroupCard({
   onResetToAuto,
   onDeleteGroup,
   onSetQualification,
+  onPickLeader,
   onMove,
   onRemove,
   groupNos,
@@ -977,6 +1132,7 @@ function GroupCard({
     participantId: string,
     qualification: StudentQualification | null,
   ) => Promise<void>;
+  onPickLeader: (role: LeaderRole) => void;
   openMemberId: string | null;
   setOpenMemberId: (id: string | null) => void;
   expandedMemberId: string | null;
@@ -1020,6 +1176,9 @@ function GroupCard({
   const hasZuZhang = group.members.some((m) => m.role === "zu_zhang");
   const hasFuZuZhang = group.members.some((m) => m.role === "fu_zu_zhang");
   const needsLeader = !hasZuZhang || !hasFuZuZhang;
+  // A locked group refuses leader writes server-side, so don't offer the
+  // picker there — unlock is the deliberate first step.
+  const canPickLeader = canEdit && !group.locked;
 
   // Family co-occurrence — allowed for manual placement, but flagged. A
   // member is "family together" when one of their family-partner region_ids
@@ -1091,20 +1250,42 @@ function GroupCard({
             </span>
           ) : null}
           {!hasZuZhang ? (
-            <span
-              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
-              title="No 组长 seated. Promote a member or curate one via /enrollments."
-            >
-              missing 主组长
-            </span>
+            canPickLeader ? (
+              <button
+                type="button"
+                onClick={() => onPickLeader("zu_zhang")}
+                className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar)] hover:text-[var(--paper)] hover:border-[var(--cinnabar)] focus-visible:ring-1 focus-visible:ring-[var(--cinnabar)] transition-[background-color,color,border-color] duration-[var(--dur-fast)]"
+                title="No 组长 seated — pick one from the curated roster."
+              >
+                missing 主组长 +
+              </button>
+            ) : (
+              <span
+                className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/45 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
+                title="No 组长 seated. Promote a member or curate one via /enrollments."
+              >
+                missing 主组长
+              </span>
+            )
           ) : null}
           {!hasFuZuZhang ? (
-            <span
-              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/45 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)]"
-              title="No 副组长 seated."
-            >
-              missing 副组长
-            </span>
+            canPickLeader ? (
+              <button
+                type="button"
+                onClick={() => onPickLeader("fu_zu_zhang")}
+                className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/45 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)] hover:border-[var(--gold)] hover:bg-[var(--gold)]/25 focus-visible:ring-1 focus-visible:ring-[var(--gold)] transition-[background-color,color,border-color] duration-[var(--dur-fast)]"
+                title="No 副组长 seated — pick one from the curated roster."
+              >
+                missing 副组长 +
+              </button>
+            ) : (
+              <span
+                className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/45 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)]"
+                title="No 副组长 seated."
+              >
+                missing 副组长
+              </span>
+            )
           ) : null}
           {familyTogether.length > 0 ? (
             <span
@@ -1118,6 +1299,16 @@ function GroupCard({
           ) : null}
         </div>
         <div className="inline-flex items-center gap-3">
+          {canPickLeader ? (
+            <button
+              type="button"
+              onClick={() => onPickLeader(hasZuZhang ? "fu_zu_zhang" : "zu_zhang")}
+              className="text-[10.5px] tracking-[0.04em] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
+              title="Pick 主组长 / 副组长 from the curated roster"
+            >
+              pick 组长
+            </button>
+          ) : null}
           {canEdit && group.edited && !group.locked ? (
             <button
               type="button"
