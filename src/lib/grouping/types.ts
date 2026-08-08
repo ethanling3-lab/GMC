@@ -292,6 +292,11 @@ export function isPriority(p: {
 //   重点 → recruitment + maintenance
 //   成长 → maintenance + auxiliary
 //   维护 → maintenance + auxiliary
+//
+// `main` is a single seat — exactly one 主组长 per group. `auxiliary` is
+// the tier expected of 副组长, of which a group may carry SEVERAL (all of
+// this same tier); it is not a headcount. The generator seeds one pair and
+// the admin adds further 副组长 by hand.
 export function requiredLeaderTiers(c: GroupClass): {
   main: ZuZhangTier;
   auxiliary: ZuZhangTier;

@@ -9,7 +9,13 @@
 //   1. Every enrolled participant assigned exactly once.
 //   2. Every group within [group_size_min, group_size_max].
 //   3. No two family_of-linked participants in same group.
-//   4. Every group has exactly one zu_zhang and at most one fu_zu_zhang.
+//   4. Every group has exactly one zu_zhang, and — for GENERATED output
+//      only — at most one fu_zu_zhang. Note this is the generator's
+//      contract, NOT a domain rule: a real group may carry several
+//      副组长, all of the class-required auxiliary tier. The generator
+//      seeds one and the admin adds any others by hand, so this
+//      validator (which only ever sees generated output) still expects
+//      one. Do not propagate "at most one 副组长" anywhere else.
 //   5. Each group's zu_zhang must be a curated 组长 from the roster
 //      AND its tier must match the class-required main tier.
 //   6. Each group's fu_zu_zhang (if present) must be from the roster
@@ -218,7 +224,7 @@ export function validateGrouping(
       errors.push({
         code: "too_many_fu_zu_zhang",
         group_no: g.group_no,
-        detail: `group ${g.group_no} has ${fuMembers.length} 副组长 — at most one allowed in the M6.0 model`,
+        detail: `group ${g.group_no} has ${fuMembers.length} 副组长 — the generator seeds one per group (a group may legitimately carry more, but only via manual editing)`,
       });
     } else if (fuMembers.length === 1) {
       const fu = fuMembers[0];
