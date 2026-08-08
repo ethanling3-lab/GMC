@@ -84,6 +84,7 @@ export type AuditAction =
   | "groups.member_removed"
   | "groups.leader_assigned"
   | "groups.imported_xlsx"
+  | "groups.undo_restored"
   | "floor_plan.shape_added"
   | "floor_plan.shape_moved"
   | "floor_plan.shape_deleted"

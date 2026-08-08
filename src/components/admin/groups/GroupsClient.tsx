@@ -35,6 +35,134 @@ import type { LeaderRole } from "./LeaderPickerDialog";
 // Move to #N / Unassign, and the Unassigned pool's + → #N) — no drag-drop.
 // Cushion mode renders a flat ranked preview list.
 
+// Where one participant sat before a mutation. group_id null = they were
+// unassigned, so restoring means taking them back out.
+type UndoEntry = {
+  participant_id: string;
+  group_id: string | null;
+  role: GroupMemberRole;
+};
+
+type UndoRecord = { label: string; entries: UndoEntry[] };
+
+// Optimistic layer.
+//
+// An UndoEntry describes "this participant sits in this group with this
+// role" — which is equally the shape of a PREDICTED post-action state. So
+// every mutation computes two overlays of the same type: the `before` one
+// becomes the undo record, the `after` one is applied to the rendered
+// state immediately and discarded when fresh server data lands.
+//
+// Reusing one shape for both is the point: a bespoke optimistic reducer
+// per action is where the client quietly drifts from the server.
+//
+// Everything a group card derives — pax count, leader chips, family and
+// duplicate flags — is computed from `group.members`, so it all follows
+// the overlay without extra work.
+function memberFromUnassigned(
+  u: GroupBuilderUnassigned,
+  role: GroupMemberRole,
+): GroupBuilderMember {
+  // Seating someone straight from the pool: the chip payload is
+  // deliberately lightweight, so the detail-only fields render empty for
+  // the sub-second before reconciliation replaces this with the real row.
+  return {
+    assignment_id: `optimistic:${u.participant_id}`,
+    enrollment_id: u.enrollment_id,
+    participant_id: u.participant_id,
+    region_id: u.region_id,
+    name_en: u.name_en,
+    name_cn: u.name_cn,
+    is_old_student: u.is_old_student,
+    influence_score: null,
+    financial_score: null,
+    pinned_group_no: null,
+    role,
+    zu_zhang_tier: u.zu_zhang_tier,
+    zu_zhang_grade: null,
+    zu_zhang_dimensions: [],
+    goal_dimensions: [],
+    qualification: u.qualification,
+    qualification_override: null,
+    qualification_computed: null,
+    effective_class: u.effective_class,
+    motivation_tag: null,
+    has_special_contribution: false,
+    times_led_groups: 0,
+    family_partner_region_ids: [],
+    energy_profile: null,
+    language_fluency: null,
+    conflict_partner_region_ids: [],
+    duplicate_partners: [],
+  };
+}
+
+function unassignedFromMember(m: GroupBuilderMember): GroupBuilderUnassigned {
+  return {
+    participant_id: m.participant_id,
+    enrollment_id: m.enrollment_id,
+    region_id: m.region_id,
+    name_en: m.name_en,
+    name_cn: m.name_cn,
+    is_old_student: m.is_old_student,
+    qualification: m.qualification,
+    effective_class: m.effective_class,
+    zu_zhang_tier: m.zu_zhang_tier,
+  };
+}
+
+function applyOverlay(
+  groups: GroupBuilderGroup[],
+  unassigned: GroupBuilderUnassigned[],
+  overlay: UndoEntry[] | null,
+): { groups: GroupBuilderGroup[]; unassigned: GroupBuilderUnassigned[] } {
+  if (!overlay || overlay.length === 0) return { groups, unassigned };
+  const target = new Map(overlay.map((e) => [e.participant_id, e]));
+  const memberByPid = new Map<string, GroupBuilderMember>();
+  for (const g of groups) {
+    for (const m of g.members) memberByPid.set(m.participant_id, m);
+  }
+  const pooledByPid = new Map(unassigned.map((u) => [u.participant_id, u]));
+
+  const nextGroups = groups.map((g) => {
+    const kept = g.members
+      .filter((m) => {
+        const t = target.get(m.participant_id);
+        return t ? t.group_id === g.id : true;
+      })
+      .map((m) => {
+        const t = target.get(m.participant_id);
+        return t && t.role !== m.role ? { ...m, role: t.role } : m;
+      });
+    const keptPids = new Set(kept.map((m) => m.participant_id));
+    const arrivals: GroupBuilderMember[] = [];
+    for (const e of overlay) {
+      if (e.group_id !== g.id || keptPids.has(e.participant_id)) continue;
+      const existing = memberByPid.get(e.participant_id);
+      if (existing) {
+        arrivals.push({ ...existing, role: e.role });
+        continue;
+      }
+      const pooled = pooledByPid.get(e.participant_id);
+      if (pooled) arrivals.push(memberFromUnassigned(pooled, e.role));
+    }
+    return { ...g, members: [...kept, ...arrivals] };
+  });
+
+  const nextUnassigned = unassigned.filter((u) => {
+    const t = target.get(u.participant_id);
+    return !(t && t.group_id);
+  });
+  const pooledPids = new Set(nextUnassigned.map((u) => u.participant_id));
+  for (const e of overlay) {
+    if (e.group_id !== null || pooledPids.has(e.participant_id)) continue;
+    const m = memberByPid.get(e.participant_id);
+    if (m) nextUnassigned.push(unassignedFromMember(m));
+  }
+
+  return { groups: nextGroups, unassigned: nextUnassigned };
+}
+
 type Props = {
   eventId: string;
   mode: SeatingMode;
@@ -64,6 +192,14 @@ export function GroupsClient(props: Props) {
   >(null);
   // Phase 4 — multi-selection, keyed on assignment_id and spanning cards.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Phase 5 — one-level undo. Holds where the affected people sat BEFORE
+  // the last mutation; the server restores it wholesale. Deliberately not
+  // a deep stack: anything older than the toast has probably been
+  // invalidated by a Regenerate or another admin, and an undo that
+  // silently half-applies is worse than none.
+  const [undoRecord, setUndoRecord] = useState<UndoRecord | null>(null);
+  // Predicted post-action state, shown until the server's version lands.
+  const [overlay, setOverlay] = useState<UndoEntry[] | null>(null);
   // Single open role-popover across the whole page. Click another row
   // → previous popover closes. Click anywhere outside a row → all close.
   const [openMemberId, setOpenMemberId] = useState<string | null>(null);
@@ -74,10 +210,15 @@ export function GroupsClient(props: Props) {
   // longer than success confirmations.
   useEffect(() => {
     if (!error) return;
-    const ms = error.startsWith("✓") ? 4000 : 8000;
-    const t = setTimeout(() => setError(null), ms);
+    // An undoable toast has to outlive a glance at the page to be worth
+    // anything — 4s is enough to read a confirmation, not to decide.
+    const ms = undoRecord ? 14000 : error.startsWith("✓") ? 4000 : 8000;
+    const t = setTimeout(() => {
+      setError(null);
+      setUndoRecord(null);
+    }, ms);
     return () => clearTimeout(t);
-  }, [error]);
+  }, [error, undoRecord]);
 
   useEffect(() => {
     if (!openMemberId) return;
@@ -92,6 +233,23 @@ export function GroupsClient(props: Props) {
     window.addEventListener("mousedown", onPointer);
     return () => window.removeEventListener("mousedown", onPointer);
   }, [openMemberId]);
+
+  // What the admin actually sees: server truth with any in-flight
+  // prediction laid over it. Everything below derives from this rather
+  // than from props, so a snapshot taken for undo matches what was on
+  // screen when the admin acted.
+  const view = useMemo(
+    () => applyOverlay(props.groups, props.unassigned, overlay),
+    [props.groups, props.unassigned, overlay],
+  );
+  const viewGroups = view.groups;
+
+  // Reconciliation point. props.groups gets a fresh identity on every
+  // server render, so a completed router.refresh() drops the prediction
+  // and server truth takes over — including when the server disagreed.
+  useEffect(() => {
+    setOverlay(null);
+  }, [props.groups, props.unassigned]);
 
   async function handleSetClass(groupId: string, groupClass: GroupClass) {
     setError(null);
@@ -120,6 +278,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -157,6 +316,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -189,6 +349,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -221,6 +382,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -249,6 +411,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -274,6 +437,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -302,6 +466,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -330,6 +495,7 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -338,6 +504,7 @@ export function GroupsClient(props: Props) {
   async function patchMembers(
     payload: Record<string, unknown>,
     failMsg: string,
+    undo?: UndoRecord,
   ) {
     setBusy(true);
     try {
@@ -355,11 +522,17 @@ export function GroupsClient(props: Props) {
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? failMsg);
+        setOverlay(null);
         return;
+      }
+      if (undo) {
+        setUndoRecord(undo);
+        setError(`✓ ${undo.label}`);
       }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -367,24 +540,70 @@ export function GroupsClient(props: Props) {
 
   async function handleAddMember(participantId: string, toGroupNo: number) {
     setError(null);
+    const entries = captureSnapshot(
+      [participantId],
+      [groupIdOfNo(toGroupNo)],
+    );
+    const seatTarget = groupIdOfNo(toGroupNo);
+    setOverlay([
+      { participant_id: participantId, group_id: seatTarget, role: "participant" },
+    ]);
     await patchMembers(
       { action: "add_member", participant_id: participantId, to_group_no: toGroupNo },
       "Add failed",
+      { label: `Seated into #${toGroupNo}`, entries },
     );
   }
 
   async function handleRemoveMember(assignmentId: string) {
     setError(null);
+    const hit = memberIndex.get(assignmentId);
+    const entries = captureSnapshot(
+      hit ? [hit.member.participant_id] : [],
+      [hit?.groupId ?? null],
+    );
+    if (hit) {
+      setOverlay([
+        {
+          participant_id: hit.member.participant_id,
+          group_id: null,
+          role: "participant",
+        },
+      ]);
+    }
     await patchMembers(
       { action: "remove_member", assignment_id: assignmentId },
       "Remove failed",
+      {
+        label: `Unassigned ${hit ? memberLabel(hit.member) : "member"}`,
+        entries,
+      },
     );
   }
 
   async function handleAddMemberMove(assignmentId: string, toGroupNo: number) {
+    setError(null);
+    const hit = memberIndex.get(assignmentId);
+    const entries = captureSnapshot(
+      hit ? [hit.member.participant_id] : [],
+      [hit?.groupId ?? null, groupIdOfNo(toGroupNo)],
+    );
+    if (hit) {
+      setOverlay([
+        {
+          participant_id: hit.member.participant_id,
+          group_id: groupIdOfNo(toGroupNo),
+          role: "participant",
+        },
+      ]);
+    }
     await patchMembers(
       { action: "move", assignment_id: assignmentId, to_group_no: toGroupNo },
       "Move failed",
+      {
+        label: `Moved ${hit ? memberLabel(hit.member) : "member"} → #${toGroupNo}`,
+        entries,
+      },
     );
   }
 
@@ -393,6 +612,22 @@ export function GroupsClient(props: Props) {
     role: GroupMemberRole,
   ) {
     setError(null);
+    const roleHit = memberIndex.get(assignmentId);
+    // Snapshot the whole group — promoting to 组长 demotes the incumbent.
+    const roleEntries = captureSnapshot(
+      roleHit ? [roleHit.member.participant_id] : [],
+      [roleHit?.groupId ?? null],
+    );
+    if (roleHit) {
+      setOverlay([
+        ...demotedIncumbent(roleHit.groupId, role, roleHit.member.participant_id),
+        {
+          participant_id: roleHit.member.participant_id,
+          group_id: roleHit.groupId,
+          role,
+        },
+      ]);
+    }
     setBusy(true);
     try {
       const res = await fetch(
@@ -413,11 +648,26 @@ export function GroupsClient(props: Props) {
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? "Role update failed");
+        setOverlay(null);
         return;
       }
+      const roleCn =
+        role === "zu_zhang"
+          ? "组长"
+          : role === "fu_zu_zhang"
+            ? "副组长"
+            : "member";
+      setUndoRecord({
+        label: `${roleHit ? memberLabel(roleHit.member) : "Member"} → ${roleCn}`,
+        entries: roleEntries,
+      });
+      setError(
+        `✓ ${roleHit ? memberLabel(roleHit.member) : "Member"} → ${roleCn}`,
+      );
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -431,7 +681,7 @@ export function GroupsClient(props: Props) {
   const leaderCandidates: GroupBuilderLeaderCandidate[] = useMemo(() => {
     const byId = new Map<string, GroupBuilderLeaderCandidate>();
     for (const c of props.zuZhangRoster) byId.set(c.participant_id, c);
-    for (const g of props.groups) {
+    for (const g of viewGroups) {
       for (const m of g.members) {
         if (byId.has(m.participant_id)) continue;
         byId.set(m.participant_id, {
@@ -451,7 +701,7 @@ export function GroupsClient(props: Props) {
         });
       }
     }
-    for (const u of props.unassigned) {
+    for (const u of view.unassigned) {
       if (byId.has(u.participant_id)) continue;
       byId.set(u.participant_id, {
         participant_id: u.participant_id,
@@ -472,10 +722,10 @@ export function GroupsClient(props: Props) {
       });
     }
     return [...byId.values()];
-  }, [props.zuZhangRoster, props.groups, props.unassigned]);
+  }, [props.zuZhangRoster, viewGroups, view.unassigned]);
 
   const pickGroup = leaderPick
-    ? (props.groups.find((g) => g.id === leaderPick.groupId) ?? null)
+    ? (viewGroups.find((g) => g.id === leaderPick.groupId) ?? null)
     : null;
 
   async function handleAssignLeader(
@@ -484,6 +734,16 @@ export function GroupsClient(props: Props) {
     role: LeaderRole,
   ) {
     setError(null);
+    // Both the target group (its incumbent may be displaced) and wherever
+    // the pick is coming from.
+    const leaderEntries = captureSnapshot(
+      [participantId],
+      [groupId, byParticipant.get(participantId)?.groupId ?? null],
+    );
+    setOverlay([
+      ...demotedIncumbent(groupId, role, participantId),
+      { participant_id: participantId, group_id: groupId, role },
+    ]);
     setBusy(true);
     try {
       const res = await fetch(
@@ -507,9 +767,10 @@ export function GroupsClient(props: Props) {
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? "Leader assignment failed");
+        setOverlay(null);
         return;
       }
-      const group = props.groups.find((g) => g.id === groupId);
+      const group = viewGroups.find((g) => g.id === groupId);
       const who =
         leaderCandidates.find((c) => c.participant_id === participantId);
       const name =
@@ -520,18 +781,20 @@ export function GroupsClient(props: Props) {
         parts.push(`moved from #${json.from_group_no}`);
       }
       if (json.demoted_participant_id) {
-        const prev = props.groups
+        const prev = viewGroups
           .flatMap((g) => g.members)
           .find((m) => m.participant_id === json.demoted_participant_id);
         parts.push(
           `${prev ? memberLabel(prev) : "previous holder"} → member`,
         );
       }
+      setUndoRecord({ label: parts[0].replace(/^✓ /, ""), entries: leaderEntries });
       setError(parts.join(" · "));
       setLeaderPick(null);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
@@ -544,7 +807,7 @@ export function GroupsClient(props: Props) {
       string,
       { member: GroupBuilderMember; groupNo: number; groupId: string }
     >();
-    for (const g of props.groups) {
+    for (const g of viewGroups) {
       for (const m of g.members) {
         idx.set(m.assignment_id, {
           member: m,
@@ -554,7 +817,68 @@ export function GroupsClient(props: Props) {
       }
     }
     return idx;
-  }, [props.groups]);
+  }, [viewGroups]);
+
+  // Participant-keyed view of the same data, for undo snapshots (which
+  // key on participant_id — assignment rows are deleted and recreated by
+  // unassign/restore, so their ids don't survive a round trip).
+  const byParticipant = useMemo(() => {
+    const idx = new Map<string, { groupId: string; role: GroupMemberRole }>();
+    for (const g of viewGroups) {
+      for (const m of g.members) {
+        idx.set(m.participant_id, { groupId: g.id, role: m.role });
+      }
+    }
+    return idx;
+  }, [viewGroups]);
+
+  // Predicted demotion: promoting into 主组长 displaces whoever holds it.
+  function demotedIncumbent(
+    groupId: string | null,
+    role: GroupMemberRole,
+    incomingPid: string,
+  ): UndoEntry[] {
+    if (!groupId || role !== "zu_zhang") return [];
+    const g = viewGroups.find((x) => x.id === groupId);
+    if (!g) return [];
+    return g.members
+      .filter(
+        (m) => m.role === "zu_zhang" && m.participant_id !== incomingPid,
+      )
+      .map((m) => ({
+        participant_id: m.participant_id,
+        group_id: groupId,
+        role: "participant" as GroupMemberRole,
+      }));
+  }
+
+  function groupIdOfNo(groupNo: number): string | null {
+    return viewGroups.find((g) => g.group_no === groupNo)?.id ?? null;
+  }
+
+  // Snapshot the named participants PLUS every member of the named groups.
+  // Generous on purpose: moves demote leaders, leader picks displace an
+  // incumbent, swaps reset roles — capturing only the people directly
+  // acted on would restore them and leave the collateral changes stuck.
+  function captureSnapshot(
+    participantIds: string[],
+    groupIds: Array<string | null> = [],
+  ): UndoEntry[] {
+    const pids = new Set(participantIds);
+    for (const gid of groupIds) {
+      if (!gid) continue;
+      const g = viewGroups.find((x) => x.id === gid);
+      if (g) for (const m of g.members) pids.add(m.participant_id);
+    }
+    return [...pids].map((pid) => {
+      const at = byParticipant.get(pid);
+      return {
+        participant_id: pid,
+        group_id: at?.groupId ?? null,
+        role: at?.role ?? ("participant" as GroupMemberRole),
+      };
+    });
+  }
 
   // A refresh can retire assignment rows out from under the selection —
   // someone else's edit, or our own bulk unassign. Drop the dead ids so a
@@ -617,6 +941,7 @@ export function GroupsClient(props: Props) {
       b_to_group_no?: number;
     }) => string,
     failMsg: string,
+    undo?: UndoRecord,
   ) {
     setError(null);
     setBusy(true);
@@ -641,19 +966,48 @@ export function GroupsClient(props: Props) {
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? failMsg);
+        setOverlay(null);
         return;
       }
       setError(describe(json));
+      if (undo) setUndoRecord(undo);
       setSelected(new Set());
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
   }
 
+  // Participant ids + every group in play, resolved before the write.
+  function bulkSnapshot(extraGroupIds: Array<string | null> = []): UndoEntry[] {
+    const pids: string[] = [];
+    const groupIds: Array<string | null> = [...extraGroupIds];
+    for (const id of selectedIds) {
+      const hit = memberIndex.get(id);
+      if (!hit) continue;
+      pids.push(hit.member.participant_id);
+      groupIds.push(hit.groupId);
+    }
+    return captureSnapshot(pids, groupIds);
+  }
+
   async function handleBulkMove(toGroupNo: number) {
+    const entries = bulkSnapshot([groupIdOfNo(toGroupNo)]);
+    const n = selectedIds.length;
+    const moveTarget = groupIdOfNo(toGroupNo);
+    setOverlay(
+      selectedIds
+        .map((id) => memberIndex.get(id))
+        .filter((h): h is NonNullable<typeof h> => !!h)
+        .map((h) => ({
+          participant_id: h.member.participant_id,
+          group_id: moveTarget,
+          role: "participant" as GroupMemberRole,
+        })),
+    );
     await bulkPatch(
       {
         action: "bulk_move",
@@ -661,26 +1015,39 @@ export function GroupsClient(props: Props) {
         to_group_no: toGroupNo,
       },
       (json) => {
-        const n = json.affected ?? 0;
-        const parts = [`✓ Moved ${n} → #${toGroupNo}`];
+        const moved = json.affected ?? 0;
+        const parts = [`✓ Moved ${moved} → #${toGroupNo}`];
         if (json.skipped_group_nos?.length) {
           parts.push(
             `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
           );
         }
-        if (n > 0) parts.push("roles reset to member");
+        if (moved > 0) parts.push("roles reset to member");
         return parts.join(" · ");
       },
       "Bulk move failed",
+      { label: `Moved ${n} → #${toGroupNo}`, entries },
     );
   }
 
   async function handleBulkUnassign() {
+    const entries = bulkSnapshot();
+    const n = selectedIds.length;
+    setOverlay(
+      selectedIds
+        .map((id) => memberIndex.get(id))
+        .filter((h): h is NonNullable<typeof h> => !!h)
+        .map((h) => ({
+          participant_id: h.member.participant_id,
+          group_id: null,
+          role: "participant" as GroupMemberRole,
+        })),
+    );
     await bulkPatch(
       { action: "bulk_remove", assignment_ids: selectedIds },
       (json) => {
-        const n = json.affected ?? 0;
-        const parts = [`✓ Unassigned ${n}`];
+        const affected = json.affected ?? 0;
+        const parts = [`✓ Unassigned ${affected}`];
         if (json.skipped_group_nos?.length) {
           parts.push(
             `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
@@ -689,6 +1056,7 @@ export function GroupsClient(props: Props) {
         return parts.join(" · ");
       },
       "Bulk unassign failed",
+      { label: `Unassigned ${n}`, entries },
     );
   }
 
@@ -697,6 +1065,24 @@ export function GroupsClient(props: Props) {
     const [idA, idB] = selectedIds;
     const a = memberIndex.get(idA);
     const b = memberIndex.get(idB);
+    const entries = bulkSnapshot();
+    if (a && b) {
+      // Mirrors the server rule: roles survive only when both sides hold
+      // the same one.
+      const same = a.member.role === b.member.role;
+      setOverlay([
+        {
+          participant_id: a.member.participant_id,
+          group_id: b.groupId,
+          role: same ? a.member.role : "participant",
+        },
+        {
+          participant_id: b.member.participant_id,
+          group_id: a.groupId,
+          role: same ? b.member.role : "participant",
+        },
+      ]);
+    }
     await bulkPatch(
       { action: "swap", assignment_id_a: idA, assignment_id_b: idB },
       (json) => {
@@ -713,13 +1099,72 @@ export function GroupsClient(props: Props) {
         return parts.join(" · ");
       },
       "Swap failed",
+      {
+        label: `Swapped ${a ? memberLabel(a.member) : "A"} ⇄ ${
+          b ? memberLabel(b.member) : "B"
+        }`,
+        entries,
+      },
     );
+  }
+
+  async function handleUndo() {
+    if (!undoRecord || busy) return;
+    const record = undoRecord;
+    setOverlay(record.entries);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/admin/events/${props.eventId}/groups/members`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "restore_snapshot",
+            entries: record.entries,
+            label: record.label,
+          }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        detail?: string;
+        restored?: number;
+        unassigned?: number;
+        dropped_missing_group?: number;
+        skipped_group_nos?: number[];
+      };
+      if (!res.ok) {
+        setError(json.detail ?? json.error ?? "Undo failed");
+        setOverlay(null);
+        return;
+      }
+      const parts = [`✓ Undone · ${record.label}`];
+      if (json.skipped_group_nos?.length) {
+        parts.push(
+          `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
+        );
+      }
+      if (json.dropped_missing_group) {
+        parts.push(`${json.dropped_missing_group} group(s) no longer exist`);
+      }
+      // No undo-of-undo — a second stack level is where this stops being
+      // predictable.
+      setUndoRecord(null);
+      setError(parts.join(" · "));
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleGenerate() {
     if (!props.canGenerate) return;
     if (busy) return;
-    const confirmMsg = props.groups.length > 0
+    const confirmMsg = viewGroups.length > 0
       ? "Re-generate groups? Existing groups + assignments will be replaced."
       : "Generate groups now? This will run the LLM and may take 20–30 seconds.";
     if (!window.confirm(confirmMsg)) return;
@@ -748,12 +1193,13 @@ export function GroupsClient(props: Props) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
+      setOverlay(null);
     } finally {
       setBusy(false);
     }
   }
 
-  const totalGroups = props.groups.length;
+  const totalGroups = viewGroups.length;
   const hasShortfalls = props.rosterShortfalls.length > 0;
 
   return (
@@ -870,9 +1316,22 @@ export function GroupsClient(props: Props) {
           }`}
         >
           <span>{error}</span>
+          {undoRecord ? (
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={busy}
+              className="inline-flex items-center h-[24px] px-2.5 rounded-[var(--radius-pill)] border border-current/35 text-[11.5px] tracking-[0.04em] hover:bg-current/10 disabled:opacity-40 transition-colors whitespace-nowrap"
+            >
+              ↩ Undo · 撤销
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => setError(null)}
+            onClick={() => {
+              setError(null);
+              setUndoRecord(null);
+            }}
             className="text-current/70 hover:text-current text-[14px] leading-none"
             aria-label="Dismiss"
           >
@@ -889,13 +1348,13 @@ export function GroupsClient(props: Props) {
         <>
           {props.canEdit ? (
             <UnassignedPool
-              items={props.unassigned}
+              items={view.unassigned}
               onAdd={handleAddMember}
-              groupNos={props.groups.map((g) => g.group_no)}
+              groupNos={viewGroups.map((g) => g.group_no)}
             />
           ) : null}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {props.groups.map((g) => (
+            {viewGroups.map((g) => (
               <GroupCard
                 key={g.id}
                 eventId={props.eventId}
@@ -903,7 +1362,7 @@ export function GroupsClient(props: Props) {
                 groupSizeMax={props.groupSizeMax}
                 groupSizeMin={props.groupSizeMin}
                 canEdit={props.canEdit}
-                groupNos={props.groups.map((g) => g.group_no)}
+                groupNos={viewGroups.map((g) => g.group_no)}
                 onMove={handleAddMemberMove}
                 onRemove={handleRemoveMember}
                 onSetRole={handleSetRole}
@@ -936,7 +1395,7 @@ export function GroupsClient(props: Props) {
             <GroupsBulkBar
               count={selected.size}
               groupNos={selectedGroupNos}
-              allGroupNos={props.groups.map((g) => g.group_no)}
+              allGroupNos={viewGroups.map((g) => g.group_no)}
               canSwap={canSwap}
               swapHint={swapHint}
               busy={busy}
@@ -1663,7 +2122,9 @@ function GroupCard({
                       }}
                       onChange={(e) =>
                         onToggleGroup(
-                          group.members.map((m) => m.assignment_id),
+                          group.members
+                            .map((m) => m.assignment_id)
+                            .filter((id) => !id.startsWith("optimistic:")),
                           e.target.checked,
                         )
                       }
@@ -1796,6 +2257,9 @@ function MemberRow({
   setExpanded: (v: boolean) => void;
 }) {
   const name = memberLabel(member);
+  // Row that only exists in the optimistic overlay — its assignment_id is
+  // a placeholder, so acting on it would 404. Inert until reconciliation.
+  const isPending = member.assignment_id.startsWith("optimistic:");
   const isLeader = member.role === "zu_zhang" || member.role === "fu_zu_zhang";
   const roleTone =
     member.role === "zu_zhang"
@@ -1829,7 +2293,7 @@ function MemberRow({
             : undefined
         }
         onClick={(e) => {
-          if (!canEdit) return;
+          if (!canEdit || isPending) return;
           e.stopPropagation();
           setOpen(!isOpen);
         }}
@@ -1844,9 +2308,10 @@ function MemberRow({
             <input
               type="checkbox"
               checked={isSelected}
+              disabled={isPending}
               onChange={() => onToggleSelect(member.assignment_id)}
               onPointerDown={(e) => e.stopPropagation()}
-              className="accent-[var(--cinnabar)] align-middle cursor-pointer"
+              className="accent-[var(--cinnabar)] align-middle cursor-pointer disabled:opacity-40"
               aria-label={`Select ${name}`}
             />
           </td>

@@ -36,6 +36,11 @@ export const runtime = "nodejs";
 //     - Exchange two members across two groups, sizes unchanged. Roles
 //       survive only when both sides hold the same role.
 //
+//   { action: "restore_snapshot", entries[], label? }
+//     - Universal undo. Puts the listed participants back into the
+//       (group_id, role) they held before some earlier mutation, and
+//       rebuilds leader pointers from what ends up seated.
+//
 // Audits as groups.member_moved / groups.role_changed /
 // groups.leader_assigned accordingly.
 
@@ -142,6 +147,33 @@ const SwapBody = z.object({
   assignment_id_b: z.string().uuid(),
 });
 
+// Phase 5 — the universal inverse. Rather than hand-writing an undo for
+// every action (and getting one of them subtly wrong), the client
+// snapshots where the affected people sat BEFORE a mutation and hands
+// that back here to restore. One mechanism undoes moves, swaps, bulk
+// ops, role changes and leader picks alike.
+//
+// Keyed on group_id rather than group_no: a Regenerate between the
+// action and the undo renumbers groups, and restoring someone into
+// whatever now answers to "#7" would be worse than not restoring them.
+// A group that no longer exists simply drops out of the restore.
+const RestoreBody = z.object({
+  action: z.literal("restore_snapshot"),
+  entries: z
+    .array(
+      z.object({
+        participant_id: z.string().uuid(),
+        // null = they were unassigned; restoring means removing them again.
+        group_id: z.string().uuid().nullable(),
+        role: z.enum(["zu_zhang", "fu_zu_zhang", "pai_zhang", "participant"]),
+      }),
+    )
+    .min(1)
+    .max(600),
+  // Echoed into the audit row so the log says what was undone.
+  label: z.string().max(200).optional(),
+});
+
 const Body = z.discriminatedUnion("action", [
   MoveBody,
   RoleBody,
@@ -156,6 +188,7 @@ const Body = z.discriminatedUnion("action", [
   BulkMoveBody,
   BulkRemoveBody,
   SwapBody,
+  RestoreBody,
 ]);
 
 // Stamp a group as hand-edited so persistGroupingResult protects it from
@@ -463,6 +496,159 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       metadata: { event_id: eventId, participant_id: assignment.participant_id },
     });
     return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "restore_snapshot") {
+    const pids = body.entries.map((e) => e.participant_id);
+
+    // Only restore people still enrolled — an entry whose enrolment was
+    // withdrawn since the snapshot must not be resurrected.
+    const { data: enrolled } = await service
+      .from("enrollments")
+      .select("participant_id")
+      .eq("event_id", eventId)
+      .in("participant_id", pids)
+      .in("status", ["approved", "paid"]);
+    const enrolledSet = new Set((enrolled ?? []).map((e) => e.participant_id));
+
+    const { data: allGroups } = await service
+      .from("event_groups")
+      .select("id, group_no, locked")
+      .eq("event_id", eventId);
+    const groupById = new Map((allGroups ?? []).map((g) => [g.id, g]));
+
+    // Where these people sit right now — needed to spot a locked CURRENT
+    // group, which blocks moving them out just as it does anywhere else.
+    const { data: current } = await service
+      .from("event_seat_assignments")
+      .select("participant_id, group_id")
+      .eq("event_id", eventId)
+      .in("participant_id", pids);
+    const currentGroupByPid = new Map(
+      (current ?? []).map((c) => [c.participant_id, c.group_id]),
+    );
+
+    const skippedLocked = new Set<number>();
+    const touched = new Set<string>();
+    const toUpsert: Array<{
+      event_id: string;
+      participant_id: string;
+      group_id: string;
+      role: string;
+      shape_id: null;
+      seat_no: null;
+    }> = [];
+    const toDelete: string[] = [];
+    let droppedMissingGroup = 0;
+
+    for (const e of body.entries) {
+      if (!enrolledSet.has(e.participant_id)) continue;
+
+      const currentGid = currentGroupByPid.get(e.participant_id) ?? null;
+      if (currentGid) {
+        const cg = groupById.get(currentGid);
+        if (cg?.locked) {
+          skippedLocked.add(cg.group_no);
+          continue;
+        }
+      }
+
+      if (e.group_id === null) {
+        if (currentGid) touched.add(currentGid);
+        toDelete.push(e.participant_id);
+        continue;
+      }
+
+      const target = groupById.get(e.group_id);
+      if (!target) {
+        // Group deleted or renumbered away since the snapshot.
+        droppedMissingGroup += 1;
+        continue;
+      }
+      if (target.locked) {
+        skippedLocked.add(target.group_no);
+        continue;
+      }
+      if (currentGid) touched.add(currentGid);
+      touched.add(target.id);
+      toUpsert.push({
+        event_id: eventId,
+        participant_id: e.participant_id,
+        group_id: target.id,
+        role: e.role,
+        shape_id: null,
+        seat_no: null,
+      });
+    }
+
+    if (toDelete.length > 0) {
+      const { error: delErr } = await service
+        .from("event_seat_assignments")
+        .delete()
+        .eq("event_id", eventId)
+        .in("participant_id", toDelete);
+      if (delErr) {
+        return NextResponse.json({ error: delErr.message }, { status: 500 });
+      }
+    }
+    if (toUpsert.length > 0) {
+      const { error: upErr } = await service
+        .from("event_seat_assignments")
+        .upsert(toUpsert, { onConflict: "event_id,participant_id" });
+      if (upErr) {
+        return NextResponse.json({ error: upErr.message }, { status: 500 });
+      }
+    }
+
+    // Rebuild leader_participant_id from what's actually seated now,
+    // rather than trying to infer it from the entries — the snapshot may
+    // only cover part of a group.
+    if (touched.size > 0) {
+      const touchedIds = [...touched];
+      await service
+        .from("event_groups")
+        .update({ leader_participant_id: null })
+        .in("id", touchedIds);
+      const { data: leaders } = await service
+        .from("event_seat_assignments")
+        .select("group_id, participant_id")
+        .in("group_id", touchedIds)
+        .eq("role", "zu_zhang");
+      for (const l of leaders ?? []) {
+        if (!l.group_id) continue;
+        await service
+          .from("event_groups")
+          .update({ leader_participant_id: l.participant_id })
+          .eq("id", l.group_id);
+      }
+      for (const gid of touchedIds) await markGroupEdited(service, gid);
+    }
+
+    await writeAuditLog({
+      actor_id: admin.id,
+      action: "groups.undo_restored",
+      entity: "event_seat_assignments",
+      entity_id: eventId,
+      after: { restored: toUpsert.length, unassigned: toDelete.length },
+      metadata: {
+        event_id: eventId,
+        undid: body.label ?? null,
+        entries: body.entries.length,
+        restored: toUpsert.length,
+        unassigned: toDelete.length,
+        dropped_missing_group: droppedMissingGroup,
+        skipped_locked_group_nos: [...skippedLocked].sort((a, b) => a - b),
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      restored: toUpsert.length,
+      unassigned: toDelete.length,
+      dropped_missing_group: droppedMissingGroup,
+      skipped_locked: skippedLocked.size,
+      skipped_group_nos: [...skippedLocked].sort((a, b) => a - b),
+    });
   }
 
   if (body.action === "bulk_move" || body.action === "bulk_remove") {
