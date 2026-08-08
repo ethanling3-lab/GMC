@@ -16,7 +16,7 @@
 // polish pass once we settle on a CJK font subset.
 
 import type { jsPDF as JsPDF } from "jspdf";
-import { exportFloorPlanPng } from "./export-png";
+import { exportFloorPlanPng, pageFromSvg } from "./export-png";
 import type { GroupRoster } from "@/components/admin/layout/types";
 
 export type PdfExportOptions = {
@@ -80,7 +80,17 @@ export async function exportFloorPlanPdf(
     paintCover(doc, W, H, meta, groups);
     doc.addPage();
   }
-  paintPlanPage(doc, W, H, meta, pngDataUrl, includeCover ? 2 : 1, includeCover ? 2 : 1);
+  const plan = pageFromSvg(svg);
+  paintPlanPage(
+    doc,
+    W,
+    H,
+    meta,
+    pngDataUrl,
+    plan.w / plan.h,
+    includeCover ? 2 : 1,
+    includeCover ? 2 : 1,
+  );
 
   return doc.output("blob");
 }
@@ -177,6 +187,9 @@ function paintPlanPage(
   H: number,
   meta: EventMeta,
   pngDataUrl: string,
+  // Aspect of the rendered plan image (page w/h from the canvas), so the image
+  // is fitted to the sheet correctly instead of against a fixed 5:3.
+  planAspect: number,
   pageNumber: number = 2,
   pageTotal: number = 2,
 ) {
@@ -196,7 +209,7 @@ function paintPlanPage(
   const marginBottom = 14;
   const availW = W - marginX * 2;
   const availH = H - marginTop - marginBottom;
-  const aspect = VB_W / VB_H;
+  const aspect = planAspect;
 
   let imgW = availW;
   let imgH = imgW / aspect;

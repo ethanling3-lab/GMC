@@ -8,6 +8,7 @@ import type {
   ProfileDeckRow,
 } from "./types";
 import type { SeatRole } from "@/components/admin/layout/types";
+import { tableNoByGroupId } from "@/lib/floor-plan/table-numbers";
 
 // Ordering note: the profile deck mirrors Dr Wu's per-event briefing flow,
 // which works table-by-table. So we order by:
@@ -87,6 +88,9 @@ export async function loadProfileDeck(
     .eq("event_id", eventId)
     .in("participant_id", participantIds);
   if (sErr) throw new Error(sErr.message);
+
+  // Which table each group sits at — the number the deck shows.
+  const tableNos = await tableNoByGroupId(supabase, { eventId });
   type SeatRow = {
     participant_id: string;
     role: SeatRole;
@@ -209,6 +213,7 @@ export async function loadProfileDeck(
       front_photo_url: p?.front_photo_url ?? null,
       enrollment_status: e.status,
       group_no: seat?.event_groups?.group_no ?? null,
+      table_no: seat?.group_id ? tableNos.get(seat.group_id) ?? null : null,
       group_name_en: seat?.event_groups?.name_en ?? null,
       group_name_cn: seat?.event_groups?.name_cn ?? null,
       group_class: seat?.event_groups?.group_class ?? null,

@@ -16,6 +16,20 @@
 
 import { VB_H, VB_W } from "@/components/admin/layout/types";
 
+/**
+ * The printable page size the canvas rendered, read off the live <svg>'s
+ * data-page-w/h. Falls back to the historical 300×180 for any SVG that
+ * predates those attributes.
+ */
+export function pageFromSvg(svg: SVGSVGElement): { w: number; h: number } {
+  const w = Number(svg.getAttribute("data-page-w"));
+  const h = Number(svg.getAttribute("data-page-h"));
+  return {
+    w: Number.isFinite(w) && w > 0 ? w : VB_W,
+    h: Number.isFinite(h) && h > 0 ? h : VB_H,
+  };
+}
+
 export type PngExportOptions = {
   // Multiplier on the source viewBox. e.g. pixelScale=12 → 3600×2160 PNG
   // (≈250dpi at A3 landscape). Default 12. Range advice: 8 = thumbnail,
@@ -85,9 +99,11 @@ export async function exportFloorPlanPng(
 
   // Force the source viewBox + explicit dimensions so the rasterizer doesn't
   // pick up the live SVG's responsive width/height ("100%").
-  const exportW = VB_W * pixelScale;
-  const exportH = VB_H * pixelScale;
-  clone.setAttribute("viewBox", `0 0 ${VB_W} ${VB_H}`);
+  // Read from the live node, not the module defaults — the page is per-event.
+  const page = pageFromSvg(liveSvg);
+  const exportW = page.w * pixelScale;
+  const exportH = page.h * pixelScale;
+  clone.setAttribute("viewBox", `0 0 ${page.w} ${page.h}`);
   clone.setAttribute("width", String(exportW));
   clone.setAttribute("height", String(exportH));
   clone.setAttribute("preserveAspectRatio", "xMidYMid meet");

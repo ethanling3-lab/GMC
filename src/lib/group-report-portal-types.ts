@@ -19,7 +19,14 @@ export type GroupReportSubmissionState = {
 };
 
 export type GroupReportFillData = {
-  group: { id: string; group_no: number; event_id: string };
+  group: {
+    id: string;
+    group_no: number;
+    // Table the group sits at — the number shown to the 组长. Null when the
+    // group isn't seated yet. See src/lib/group-number.ts.
+    table_no: number | null;
+    event_id: string;
+  };
   event: { id: string; title_en: string | null; title_cn: string | null };
   schema: GroupReportSchema;
   members: GroupReportMember[];
@@ -29,6 +36,7 @@ export type GroupReportFillData = {
 export type LeaderGroupReportItem = {
   group_id: string;
   group_no: number;
+  table_no: number | null;
   event_id: string;
   event_title: string | null;
   status: "draft" | "submitted" | null;

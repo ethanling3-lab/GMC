@@ -30,6 +30,10 @@ type EventRow = {
   seating_mode: "tables" | "cushions";
   group_size_min: number;
   group_size_max: number;
+  floor_plan_page_w: number | string;
+  floor_plan_page_h: number | string;
+  floor_plan_page_preset: string | null;
+  floor_plan_name_scale: number | string;
 };
 
 type ShapeRow = {
@@ -42,6 +46,8 @@ type ShapeRow = {
   rotation_deg: number | string;
   seat_count: number | null;
   seats_per_side: SquareSeats | null;
+  table_no: number | null;
+  name_scale: number | string | null;
   label_en: string | null;
   label_cn: string | null;
   group_id: string | null;
@@ -98,14 +104,15 @@ export default async function LayoutPage({
     supabase
       .from("events")
       .select(
-        "id, slug, title_en, title_cn, seating_mode, group_size_min, group_size_max",
+        "id, slug, title_en, title_cn, seating_mode, group_size_min, group_size_max, "
+        + "floor_plan_page_w, floor_plan_page_h, floor_plan_page_preset, floor_plan_name_scale",
       )
       .eq("id", eventId)
       .maybeSingle<EventRow>(),
     supabase
       .from("event_floor_plan_shapes")
       .select(
-        "id, kind, x_pct, y_pct, width_pct, height_pct, rotation_deg, seat_count, seats_per_side, label_en, label_cn, group_id, locked, z_order",
+        "id, kind, x_pct, y_pct, width_pct, height_pct, rotation_deg, seat_count, seats_per_side, table_no, name_scale, label_en, label_cn, group_id, locked, z_order",
       )
       .eq("event_id", eventId)
       .order("z_order", { ascending: true })
@@ -147,12 +154,28 @@ export default async function LayoutPage({
     rotation_deg: num(r.rotation_deg),
     seat_count: r.seat_count,
     seats_per_side: r.seats_per_side,
+    table_no: r.table_no,
+    name_scale: r.name_scale == null ? null : num(r.name_scale),
     label_en: r.label_en,
     label_cn: r.label_cn,
     group_id: r.group_id,
     locked: r.locked,
     z_order: r.z_order,
   }));
+
+  // Invert shapes.group_id → table_no so each roster can carry the number it
+  // displays. Built in memory from the shapes we already fetched — no extra
+  // query. This one map feeds the canvas labels, the inspector's group
+  // dropdown, and the client-side PPTX exporter (which cannot query).
+  const tableNoByGroup = new Map<string, number>();
+  for (const r of shapeRes.data ?? []) {
+    const row = r as ShapeRow;
+    if (row.group_id != null && row.table_no != null) {
+      if (!tableNoByGroup.has(row.group_id)) {
+        tableNoByGroup.set(row.group_id, row.table_no);
+      }
+    }
+  }
 
   // Build per-group rosters in seat order:
   //   zu_zhang → fu_zu_zhang → participant → pai_zhang
@@ -226,6 +249,7 @@ export default async function LayoutPage({
     return {
       id: g.id,
       group_no: g.group_no,
+      table_no: tableNoByGroup.get(g.id) ?? null,
       group_class: g.group_class,
       name_en: g.name_en,
       name_cn: g.name_cn,
@@ -277,6 +301,10 @@ export default async function LayoutPage({
           seating_mode: ev.seating_mode,
           group_size_min: ev.group_size_min,
           group_size_max: ev.group_size_max,
+          floor_plan_page_w: num(ev.floor_plan_page_w),
+          floor_plan_page_h: num(ev.floor_plan_page_h),
+          floor_plan_page_preset: ev.floor_plan_page_preset,
+          floor_plan_name_scale: num(ev.floor_plan_name_scale),
         }}
         initialShapes={shapes}
         groups={groups}

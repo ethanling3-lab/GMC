@@ -25,6 +25,7 @@ import type {
   StudentQualification,
   ZuZhangTier,
 } from "@/lib/grouping/types";
+import { groupNumber } from "@/lib/group-number";
 import { GroupsImportDialog } from "./GroupsImportDialog";
 import { GroupsBulkBar } from "./GroupsBulkBar";
 import { LeaderPickerDialog } from "./LeaderPickerDialog";
@@ -242,7 +243,23 @@ export function GroupsClient(props: Props) {
     () => applyOverlay(props.groups, props.unassigned, overlay),
     [props.groups, props.unassigned, overlay],
   );
-  const viewGroups = view.groups;
+  // Displayed in table order: seated groups by table number, unseated ones
+  // last (still by their internal number). The card grid then reads the same
+  // way the room does.
+  const viewGroups = useMemo(
+    () =>
+      [...view.groups].sort((a, b) => {
+        if (a.table_no != null && b.table_no != null) {
+          return a.table_no - b.table_no;
+        }
+        if (a.table_no != null) return -1;
+        if (b.table_no != null) return 1;
+        return a.group_no - b.group_no;
+      }),
+    [view.groups],
+  );
+
+  const unseatedCount = viewGroups.filter((g) => g.table_no == null).length;
 
   // Reconciliation point. props.groups gets a fresh identity on every
   // server render, so a completed router.refresh() drops the prediction
@@ -418,7 +435,13 @@ export function GroupsClient(props: Props) {
   }
 
   async function handleDeleteGroup(groupId: string, groupNo: number) {
-    if (!window.confirm(`Delete group #${groupNo}? It must be empty first.`)) return;
+    if (
+      !window.confirm(
+        `Delete group ${labelOfGroupNo(groupNo)}? It must be empty first.`,
+      )
+    ) {
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
@@ -776,9 +799,13 @@ export function GroupsClient(props: Props) {
       const name =
         who?.name_cn ?? who?.name_en ?? who?.region_id ?? "Leader";
       const roleCn = role === "zu_zhang" ? "主组长" : "副组长";
-      const parts = [`✓ ${roleCn} · #${group?.group_no ?? "?"} → ${name}`];
+      const parts = [
+        `✓ ${roleCn} · ${
+          group ? labelOfGroupNo(group.group_no) : "#?"
+        } → ${name}`,
+      ];
       if (json.from_group_no != null) {
-        parts.push(`moved from #${json.from_group_no}`);
+        parts.push(`moved from ${labelOfGroupNo(json.from_group_no)}`);
       }
       if (json.demoted_participant_id) {
         const prev = viewGroups
@@ -855,6 +882,25 @@ export function GroupsClient(props: Props) {
   function groupIdOfNo(groupNo: number): string | null {
     return viewGroups.find((g) => g.group_no === groupNo)?.id ?? null;
   }
+
+  // Every number the builder SENDS is a group_no (to_group_no, pins, import) —
+  // that's the internal key and it never changes. Every number it SHOWS is the
+  // table the group sits at. This maps one to the other for move dropdowns and
+  // API-response toasts, so labels can switch to table numbers without
+  // touching a single wire value.
+  const labelOfGroupNo = useMemo(() => {
+    const byNo = new Map<number, GroupBuilderGroup>(
+      viewGroups.map((g) => [g.group_no, g]),
+    );
+    return (groupNo: number): string => {
+      const g = byNo.get(groupNo);
+      if (!g) return `#${groupNo}`;
+      const label = groupNumber(g);
+      // Unseated groups carry the marker in TEXT, not colour: these labels land
+      // in native <select> options, and Safari ignores per-option styling.
+      return label.placed ? label.short : `⚠️ 未编桌 组${g.group_no}`;
+    };
+  }, [viewGroups]);
 
   // Snapshot the named participants PLUS every member of the named groups.
   // Generous on purpose: moves demote leaders, leader picks displace an
@@ -1019,7 +1065,9 @@ export function GroupsClient(props: Props) {
         const parts = [`✓ Moved ${moved} → #${toGroupNo}`];
         if (json.skipped_group_nos?.length) {
           parts.push(
-            `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
+            `skipped ${json.skipped_group_nos
+              .map((g) => labelOfGroupNo(g))
+              .join(", ")} (locked)`,
           );
         }
         if (moved > 0) parts.push("roles reset to member");
@@ -1050,7 +1098,9 @@ export function GroupsClient(props: Props) {
         const parts = [`✓ Unassigned ${affected}`];
         if (json.skipped_group_nos?.length) {
           parts.push(
-            `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
+            `skipped ${json.skipped_group_nos
+              .map((g) => labelOfGroupNo(g))
+              .join(", ")} (locked)`,
           );
         }
         return parts.join(" · ");
@@ -1089,7 +1139,9 @@ export function GroupsClient(props: Props) {
         const nameA = a ? memberLabel(a.member) : "A";
         const nameB = b ? memberLabel(b.member) : "B";
         const parts = [
-          `✓ Swapped ${nameA} ⇄ ${nameB} (#${a?.groupNo} ⇄ #${b?.groupNo})`,
+          `✓ Swapped ${nameA} ⇄ ${nameB} (${
+            a ? labelOfGroupNo(a.groupNo) : "#?"
+          } ⇄ ${b ? labelOfGroupNo(b.groupNo) : "#?"})`,
         ];
         parts.push(
           json.roles_preserved
@@ -1142,7 +1194,9 @@ export function GroupsClient(props: Props) {
       const parts = [`✓ Undone · ${record.label}`];
       if (json.skipped_group_nos?.length) {
         parts.push(
-          `skipped ${json.skipped_group_nos.map((g) => `#${g}`).join(", ")} (locked)`,
+          `skipped ${json.skipped_group_nos
+            .map((g) => labelOfGroupNo(g))
+            .join(", ")} (locked)`,
         );
       }
       if (json.dropped_missing_group) {
@@ -1258,6 +1312,7 @@ export function GroupsClient(props: Props) {
       {leaderPick && pickGroup ? (
         <LeaderPickerDialog
           groupNo={pickGroup.group_no}
+          labelOfGroupNo={labelOfGroupNo}
           groupClass={pickGroup.group_class}
           groupLabel={
             pickGroup.name_cn
@@ -1298,6 +1353,37 @@ export function GroupsClient(props: Props) {
           kByClass={props.kByClass}
           shortfalls={props.rosterShortfalls}
         />
+      ) : null}
+
+      {/* Group numbers come from the TABLE a group is seated at. Any group
+          still unseated falls back to its internal number, which lives in a
+          different number space — so surface the count and point at the fix
+          rather than letting two "#7"s sit side by side unexplained. */}
+      {props.mode === "tables" && unseatedCount > 0 && totalGroups > 0 ? (
+        <div
+          className="mb-4 flex items-baseline justify-between gap-3 rounded-[var(--radius-md)] border px-3.5 py-2.5"
+          style={{
+            borderColor: "rgba(185, 28, 28, 0.4)",
+            background: "rgba(185, 28, 28, 0.05)",
+          }}
+        >
+          <p className="text-[11.5px] leading-snug text-[var(--ink-soft)]">
+            <span style={{ color: "#B91C1C" }}>
+              ⚠️ {unseatedCount} group{unseatedCount === 1 ? "" : "s"} 未编桌 —
+              not seated at a table
+            </span>
+            <span className="ml-1.5 text-[var(--ink-faint)]">
+              — these still show their internal group number, not a table
+              number. Place them on the floor plan.
+            </span>
+          </p>
+          <a
+            href={`/admin/events/${props.eventId}/layout`}
+            className="shrink-0 text-[10.5px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)] hover:underline"
+          >
+            Floor plan · 平面
+          </a>
+        </div>
       ) : null}
 
       {/* Floating toast — fixed so a rejected move/add is visible no matter
@@ -1351,6 +1437,7 @@ export function GroupsClient(props: Props) {
               items={view.unassigned}
               onAdd={handleAddMember}
               groupNos={viewGroups.map((g) => g.group_no)}
+              labelOfGroupNo={labelOfGroupNo}
             />
           ) : null}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1363,6 +1450,7 @@ export function GroupsClient(props: Props) {
                 groupSizeMin={props.groupSizeMin}
                 canEdit={props.canEdit}
                 groupNos={viewGroups.map((g) => g.group_no)}
+                labelOfGroupNo={labelOfGroupNo}
                 onMove={handleAddMemberMove}
                 onRemove={handleRemoveMember}
                 onSetRole={handleSetRole}
@@ -1396,6 +1484,7 @@ export function GroupsClient(props: Props) {
               count={selected.size}
               groupNos={selectedGroupNos}
               allGroupNos={viewGroups.map((g) => g.group_no)}
+              labelOfGroupNo={labelOfGroupNo}
               canSwap={canSwap}
               swapHint={swapHint}
               busy={busy}
@@ -1415,10 +1504,12 @@ function UnassignedPool({
   items,
   onAdd,
   groupNos,
+  labelOfGroupNo,
 }: {
   items: GroupBuilderUnassigned[];
   onAdd: (participantId: string, toGroupNo: number) => Promise<void>;
   groupNos: number[];
+  labelOfGroupNo: (groupNo: number) => string;
 }) {
   return (
     <section className="mb-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)]/40 p-4">
@@ -1442,6 +1533,7 @@ function UnassignedPool({
               p={p}
               onAdd={onAdd}
               groupNos={groupNos}
+              labelOfGroupNo={labelOfGroupNo}
             />
           ))}
         </div>
@@ -1454,10 +1546,12 @@ function UnassignedChip({
   p,
   onAdd,
   groupNos,
+  labelOfGroupNo,
 }: {
   p: GroupBuilderUnassigned;
   onAdd: (participantId: string, toGroupNo: number) => Promise<void>;
   groupNos: number[];
+  labelOfGroupNo: (groupNo: number) => string;
 }) {
   const [picking, setPicking] = useState(false);
   const name = p.name_cn ?? p.name_en ?? p.region_id ?? "—";
@@ -1499,7 +1593,7 @@ function UnassignedChip({
             </option>
             {groupNos.map((n) => (
               <option key={n} value={n}>
-                #{n}
+                {labelOfGroupNo(n)}
               </option>
             ))}
           </select>
@@ -1770,6 +1864,7 @@ function GroupCard({
   onMove,
   onRemove,
   groupNos,
+  labelOfGroupNo,
   openMemberId,
   setOpenMemberId,
   expandedMemberId,
@@ -1781,6 +1876,7 @@ function GroupCard({
   groupSizeMin: number;
   canEdit: boolean;
   groupNos: number[];
+  labelOfGroupNo: (groupNo: number) => string;
   onMove: (assignmentId: string, toGroupNo: number) => Promise<void>;
   onRemove: (assignmentId: string) => Promise<void>;
   onSetRole: (assignmentId: string, role: GroupMemberRole) => Promise<void>;
@@ -1883,9 +1979,7 @@ function GroupCard({
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
         <div className="inline-flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-[11px] tabular-nums text-[var(--cinnabar-deep)]">
-            #{group.group_no}
-          </span>
+          <GroupNumberChip group={group} />
           <GroupNameInline
             group={group}
             canEdit={canEdit}
@@ -1988,7 +2082,9 @@ function GroupCard({
                       .map(
                         (d) =>
                           `${d.region_id ?? d.label}${
-                            d.group_no ? ` (#${d.group_no})` : " (unassigned)"
+                            d.group_no
+                              ? ` (${labelOfGroupNo(d.group_no)})`
+                              : " (unassigned)"
                           }`,
                       )
                       .join(", ")}`,
@@ -2025,7 +2121,7 @@ function GroupCard({
               type="button"
               onClick={() => onDeleteGroup(group.id, group.group_no)}
               className="text-[10.5px] tracking-[0.04em] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
-              title={`Delete group #${group.group_no}`}
+              title={`Delete group ${labelOfGroupNo(group.group_no)}`}
             >
               delete group
             </button>
@@ -2129,8 +2225,8 @@ function GroupCard({
                         )
                       }
                       className="accent-[var(--cinnabar)] align-middle cursor-pointer"
-                      aria-label={`Select all in group ${group.group_no}`}
-                      title={`Select all in #${group.group_no}`}
+                      aria-label={`Select all in group ${labelOfGroupNo(group.group_no)}`}
+                      title={`Select all in ${labelOfGroupNo(group.group_no)}`}
                     />
                   </th>
                 ) : null}
@@ -2151,6 +2247,7 @@ function GroupCard({
                   groupClass={group.group_class}
                   groupNo={group.group_no}
                   groupNos={groupNos}
+                  labelOfGroupNo={labelOfGroupNo}
                   familyInGroup={m.family_partner_region_ids.filter((r) =>
                     groupRegionSet.has(r),
                   )}
@@ -2214,6 +2311,7 @@ function MemberRow({
   groupClass,
   groupNo,
   groupNos,
+  labelOfGroupNo,
   familyInGroup,
   canEdit,
   isSelected,
@@ -2233,6 +2331,7 @@ function MemberRow({
   groupClass: GroupClass;
   groupNo: number;
   groupNos: number[];
+  labelOfGroupNo: (groupNo: number) => string;
   // Region IDs of this member's family partners who are ALSO in this group
   // (empty = none). Non-empty highlights the row + shows a 家人 marker.
   familyInGroup: string[];
@@ -2354,7 +2453,9 @@ function MemberRow({
                   .map(
                     (d) =>
                       `${d.region_id ?? d.label}${
-                        d.group_no ? ` in #${d.group_no}` : " (unassigned)"
+                        d.group_no
+                          ? ` in ${labelOfGroupNo(d.group_no)}`
+                          : " (unassigned)"
                       } — same ${d.matched_on}`,
                   )
                   .join("; ")}`}
@@ -2396,15 +2497,20 @@ function MemberRow({
               </span>
             ) : null}
             {member.pinned_group_no ? (
+              // A pin is the ONE number here that stays on group_no rather than
+              // switching to the table number. It is consumed at Regenerate
+              // time — before any table pairing exists, and persist renumbers
+              // survivors — so pinning to a table number is undefined. Labelled
+              // 组 (not 桌) and 分组前 to make the distinction explicit.
               <span
                 className="inline-flex items-center h-[14px] px-1 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 text-[9px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
                 title={
                   pinnedHere
-                    ? `Pinned to this group (#${member.pinned_group_no})`
-                    : `Pinned to group #${member.pinned_group_no} — currently in #${groupNo}`
+                    ? `Pinned to this group's slot (组 ${member.pinned_group_no}) — applied on the next Regenerate, before tables are assigned`
+                    : `Pinned to grouping slot 组 ${member.pinned_group_no} — currently in ${labelOfGroupNo(groupNo)}. Pins target the grouping slot, not a table.`
                 }
               >
-                📌{member.pinned_group_no}
+                📌组{member.pinned_group_no}
               </span>
             ) : null}
           </span>
@@ -2456,7 +2562,7 @@ function MemberRow({
                         .filter((n) => n !== groupNo)
                         .map((n) => (
                           <option key={n} value={n}>
-                            #{n}
+                            {labelOfGroupNo(n)}
                           </option>
                         ))}
                     </select>
@@ -2489,7 +2595,9 @@ function MemberRow({
                     }}
                     className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] text-[var(--cinnabar-deep)] whitespace-nowrap"
                   >
-                    {pinnedHere ? "Unpin · 取消固定" : `Pin here · 固定 #${groupNo}`}
+                    {pinnedHere
+                      ? "Unpin · 取消固定"
+                      : `Pin here · 分组前固定 组${groupNo}`}
                   </button>
                   {member.pinned_group_no != null && !pinnedHere ? (
                     <button
@@ -2501,7 +2609,7 @@ function MemberRow({
                       }}
                       className="px-2.5 py-1 text-left hover:bg-[var(--paper-deep)] text-[var(--ink-mute)] whitespace-nowrap"
                     >
-                      Clear pin · 取消固定 #{member.pinned_group_no}
+                      Clear pin · 取消固定 组{member.pinned_group_no}
                     </button>
                   ) : null}
                 </>
@@ -2701,6 +2809,45 @@ function ScoreInline({ value }: { value: number }) {
   );
 }
 
+// The group's displayed number — its TABLE number once seated.
+//
+// A seated group and an unseated one draw from two different number spaces
+// (table_no vs group_no), so a group at table 7 and an unseated group_no 7
+// would both render "#7". The unseated state therefore gets a dashed, muted
+// treatment plus a 未编桌 tag, and the tooltip always names the internal
+// number — which is what pins, move dropdowns and the XLSX importer resolve by.
+function GroupNumberChip({ group }: { group: GroupBuilderGroup }) {
+  const label = groupNumber(group);
+  if (label.placed) {
+    return (
+      <span
+        className="font-mono text-[11px] tabular-nums text-[var(--cinnabar-deep)]"
+        title={`Seated at table ${group.table_no} · 桌 ${group.table_no} (internally group #${group.group_no})`}
+      >
+        {label.short}
+      </span>
+    );
+  }
+  // Unseated reads as a warning, not as muted secondary text — an unnumbered
+  // group is unfinished work, and its number belongs to a different number
+  // space than every seated group around it.
+  return (
+    <span
+      className="inline-flex items-center gap-1 font-mono text-[11px] tabular-nums rounded-[3px] px-1.5 py-0.5 border"
+      style={{
+        color: "#B91C1C",
+        borderColor: "rgba(185, 28, 28, 0.45)",
+        background: "rgba(185, 28, 28, 0.06)",
+      }}
+      title={`Not seated at a table yet — this is the internal group number (组 ${group.group_no}), not a table number. Assign it a table on the floor plan.`}
+    >
+      <span aria-hidden="true">⚠️</span>
+      <span className="text-[9.5px] tracking-[0.1em]">未编桌</span>
+      <span className="opacity-70">组{group.group_no}</span>
+    </span>
+  );
+}
+
 function GroupNameInline({
   group,
   canEdit,
@@ -2715,9 +2862,11 @@ function GroupNameInline({
   const [cn, setCn] = useState(group.name_cn ?? "");
   const [saving, setSaving] = useState(false);
 
-  // Default display when admin hasn't set a name yet.
-  const fallbackEn = `Group ${group.group_no}`;
-  const fallbackCn = `组 ${group.group_no}`;
+  // Default display when admin hasn't set a name yet. Numbered from the table
+  // the group sits at, falling back to its internal number when unseated.
+  const label = groupNumber(group);
+  const fallbackEn = label.en;
+  const fallbackCn = label.cn;
   const displayEn = group.name_en?.trim() || fallbackEn;
   const displayCn = group.name_cn?.trim() || fallbackCn;
 

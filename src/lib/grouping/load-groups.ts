@@ -6,6 +6,7 @@ import {
   scoreToQualification,
 } from "./types";
 import { computeRosterShortfalls } from "./balance";
+import { tableNoByGroupId } from "@/lib/floor-plan/table-numbers";
 import type {
   GroupClass,
   GroupingZuZhang,
@@ -114,7 +115,12 @@ export type GroupBuilderMember = {
 
 export type GroupBuilderGroup = {
   id: string;
+  // The INTERNAL key. Every mutation the builder sends (to_group_no, pins,
+  // XLSX import) resolves by this, and it is never renumbered.
   group_no: number;
+  // Table number of the shape this group is paired to, or null when it isn't
+  // seated yet. This is the number the UI DISPLAYS — see src/lib/group-number.ts.
+  table_no: number | null;
   group_class: GroupClass;
   // Pass 2 — admin-curated name overrides (null = auto-format).
   name_en: string | null;
@@ -296,7 +302,8 @@ export async function loadGroupBuilder(
   if (!event) return { error: "event_not_found" };
 
   // Counts + assignments + groups in parallel — none depend on each other.
-  const [groupsRes, assignmentsRes, enrolPinsRes, enrolCountRes] = await Promise.all([
+  const [groupsRes, assignmentsRes, enrolPinsRes, enrolCountRes, tableNos] =
+    await Promise.all([
     supabase
       .from("event_groups")
       .select(
@@ -323,6 +330,10 @@ export async function loadGroupBuilder(
       .select("id", { count: "exact", head: true })
       .eq("event_id", eventId)
       .in("status", ["approved", "paid"]),
+    // Which table each group sits at. Returns an empty map for cushion-mode
+    // events (no table shapes), so every label there falls back to group_no
+    // exactly as before.
+    tableNoByGroupId(supabase, { eventId }),
   ]);
   if (groupsRes.error) return { error: groupsRes.error.message };
   if (assignmentsRes.error) return { error: assignmentsRes.error.message };
@@ -524,6 +535,7 @@ export async function loadGroupBuilder(
     return {
       id: g.id,
       group_no: g.group_no,
+      table_no: tableNos.get(g.id) ?? null,
       group_class: g.group_class,
       name_en: g.name_en,
       name_cn: g.name_cn,

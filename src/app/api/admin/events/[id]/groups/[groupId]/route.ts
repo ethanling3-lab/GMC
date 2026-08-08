@@ -44,7 +44,7 @@ export async function DELETE(_req: Request, { params }: RouteCtx) {
     return NextResponse.json(
       {
         error: "group_not_empty",
-        detail: `Group ${group.group_no} still has ${memberCount} member(s). Move them out first.`,
+        detail: `That group still has ${memberCount} member(s). Move them out first.`,
       },
       { status: 409 },
     );

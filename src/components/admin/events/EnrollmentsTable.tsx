@@ -902,7 +902,7 @@ export function EnrollmentsTable({
                                   e.stopPropagation();
                                   editPin(r.id, r.pinned_group_no ?? null);
                                 }}
-                                title="Pin to group # for next grouping run"
+                                title="Pin to a grouping slot (组 N) for the next grouping run. Slots are not table numbers — tables are assigned afterwards on the floor plan."
                                 className={`inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border text-[10px] tracking-[0.04em] transition-colors duration-[var(--dur-fast)] ${
                                   r.pinned_group_no
                                     ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)] hover:border-[var(--cinnabar)]/60"
@@ -910,7 +910,7 @@ export function EnrollmentsTable({
                                 }`}
                               >
                                 {r.pinned_group_no
-                                  ? `Pin · #${r.pinned_group_no}`
+                                  ? `Pin · 组 ${r.pinned_group_no}`
                                   : "Pin"}
                               </button>
                             ) : null}

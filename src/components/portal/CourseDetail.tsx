@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { CourseDetail as CourseDetailData } from "@/lib/course-portal-types";
 import type { LeaderGroupReportItem } from "@/lib/group-report-portal-types";
 import { AssignmentSubmit } from "@/components/portal/AssignmentSubmit";
+import { groupNumber } from "@/lib/group-number";
 
 type Tab = "overview" | "content" | "assignment" | "groups";
 
@@ -217,7 +218,7 @@ export function CourseDetail({
                           style={{ color: "inherit" }}
                         >
                           <span className="font-display text-[15px] text-[var(--ink)]">
-                            Group {r.group_no} · 第 {r.group_no} 组
+                            {groupNumber(r, "portal").bilingual}
                           </span>
                           <span className={`flex-none text-[10.5px] tracking-[0.12em] uppercase px-2.5 py-1.5 rounded-[var(--radius-pill)] ${tone}`}>
                             {statusLabel}

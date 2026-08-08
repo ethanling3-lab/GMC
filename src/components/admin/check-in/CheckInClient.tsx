@@ -13,6 +13,7 @@ import type {
 import { Sparkline } from "./Sparkline";
 import { GroupCompletionCard } from "./GroupCompletionCard";
 import { AbsenteeRow } from "./AbsenteeRow";
+import { groupNumber } from "@/lib/group-number";
 
 // Read-only check-in dashboard for the event organizer. The active
 // scanner + manual fallback lives on the sibling `/scan` route so door
@@ -240,7 +241,7 @@ export function CheckInClient({
                 </span>
                 {r.group_no !== null ? (
                   <span className="text-[var(--ink-soft)] text-[11px] tracking-[0.08em] uppercase tabular-nums">
-                    Group {r.group_no}
+                    {groupNumber(r).en}
                   </span>
                 ) : null}
                 <span className="text-[var(--ink-faint)] text-[10.5px] tracking-[0.06em] tabular-nums">

@@ -11,8 +11,15 @@
 //   * Cmd/Ctrl + wheel  → cursor-centered zoom (also fired by trackpad
 //                          pinch on macOS, which sends ctrlKey wheel events).
 //   * Bare wheel / 2-finger swipe → 2D pan in user-space.
-//   * Space + drag, or middle-click drag → grab-and-pan.
-//   * Click empty canvas → clear selection.
+//   * Drag empty canvas → grab-and-pan, no modifier. Also Space + drag, or
+//                          middle-click drag. (Was marquee-select; the plain
+//                          gesture is pan now, matching the Miro model this
+//                          canvas is built on.)
+//   * Shift + drag empty canvas → marquee select, unioned into the current
+//                          selection (shift already means "add" on shape
+//                          clicks).
+//   * Click empty canvas → clear selection. A pan that never crosses
+//                          CLICK_SLOP_PX still counts as this click.
 //   * PointerDown on a shape → existing move/resize/rotate state machine.
 //
 // Density tier — `gmc-density-{hidden|compact|detailed}` class on the canvas
@@ -21,7 +28,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShapeNode } from "./ShapeNode";
-import { VB_H, VB_W, isSeatedKind, mapDetectedCandidate } from "./types";
+import {
+  DEFAULT_PAGE,
+  isSeatedKind,
+  mapDetectedCandidate,
+  type PageSize,
+} from "./types";
 import type {
   DetectedCandidate,
   FloorPlanAsset,
@@ -47,9 +59,17 @@ type Props = {
   onUpdate: (id: string, patch: Partial<Shape>) => void;
   canEdit: boolean;
   revealNames: boolean;
-  // When true, drag positions snap to a 5-unit grid AND to other shapes'
-  // edge / center alignments within a tolerance (smart guides).
+  // When true, a drag that isn't aligning to anything lands on a 5-unit grid
+  // multiple. Smart alignment guides (edges/centers of other shapes + the page
+  // boundary) fire regardless — they are not gated on this.
   gridSnap: boolean;
+  // Event-wide seat-name font multiplier. Each shape may override it via
+  // shape.name_scale; the resolution happens here so ShapeNode stays a pure
+  // renderer that just gets a number.
+  nameScale: number;
+  // Printable page size in millimetres, from the event. Drives the viewBox,
+  // the page rectangle, the off-page scratch margin, and the snap targets.
+  page: PageSize;
   // Optional background floor-plan image rendered under the shapes layer.
   // Null = no upload yet. The url is a fresh signed URL from the page
   // loader (1h TTL).
@@ -79,6 +99,11 @@ export const ZOOM_MIN = 0.25;
 export const ZOOM_MAX = 6;
 
 export type DragHandle = "body" | "rotate" | "br" | "tr" | "bl" | "tl";
+
+// Pointer movement (client px) below which a drag is treated as a plain click.
+// Shared by the pan and marquee state machines so "did the user actually drag?"
+// means the same thing for both.
+const CLICK_SLOP_PX = 4;
 
 type DragState =
   | null
@@ -114,6 +139,14 @@ type DragState =
       startClientY: number;
       startViewX: number;
       startViewY: number;
+      // A pan that never moves past the 4px threshold is a plain background
+      // CLICK, which still has to clear the selection — the same distinction
+      // marquee already tracked. `additive` (shift) suppresses the clear.
+      additive: boolean;
+      moved: boolean;
+      // False for space/middle-click pans, which are pure navigation and must
+      // never touch the selection.
+      fromBackgroundClick: boolean;
     }
   | {
       kind: "marquee";
@@ -162,6 +195,8 @@ export function FloorPlanCanvas({
   canEdit,
   revealNames,
   gridSnap,
+  nameScale,
+  page,
   asset,
   imageNatural,
   candidates,
@@ -172,6 +207,11 @@ export function FloorPlanCanvas({
   onViewChange,
   exportSvgRef,
 }: Props) {
+  // Deliberate shadowing: every geometry expression below was written against
+  // the module constants VB_W / VB_H, which are now only DEFAULTS. Aliasing the
+  // live page to the same names keeps that maths untouched and readable.
+  const { w: VB_W, h: VB_H } = page;
+
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<DragState>(null);
   const viewRef = useRef<View>(view);
@@ -501,22 +541,28 @@ export function FloorPlanCanvas({
     [startDrag],
   );
 
-  const startPan = useCallback((e: React.PointerEvent) => {
-    const v = viewRef.current;
-    dragRef.current = {
-      kind: "pan",
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      startViewX: v.x,
-      startViewY: v.y,
-    };
-    setDragKind("pan");
-    try {
-      svgRef.current?.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
-  }, []);
+  const startPan = useCallback(
+    (e: React.PointerEvent, fromBackgroundClick = false) => {
+      const v = viewRef.current;
+      dragRef.current = {
+        kind: "pan",
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startViewX: v.x,
+        startViewY: v.y,
+        additive: e.shiftKey,
+        moved: false,
+        fromBackgroundClick,
+      };
+      setDragKind("pan");
+      try {
+        svgRef.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    },
+    [],
+  );
 
   // Start a multi-select bbox resize. The opposite-corner anchor stays
   // pinned; member positions get rebuilt each pointermove relative to it.
@@ -599,6 +645,13 @@ export function FloorPlanCanvas({
       bumpInteracting();
 
       if (drag.kind === "pan") {
+        if (
+          !drag.moved
+          && (Math.abs(e.clientX - drag.startClientX) > CLICK_SLOP_PX
+            || Math.abs(e.clientY - drag.startClientY) > CLICK_SLOP_PX)
+        ) {
+          drag.moved = true;
+        }
         const svg = svgRef.current;
         if (!svg) return;
         const rect = svg.getBoundingClientRect();
@@ -618,7 +671,7 @@ export function FloorPlanCanvas({
         if (!p) return;
         const dxC = e.clientX - drag.startClientX;
         const dyC = e.clientY - drag.startClientY;
-        if (!drag.moved && Math.abs(dxC) + Math.abs(dyC) >= 4) {
+        if (!drag.moved && Math.abs(dxC) + Math.abs(dyC) >= CLICK_SLOP_PX) {
           drag.moved = true;
         }
         drag.currentX = p.x;
@@ -656,6 +709,7 @@ export function FloorPlanCanvas({
           target.width_pct,
           target.height_pct,
           gridSnapRef.current,
+          page,
         );
         onUpdate(drag.anchorId, { x_pct: snap.x, y_pct: snap.y });
         for (const o of drag.others) {
@@ -711,6 +765,7 @@ export function FloorPlanCanvas({
           p.x,
           p.y,
           gridSnapRef.current,
+          page,
         );
         let w = Math.max(minSize, Math.abs(snapped.x - drag.anchorX));
         let h = Math.max(minSize, Math.abs(snapped.y - drag.anchorY));
@@ -749,6 +804,18 @@ export function FloorPlanCanvas({
     (e: React.PointerEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
+
+      // A background-initiated pan that never moved is a plain click on empty
+      // canvas — still clears the selection, exactly as it did when plain drag
+      // meant marquee. Space/middle-click pans skip this entirely.
+      if (
+        drag.kind === "pan"
+        && drag.fromBackgroundClick
+        && !drag.moved
+        && !drag.additive
+      ) {
+        onSelect(null, "replace");
+      }
 
       // Marquee: compute hits OR treat as plain click on empty canvas.
       if (drag.kind === "marquee") {
@@ -795,8 +862,18 @@ export function FloorPlanCanvas({
 
   const onBackgroundDown = useCallback(
     (e: React.PointerEvent) => {
-      if (e.target !== e.currentTarget) return;
-      // Middle-click OR space-held → pan
+      // Accept the <svg> itself OR one of the full-bleed background rects.
+      // Everything interactive (shapes, handles, candidate overlays) has its
+      // own pointerdown handler and bubbles up to here, so anything that is
+      // NOT the background must be ignored or we'd clobber dragRef and turn a
+      // shape drag into a pan.
+      const target = e.target as Element | null;
+      const isBackground =
+        e.target === e.currentTarget
+        || target?.getAttribute?.("data-canvas-bg") === "true";
+      if (!isBackground) return;
+      // Middle-click OR space-held → pan. Pure navigation: never touches the
+      // selection, hence fromBackgroundClick = false.
       if (e.button === 1 || (e.button === 0 && spaceHeld)) {
         e.preventDefault();
         startPan(e);
@@ -804,9 +881,19 @@ export function FloorPlanCanvas({
       }
       if (e.button !== 0) return;
 
-      // Start a marquee. If the user just clicks (no drag), endDrag treats
-      // it as a selection clear (or no-op on shift). Marquee threshold is
-      // checked in onPointerMove.
+      // Plain background drag → PAN. No modifier, no tool mode: press and move.
+      // A pan started this way still clears the selection if the pointer never
+      // crosses CLICK_SLOP_PX, so a plain click keeps its old meaning.
+      if (!e.shiftKey) {
+        e.preventDefault();
+        startPan(e, true);
+        return;
+      }
+
+      // Shift + drag → marquee select, unioned into the existing selection.
+      // Shift is the natural home for it: it already means "add to selection"
+      // when shift-clicking individual shapes, and unlike ⌘/Ctrl it doesn't
+      // collide with macOS's ctrl-click-is-a-right-click behaviour.
       const p = clientToVB(e.clientX, e.clientY);
       if (!p) {
         // Fallback to legacy clear-selection behavior.
@@ -980,7 +1067,9 @@ export function FloorPlanCanvas({
   const padY = VB_H * 1.5;
 
   const cursor =
-    dragKind === "pan" || (spaceHeld && !dragKind)
+    dragKind === "pan"
+      ? "grabbing"
+      : spaceHeld && !dragKind
       ? "grab"
       : dragKind === "move"
       ? "grabbing"
@@ -990,7 +1079,9 @@ export function FloorPlanCanvas({
       ? "nwse-resize"
       : dragKind === "marquee"
       ? "crosshair"
-      : "default";
+      : // Idle over the background now means "drag to pan", so advertise it.
+        // Shapes set their own cursor in ShapeNode, which wins over this.
+        "grab";
 
   return (
     <div
@@ -1010,6 +1101,12 @@ export function FloorPlanCanvas({
         viewBox={viewBox}
         preserveAspectRatio="xMidYMid meet"
         xmlns="http://www.w3.org/2000/svg"
+        // The live viewBox is the pan/zoom VIEW, not the page, so the exporters
+        // cannot infer the printable size from it. Advertise the page here and
+        // they read it off the node they already receive — no page threading
+        // through three exporters, and it can never drift from what's rendered.
+        data-page-w={VB_W}
+        data-page-h={VB_H}
         className="block w-full h-full select-none touch-none"
         style={{ cursor }}
         onPointerDown={onBackgroundDown}
@@ -1063,7 +1160,13 @@ export function FloorPlanCanvas({
 
         {/* Off-page background — paper-warm tint, grid pattern fills the
             full pannable area so the canvas feels infinite. */}
+        {/* data-canvas-bg marks these as the pan surface. They are painted
+            rects, so they — not the <svg> — are the pointer target anywhere on
+            empty canvas; without the marker onBackgroundDown's target check
+            rejected every background gesture and drag-to-pan silently did
+            nothing. */}
         <rect
+          data-canvas-bg="true"
           x={-padX}
           y={-padY}
           width={padX * 2 + VB_W}
@@ -1071,6 +1174,7 @@ export function FloorPlanCanvas({
           fill="var(--paper-warm)"
         />
         <rect
+          data-canvas-bg="true"
           x={-padX}
           y={-padY}
           width={padX * 2 + VB_W}
@@ -1079,6 +1183,7 @@ export function FloorPlanCanvas({
           className="gmc-floor-grid-fill"
         />
         <rect
+          data-canvas-bg="true"
           x={-padX}
           y={-padY}
           width={padX * 2 + VB_W}
@@ -1147,6 +1252,8 @@ export function FloorPlanCanvas({
               shape={s}
               roster={roster}
               revealNames={revealNames}
+              // Per-shape override wins; null means inherit the event default.
+              nameScale={s.name_scale ?? nameScale}
               selected={isSelected}
               canEdit={canEdit}
               onPointerDownHandle={shapePointerDown}
@@ -1282,6 +1389,21 @@ export function FloorPlanCanvas({
         </g>
       </svg>
 
+      {/* Gesture legend. These bindings were previously documented only in a
+          code comment, so nobody could find them — and drag-to-pan vs
+          shift-drag-to-marquee is exactly the kind of thing you either know or
+          fight. Sits bottom-left, out of the way of the top-right chips, and
+          hidden in print. Sits at bottom-14, one row ABOVE the upload-plan
+          chip (bottom-3) rather than beside it — that chip grows wider once a
+          background image exists, so anything sharing its row eventually
+          collides. */}
+      <div className="gmc-print-hide pointer-events-none absolute left-3 bottom-14 z-10 flex items-center gap-2.5 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)]/70 bg-[var(--paper-warm)]/85 backdrop-blur-sm px-2.5 py-1 text-[9.5px] tracking-[0.1em] uppercase text-[var(--ink-faint)] select-none">
+        <span>Drag to pan</span>
+        <span className="w-px h-2.5 bg-[var(--paper-shadow)]" />
+        <span>⇧ drag to select</span>
+        <span className="w-px h-2.5 bg-[var(--paper-shadow)]" />
+        <span>⌘ scroll to zoom</span>
+      </div>
     </div>
   );
 }
@@ -1451,10 +1573,16 @@ function CandidateNode({
   );
 }
 
-// Snap math — applies during a body drag. When `gridSnap` is on, look for
-// a smart-guide alignment first (left / center / right edges of the moving
-// shape against any non-moving shape's edges or the page boundary), then
-// fall back to a 5-unit grid. Threshold is in user-space units.
+// Snap math — applies during a body drag.
+//
+// Smart-guide alignment (left / center / right edges of the moving shape
+// against any non-moving shape's edges, or the page boundary) runs ALWAYS —
+// it is what makes a hand-placed plan look deliberate, and it used to be
+// gated behind `gridSnap`, so with Grid off you got no guides at all.
+//
+// `gridSnap` now controls only the 5-unit grid FALLBACK: with it on, a shape
+// that isn't aligning to anything still lands on a grid multiple; with it off,
+// it goes exactly where you put it. Threshold is in user-space units.
 const SNAP_GRID = 5;
 const SNAP_THRESHOLD = 1.0;
 
@@ -1466,15 +1594,13 @@ function snapMovePosition(
   width: number,
   height: number,
   gridSnap: boolean,
+  page: PageSize,
 ): {
   x: number;
   y: number;
   guides: Array<{ axis: "v" | "h"; coord: number }>;
 } {
-  if (!gridSnap) {
-    return { x: proposedX, y: proposedY, guides: [] };
-  }
-
+  const { w: VB_W, h: VB_H } = page;
   // Build candidate target arrays. Page boundaries + center are always
   // candidates; other shapes contribute their three edges per axis.
   const xTargets: number[] = [0, VB_W / 2, VB_W];
@@ -1498,14 +1624,15 @@ function snapMovePosition(
   if (xSnap) {
     x = proposedX + xSnap.delta;
     guides.push({ axis: "v", coord: xSnap.target });
-  } else {
-    // Fall back to grid-multiples on the left edge.
+  } else if (gridSnap) {
+    // Grid fallback only when the Grid toggle is on; otherwise leave the
+    // position exactly where the pointer put it.
     x = Math.round(proposedX / SNAP_GRID) * SNAP_GRID;
   }
   if (ySnap) {
     y = proposedY + ySnap.delta;
     guides.push({ axis: "h", coord: ySnap.target });
-  } else {
+  } else if (gridSnap) {
     y = Math.round(proposedY / SNAP_GRID) * SNAP_GRID;
   }
 
@@ -1522,14 +1649,15 @@ function snapResizeEdges(
   proposedX: number,
   proposedY: number,
   gridSnap: boolean,
+  page: PageSize,
 ): {
   x: number;
   y: number;
   guides: Array<{ axis: "v" | "h"; coord: number }>;
 } {
-  if (!gridSnap) {
-    return { x: proposedX, y: proposedY, guides: [] };
-  }
+  const { w: VB_W, h: VB_H } = page;
+  // Guides always on; gridSnap only gates the grid fallback below. Same
+  // reasoning as snapMovePosition.
   const xTargets: number[] = [0, VB_W / 2, VB_W];
   const yTargets: number[] = [0, VB_H / 2, VB_H];
   for (const s of shapes) {
@@ -1548,13 +1676,13 @@ function snapResizeEdges(
   if (xSnap) {
     x = xSnap.target;
     guides.push({ axis: "v", coord: xSnap.target });
-  } else {
+  } else if (gridSnap) {
     x = Math.round(proposedX / SNAP_GRID) * SNAP_GRID;
   }
   if (ySnap) {
     y = ySnap.target;
     guides.push({ axis: "h", coord: ySnap.target });
-  } else {
+  } else if (gridSnap) {
     y = Math.round(proposedY / SNAP_GRID) * SNAP_GRID;
   }
   // Suppress empty-axis adjustments — anchorX/Y are reference points;

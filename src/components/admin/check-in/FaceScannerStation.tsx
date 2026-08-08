@@ -22,6 +22,7 @@ import {
   primeAudio,
 } from "@/lib/check-in/audio-cues";
 import { OnSpotCaptureDialog } from "./OnSpotCaptureDialog";
+import { groupNumber } from "@/lib/group-number";
 
 // M7.1c — face-recognition replacement for the QR scanner. Loads the
 // per-event embedding bank server-side, runs the live camera through
@@ -65,6 +66,7 @@ type ManualSearchRow = {
   name_en: string | null;
   phone: string | null;
   group_no: number | null;
+  table_no: number | null;
   checked_in_at: string | null;
   check_in_id: string | null;
   has_photo: boolean;
@@ -553,7 +555,7 @@ export function FaceScannerStation({
                     {row.name_cn ?? row.name_en ?? "(unnamed)"}
                   </div>
                   <div className="text-[10.5px] text-[var(--ink-faint)] tabular-nums truncate">
-                    {row.group_no !== null ? `Group ${row.group_no} · ` : ""}
+                    {row.group_no !== null ? `${groupNumber(row).en} · ` : ""}
                     {row.phone ?? ""}
                   </div>
                 </div>
@@ -679,7 +681,9 @@ function ScannerOverlay({
           <div className="text-[10.5px] tracking-[0.08em] uppercase text-[var(--ink-mute)] tabular-nums flex items-center gap-2 mt-0.5">
             <span>{match.entry.region_id ?? "—"}</span>
             {match.entry.group_no !== null ? (
-              <span className="opacity-80">· Group {match.entry.group_no}</span>
+              <span className="opacity-80">
+                · {groupNumber(match.entry).en}
+              </span>
             ) : null}
             <span className="opacity-50">·</span>
             <span className="opacity-70">

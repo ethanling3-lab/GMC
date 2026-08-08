@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { CustomField, FormSchema } from "@/lib/event-form-schema";
 import type { GroupReportFillData } from "@/lib/group-report-portal-types";
 import { DynamicFormFields } from "@/components/forms/DynamicFormFields";
+import { groupNumber } from "@/lib/group-number";
 
 // Leader-facing group report — a section stepper (summary 汇总 + one section per
 // member) mirroring the bambooclass layout. Reuses DynamicFormFields to render
@@ -135,7 +136,7 @@ export function GroupReportForm({ fill }: { fill: GroupReportFillData }) {
             {fill.event.title_cn ?? fill.event.title_en ?? "Group report"}
           </h1>
           <div className="mt-1 text-[13px] text-[var(--ink-soft)]">
-            Group {fill.group.group_no} · 第 {fill.group.group_no} 组 · 小组报告
+            {groupNumber(fill.group, "portal").bilingual} · 小组报告
           </div>
         </div>
         {status === "submitted" ? (

@@ -92,7 +92,7 @@ export async function GET(_req: Request, { params }: RouteCtx) {
   const memberPlan = headerPlan(schema.member_section.fields);
 
   // --- Sheet 1: group summaries (one row per group) ---
-  const summaryHeader = ["Group #", "Leader", "Status", "Submitted at", ...groupPlan.map((p) => p.header)];
+  const summaryHeader = ["Group #", "Table #", "Leader", "Status", "Submitted at", ...groupPlan.map((p) => p.header)];
   const summaryRows: Array<Record<string, string | number>> = [];
   for (const g of groupData.groups) {
     const sub = subByGroup.get(g.id);
@@ -102,6 +102,7 @@ export async function GET(_req: Request, { params }: RouteCtx) {
       g.members.find((m) => m.participant_id === g.leader_participant_id);
     const row: Record<string, string | number> = {
       "Group #": g.group_no,
+      "Table #": g.table_no ?? "",
       Leader: leader ? (leader.name_cn ?? leader.name_en ?? leader.region_id ?? "") : "",
       Status: sub?.status === "submitted" ? "Submitted" : sub ? "Draft" : "Not started",
       "Submitted at": sub?.submitted_at ? new Date(sub.submitted_at).toISOString().slice(0, 16).replace("T", " ") : "",
@@ -111,7 +112,7 @@ export async function GET(_req: Request, { params }: RouteCtx) {
   }
 
   // --- Sheet 2: member answers (one row per group member) ---
-  const memberHeader = ["Group #", "Region ID", "Name", "Role", ...memberPlan.map((p) => p.header)];
+  const memberHeader = ["Group #", "Table #", "Region ID", "Name", "Role", ...memberPlan.map((p) => p.header)];
   const memberRows: Array<Record<string, string | number>> = [];
   for (const g of groupData.groups) {
     const sub = subByGroup.get(g.id);
@@ -126,6 +127,7 @@ export async function GET(_req: Request, { params }: RouteCtx) {
       const ans = (memberAnswersMap[m.participant_id] ?? {}) as Record<string, unknown>;
       const row: Record<string, string | number> = {
         "Group #": g.group_no,
+        "Table #": g.table_no ?? "",
         "Region ID": m.region_id ?? "",
         Name: m.name_cn ?? m.name_en ?? "",
         Role: ROLE_LABEL[m.role] ?? m.role,

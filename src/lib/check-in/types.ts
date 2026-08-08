@@ -22,6 +22,9 @@ export type CheckInRosterEntry = {
   phone: string | null;
   email: string | null;
   group_no: number | null;
+  // Table the group sits at — the number the UI displays. Null when the group
+  // isn't seated yet (then group_no shows instead). See src/lib/group-number.ts.
+  table_no: number | null;
   seat_no: number | null;
   checked_in_at: string | null;
   check_in_method: CheckInMethod | null;
@@ -40,6 +43,7 @@ export type CheckInRecent = {
   name_cn: string | null;
   name_en: string | null;
   group_no: number | null;
+  table_no: number | null;
   checked_in_at: string;
   method: CheckInMethod;
 };
@@ -59,6 +63,7 @@ export type CheckInVelocity = {
 export type CheckInGroupRow = {
   group_id: string;
   group_no: number | null;          // null = "Ungrouped" synthetic bucket
+  table_no: number | null;
   group_class: string | null;
   name_en: string | null;
   name_cn: string | null;
@@ -74,6 +79,7 @@ export type CheckInAbsentRow = {
   name_en: string | null;
   phone: string | null;
   group_no: number | null;
+  table_no: number | null;
 };
 
 export type CheckInTimeBucket = {

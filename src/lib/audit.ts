@@ -88,6 +88,8 @@ export type AuditAction =
   | "floor_plan.shape_added"
   | "floor_plan.shape_moved"
   | "floor_plan.shape_deleted"
+  | "floor_plan.table_numbered"
+  | "floor_plan.settings_changed"
   | "floor_plan.image_uploaded"
   | "floor_plan.auto_detected"
   | "floor_plan.shape_accepted"

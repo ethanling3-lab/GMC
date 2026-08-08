@@ -13,11 +13,16 @@ import { memo } from "react";
 // `onPointerDownHandle(e, handle)`; the parent's drag state machine
 // translates those into shape geometry updates.
 //
-// Pass 3: when `roster` is set the shape becomes a *named* table — center
-// label shows `Group N · 组N` (or the group's bilingual name when set), and
-// each seat carries the assigned participant's bilingual name (or region_id
-// when `revealNames` is false). Role-tinted fills: 组长 cinnabar,
-// 副组长 gold. Empty seats render gray with no label.
+// A table's centre shows ONE bare numeral — its `table_no`, falling back to the
+// seated group's own number only while the table is unnumbered (see
+// src/lib/group-number.ts). No eyebrow, no group name: the number is what staff
+// and attendees read off the plan, and a second line only invited it to
+// contradict the first. Group names live in the inspector and the exports.
+//
+// When `roster` is set each seat carries the assigned participant's bilingual
+// name (or region_id when `revealNames` is false), and the numeral darkens from
+// muted to full ink so an empty table still reads as empty. Role-tinted fills:
+// 组长 red, 副组长 blue, 排长 gold. Empty seats render gray with no label.
 
 import type { ReactNode } from "react";
 import type { DragHandle } from "./FloorPlanCanvas";
@@ -26,6 +31,7 @@ import {
   type GroupRosterMember,
   type Shape,
 } from "./types";
+import { groupNumber } from "@/lib/group-number";
 
 // Inline color tokens for role-tinted seats. Pass-3 used cinnabar for 组长
 // and gold for 副 — Pass 4+ tightens to: 组长 = red, 副组长 = blue.
@@ -46,6 +52,9 @@ type Props = {
   shape: Shape;
   roster: GroupRoster | null;
   revealNames: boolean;
+  // Resolved seat-NAME font multiplier for this shape (per-table override
+  // already folded over the event default by the canvas). 1 = auto.
+  nameScale: number;
   selected: boolean;
   canEdit: boolean;
   // Pointer down handler — receives the shape id as the third arg so the
@@ -67,6 +76,7 @@ function ShapeNodeInner({
   shape,
   roster,
   revealNames,
+  nameScale,
   selected,
   canEdit,
   onPointerDownHandle,
@@ -95,6 +105,7 @@ function ShapeNodeInner({
           shape={shape}
           roster={roster}
           revealNames={revealNames}
+          nameScale={nameScale}
         />
       </g>
 
@@ -423,10 +434,12 @@ function ShapeBody({
   shape,
   roster,
   revealNames,
+  nameScale,
 }: {
   shape: Shape;
   roster: GroupRoster | null;
   revealNames: boolean;
+  nameScale: number;
 }) {
   const x = r(shape.x_pct);
   const y = r(shape.y_pct);
@@ -464,12 +477,14 @@ function ShapeBody({
             count={seats}
             members={roster?.members ?? []}
             revealNames={revealNames}
+            nameScale={nameScale}
           />
           <CenterTableLabel
             cx={cx}
             cy={cy}
             size={r(Math.min(w, h))}
             roster={roster}
+            tableNo={shape.table_no}
             fallbackPrimary={shape.label_en ?? "Round"}
             fallbackSecondary={
               shape.label_cn ?? (seats ? `${seats} 座` : null)
@@ -506,12 +521,14 @@ function ShapeBody({
             seats={seats}
             members={roster?.members ?? []}
             revealNames={revealNames}
+            nameScale={nameScale}
           />
           <CenterTableLabel
             cx={cx}
             cy={cy}
             size={Math.min(w, h)}
             roster={roster}
+            tableNo={shape.table_no}
             fallbackPrimary={shape.label_en ?? "Square"}
             fallbackSecondary={
               shape.label_cn ?? (shape.seat_count ? `${shape.seat_count} 座` : null)
@@ -680,6 +697,7 @@ function SeatsAroundCircle({
   count,
   members,
   revealNames,
+  nameScale,
 }: {
   cx: number;
   cy: number;
@@ -687,6 +705,7 @@ function SeatsAroundCircle({
   count: number;
   members: GroupRosterMember[];
   revealNames: boolean;
+  nameScale: number;
 }) {
   if (!count || count <= 0) return null;
   const seatR = Math.max(0.55, tableR * 0.18);
@@ -695,8 +714,11 @@ function SeatsAroundCircle({
   // screen-Y so seats on the table sides (3 / 9 o'clock) read as two
   // clean lines instead of overlapping horizontally.
   const labelR = ringR + seatR * 2.8;
-  // Vertical line offsets relative to the label center.
-  const nameDy = seatR * 0.55;
+  // Vertical line offsets relative to the label center. nameDy scales with the
+  // name font so a scaled-up name grows AWAY from the flag chip row below it
+  // instead of colliding with it.
+  const nameSize = r(seatR * 1.15 * nameScale);
+  const nameDy = seatR * 0.55 * nameScale;
   const flagDy = seatR * 0.85;
   const out: ReactNode[] = [];
 
@@ -752,7 +774,7 @@ function SeatsAroundCircle({
           key={`p-${i}`}
           x={lx}
           y={r(ly - nameDy)}
-          fontSize={r(seatR * 1.15)}
+          fontSize={nameSize}
           fontFamily="var(--font-cjk), var(--font-body), sans-serif"
           fontWeight={600}
           fill="var(--ink)"
@@ -797,6 +819,7 @@ function SeatsAroundSquare({
   seats,
   members,
   revealNames,
+  nameScale,
 }: {
   x: number;
   y: number;
@@ -805,6 +828,7 @@ function SeatsAroundSquare({
   seats: { top: number; right: number; bottom: number; head: number };
   members: GroupRosterMember[];
   revealNames: boolean;
+  nameScale: number;
 }) {
   const seatSize = Math.min(w, h) * 0.18;
   const offset = seatSize * 0.7;
@@ -867,7 +891,9 @@ function SeatsAroundSquare({
     } else {
       lx = sx - seatSize * 2.3;
     }
-    const nameDy = seatSize * 0.32;
+    // Scales with the name font, for the same reason as the round-table path:
+    // a bigger name has to move further from the flag row, not into it.
+    const nameDy = seatSize * 0.32 * nameScale;
     const flagDy = seatSize * 0.5;
     if (label.name) {
       out.push(
@@ -875,7 +901,7 @@ function SeatsAroundSquare({
           key={`${key}-p`}
           x={r(lx)}
           y={r(ly - nameDy)}
-          fontSize={r(seatSize * 0.62)}
+          fontSize={r(seatSize * 0.62 * nameScale)}
           fontFamily="var(--font-cjk), var(--font-body), sans-serif"
           fontWeight={600}
           fill="var(--ink)"
@@ -927,11 +953,23 @@ function SeatsAroundSquare({
 // Center labels.
 // ---------------------------------------------------------------------------
 
+// A table's centre carries ONE thing: its number, as a bare numeral.
+//
+// It used to stack an eyebrow ("GROUP 7 · 组 7") over a title, and the title
+// fell back to `label_en` — the printed number vision read off the uploaded
+// plan. Once Auto-number renumbers, `label_en` is stale, so the two lines
+// disagreed (eyebrow 4 over numeral 5). One numeral, sourced from the live
+// number, removes both the noise and the contradiction.
+//
+// The numeral is the TABLE number, falling back to the group's own number only
+// while the table is unnumbered — same rule as every other surface, see
+// src/lib/group-number.ts.
 function CenterTableLabel({
   cx,
   cy,
   size,
   roster,
+  tableNo,
   fallbackPrimary,
   fallbackSecondary,
 }: {
@@ -939,74 +977,49 @@ function CenterTableLabel({
   cy: number;
   size: number;
   roster: GroupRoster | null;
+  tableNo: number | null;
   fallbackPrimary: string | null;
   fallbackSecondary: string | null;
 }) {
-  if (roster) {
-    const eyebrowSize = r(Math.max(0.9, size * 0.1));
-    const titleSize = r(Math.max(1.4, size * 0.18));
-    const subSize = r(titleSize * 0.7);
-    const titlePrimary =
-      roster.name_en && roster.name_cn
-        ? `${roster.name_cn}`
-        : roster.name_en ?? roster.name_cn ?? `Table ${roster.group_no}`;
-    const titleSecondary =
-      roster.name_en && roster.name_cn
-        ? roster.name_en
-        : roster.name_en
-        ? null
-        : null;
+  const label = groupNumber({
+    group_no: roster?.group_no ?? null,
+    table_no: tableNo,
+  });
 
+  // No number from either source — fall through to the kind label so a bare
+  // table still reads as something ("Round · 12 座").
+  if (label.no == null) {
     return (
-      <g pointerEvents="none">
-        <text
-          x={cx}
-          y={r(cy - titleSize * 0.55)}
-          fontSize={eyebrowSize}
-          fontFamily="var(--font-body), sans-serif"
-          fill="var(--cinnabar-deep)"
-          textAnchor="middle"
-          dominantBaseline="middle"
-          letterSpacing="0.18em"
-        >
-          {`GROUP ${roster.group_no} · 组 ${roster.group_no}`}
-        </text>
-        <text
-          x={cx}
-          y={r(cy + (titleSecondary ? -titleSize * 0.05 : titleSize * 0.25))}
-          fontSize={titleSize}
-          fontFamily="var(--font-display), serif"
-          fill="var(--ink)"
-          textAnchor="middle"
-          dominantBaseline="middle"
-        >
-          {titlePrimary}
-        </text>
-        {titleSecondary ? (
-          <text
-            x={cx}
-            y={r(cy + titleSize * 0.7)}
-            fontSize={subSize}
-            fontFamily="var(--font-body), sans-serif"
-            fill="var(--ink-mute)"
-            textAnchor="middle"
-            dominantBaseline="middle"
-            letterSpacing="0.04em"
-          >
-            {titleSecondary}
-          </text>
-        ) : null}
-      </g>
+      <CenterLabel
+        cx={cx}
+        cy={cy}
+        primary={fallbackPrimary}
+        secondary={fallbackSecondary}
+        size={size}
+      />
     );
   }
+
+  // Sized generously because it is now the only glyph in the middle: the
+  // number has to be readable on a printed A3 plan from arm's length.
+  const numeralSize = r(Math.max(3, size * 0.34));
+
   return (
-    <CenterLabel
-      cx={cx}
-      cy={cy}
-      primary={fallbackPrimary}
-      secondary={fallbackSecondary}
-      size={size}
-    />
+    <g pointerEvents="none">
+      <text
+        x={cx}
+        y={cy}
+        fontSize={numeralSize}
+        fontFamily="var(--font-display), serif"
+        // Muted while the table has no group seated at it, so an empty table
+        // still reads as empty at a glance.
+        fill={roster ? "var(--ink)" : "var(--ink-faint)"}
+        textAnchor="middle"
+        dominantBaseline="central"
+      >
+        {label.no}
+      </text>
+    </g>
   );
 }
 

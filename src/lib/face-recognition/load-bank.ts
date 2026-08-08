@@ -5,6 +5,7 @@ import {
   type FaceBankEntry,
   type FaceEmbedding,
 } from "./types";
+import { tableNoByGroupId } from "@/lib/floor-plan/table-numbers";
 
 // Server-only loader for the per-event embedding bank consumed by the
 // scanner station. Filters to participants who:
@@ -63,7 +64,10 @@ export async function loadFaceBank(
   let with_embedding = 0;
   const participantIds: string[] = [];
   const enrolmentByParticipant = new Map<string, string>();
-  const stagedEntries: Omit<FaceBankEntry, "group_no" | "seat_no">[] = [];
+  const stagedEntries: Omit<
+    FaceBankEntry,
+    "group_no" | "table_no" | "seat_no"
+  >[] = [];
 
   for (const raw of (rows ?? []) as unknown as Row[]) {
     const p = raw.participants;
@@ -86,23 +90,34 @@ export async function loadFaceBank(
     });
   }
 
-  // Attach group_no + seat_no from event_seat_assignments so the
-  // confirmation card can guide staff to the right table on success.
-  const groupByParticipant = new Map<string, { group_no: number | null; seat_no: number | null }>();
+  // Attach group_no + table_no + seat_no from event_seat_assignments so the
+  // confirmation card can guide staff to the right table on success. The bank
+  // is loaded once per scan session, so the extra table lookup is free.
+  const groupByParticipant = new Map<
+    string,
+    { group_no: number | null; table_no: number | null; seat_no: number | null }
+  >();
   if (participantIds.length > 0) {
-    const { data: seats, error: seatErr } = await supabase
-      .from("event_seat_assignments")
-      .select("participant_id, seat_no, event_groups!inner(group_no)")
-      .eq("event_id", eventId)
-      .in("participant_id", participantIds);
-    if (seatErr) throw new Error(`[face-bank] seat query: ${seatErr.message}`);
-    for (const s of (seats ?? []) as unknown as Array<{
+    const [seatsRes, tableNos] = await Promise.all([
+      supabase
+        .from("event_seat_assignments")
+        .select("participant_id, group_id, seat_no, event_groups!inner(group_no)")
+        .eq("event_id", eventId)
+        .in("participant_id", participantIds),
+      tableNoByGroupId(supabase, { eventId }),
+    ]);
+    if (seatsRes.error) {
+      throw new Error(`[face-bank] seat query: ${seatsRes.error.message}`);
+    }
+    for (const s of (seatsRes.data ?? []) as unknown as Array<{
       participant_id: string;
+      group_id: string | null;
       seat_no: number | null;
       event_groups: { group_no: number | null } | null;
     }>) {
       groupByParticipant.set(s.participant_id, {
         group_no: s.event_groups?.group_no ?? null,
+        table_no: s.group_id ? tableNos.get(s.group_id) ?? null : null,
         seat_no: s.seat_no ?? null,
       });
     }
@@ -111,6 +126,7 @@ export async function loadFaceBank(
   const bank: FaceBankEntry[] = stagedEntries.map((e) => ({
     ...e,
     group_no: groupByParticipant.get(e.participant_id)?.group_no ?? null,
+    table_no: groupByParticipant.get(e.participant_id)?.table_no ?? null,
     seat_no: groupByParticipant.get(e.participant_id)?.seat_no ?? null,
   }));
 

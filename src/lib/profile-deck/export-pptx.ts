@@ -21,6 +21,7 @@ import type {
   GroupClassKey,
   SeatRole,
 } from "@/components/admin/layout/types";
+import { groupNumber } from "@/lib/group-number";
 
 export type ProfileDeckExportOptions = {
   // Include the cover slide. Default true.
@@ -318,7 +319,7 @@ function buildParticipantSlide(
 
   // ---- Top chrome — eyebrow + group/role context ------------------------
   const groupLine = row.group_no !== null
-    ? `Group ${row.group_no}${row.group_name_cn ? ` · ${row.group_name_cn}` : ""}${row.group_class ? ` · ${CLASS_LABEL[row.group_class].cn}` : ""}`
+    ? `${groupNumber(row).en}${row.group_name_cn ? ` · ${row.group_name_cn}` : ""}${row.group_class ? ` · ${CLASS_LABEL[row.group_class].cn}` : ""}`
     : "Ungrouped · 未分组";
 
   slide.addText("学员名册 · STUDENT PROFILE", {
@@ -1037,9 +1038,10 @@ function buildCompactCard(
   const c3aFieldsY = c2Y + 0.34;
   const c3aFields: Array<[string, string | null]> = [
     [
+      // Terse house style: "7组". The number is the table once seated.
       "组号",
       row.group_no !== null
-        ? `${row.group_no}组${row.group_class ? ` · ${CLASS_LABEL[row.group_class].cn}` : ""}`
+        ? `${groupNumber(row).no}组${row.group_class ? ` · ${CLASS_LABEL[row.group_class].cn}` : ""}`
         : null,
     ],
     [

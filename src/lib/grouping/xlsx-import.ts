@@ -61,6 +61,14 @@ const UUID_RE =
 // never falls through to `group_no`.
 function classifyHeader(h: string): keyof ParsedGroupingSheet["headerMap"] | null {
   const s = h.trim();
+  // "Table #" is EXPORT-ONLY. Table numbers live on event_floor_plan_shapes and
+  // are never written from a spreadsheet — honouring them would mean mutating
+  // floor-plan geometry from a sheet, and two rows claiming Table 5 would need
+  // conflict-resolution UI that doesn't exist. Rejected up front so it can
+  // never fall through to `group_no` if that regex is ever loosened.
+  if (/^table\s*(#|no\.?|number)?\s*$/i.test(s) || /桌\s*(号|#|编号)/.test(s)) {
+    return null;
+  }
   if (/participant\s*id/i.test(s) || /参与者\s*id|学员\s*id/i.test(s)) {
     return "participant_id";
   }

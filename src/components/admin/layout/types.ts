@@ -33,6 +33,15 @@ export type Shape = {
   rotation_deg: number;
   seat_count: number | null;
   seats_per_side: SquareSeats | null;
+  // Physical table number — unique per event, null for non-table kinds.
+  // Independent of the paired group's group_no: this is the number every
+  // downstream surface displays. Set by Auto-number or by hand in the
+  // inspector. See src/lib/group-number.ts.
+  table_no: number | null;
+  // Per-table multiplier for SEAT-NAME label font size. Null = inherit the
+  // event default (events.floor_plan_name_scale). The centre numeral is not
+  // affected — it stays auto-sized to the table so tables read consistently.
+  name_scale: number | null;
   label_en: string | null;
   label_cn: string | null;
   group_id: string | null;
@@ -48,6 +57,13 @@ export type EventLite = {
   seating_mode: "tables" | "cushions";
   group_size_min: number;
   group_size_max: number;
+  // Printable page size in MILLIMETRES (migration 051). Defaults to the legacy
+  // 300×180 so existing plans are unchanged; presets write true paper sizes.
+  floor_plan_page_w: number;
+  floor_plan_page_h: number;
+  floor_plan_page_preset: string | null;
+  // Event-wide seat-name font multiplier; per-table overrides live on Shape.
+  floor_plan_name_scale: number;
 };
 
 // Group rosters loaded for the seating-chart render. The order of `members`
@@ -101,6 +117,11 @@ export type GroupRosterMember = {
 export type GroupRoster = {
   id: string;
   group_no: number;
+  // Table number of the shape this group is paired to, or null when it isn't
+  // seated yet. Denormalized at load time by inverting shapes.group_id —
+  // the pptx exporters are client-side ("use client") and cannot query, so
+  // the number has to physically ride on the roster.
+  table_no: number | null;
   group_class: GroupClassKey | null;
   name_en: string | null;
   name_cn: string | null;
@@ -132,7 +153,10 @@ export type DetectedCandidate = {
 export function mapDetectedCandidate(
   c: DetectedCandidate,
   natural: { w: number; h: number } | null,
+  page: PageSize = DEFAULT_PAGE,
 ): { x: number; y: number; width: number; height: number } {
+  const VB_W = page.w;
+  const VB_H = page.h;
   const x = clampUnit(c.x_norm);
   const y = clampUnit(c.y_norm);
   const w = clampUnit(c.width_norm);
@@ -200,14 +224,56 @@ export type LayoutEditorProps = {
   initialAsset: FloorPlanAsset | null;
 };
 
-// Viewport extents (user-space units inside the SVG viewBox).
-// Pass 3 bump trail: 100×60 → 150×90 → 200×120 → 300×180. Aspect 5:3
-// preserved end-to-end. The printable page is 300×180 user-space units
-// — wide enough for ~80 round tables (12u each + spacing) before things
-// get cramped. Spawn defaults (12u round table etc.) stay the same so
-// existing shapes don't suddenly look mis-sized.
+// DEFAULT viewport extents. As of migration 051 the printable page size is
+// per-event (events.floor_plan_page_w/h, in millimetres) — these are the
+// fallback for events that never set one, and they preserve the historical
+// 300×180 canvas exactly so existing plans render unchanged.
+//
+// Pass 3 bump trail: 100×60 → 150×90 → 200×120 → 300×180. 300×180 fits ~80
+// round tables (12u each + spacing) before things get cramped. Spawn defaults
+// (12u round table etc.) are in the same units, so a bigger page means more
+// room rather than bigger furniture.
+//
+// Prefer reading the page from `EventLite.floor_plan_page_w/h`. These consts
+// remain for defaults and for code that genuinely has no event in scope.
 export const VB_W = 300;
 export const VB_H = 180;
+
+export type PageSize = { w: number; h: number };
+
+export const DEFAULT_PAGE: PageSize = { w: VB_W, h: VB_H };
+
+// Real paper sizes in millimetres, which is what the page units now mean.
+// Landscape is listed first in each pair because a seating chart is almost
+// always wider than tall.
+export const PAGE_PRESETS: Array<{
+  id: string;
+  label: string;
+  w: number;
+  h: number;
+}> = [
+  { id: "a4_landscape", label: "A4 ↔", w: 297, h: 210 },
+  { id: "a4_portrait", label: "A4 ↕", w: 210, h: 297 },
+  { id: "a3_landscape", label: "A3 ↔", w: 420, h: 297 },
+  { id: "a3_portrait", label: "A3 ↕", w: 297, h: 420 },
+  { id: "a2_landscape", label: "A2 ↔", w: 594, h: 420 },
+  { id: "a2_portrait", label: "A2 ↕", w: 420, h: 594 },
+  { id: "a1_landscape", label: "A1 ↔", w: 841, h: 594 },
+  { id: "a1_portrait", label: "A1 ↕", w: 594, h: 841 },
+  // The pre-051 canvas. Kept selectable so an admin who changes their mind can
+  // get back to exactly what their existing plan was laid out against.
+  { id: "legacy", label: "Legacy 300×180", w: VB_W, h: VB_H },
+];
+
+export function presetById(id: string | null): { w: number; h: number } | null {
+  if (!id) return null;
+  return PAGE_PRESETS.find((p) => p.id === id) ?? null;
+}
+
+/** Matches a w/h back to a preset id, or null when it's a custom size. */
+export function presetIdFor(w: number, h: number): string | null {
+  return PAGE_PRESETS.find((p) => p.w === w && p.h === h)?.id ?? null;
+}
 
 // Spawn defaults per shape kind. Sizes match the M6.4 plan: round table 8%
 // diameter, square table 10×6, cushion 3% diameter, etc. New shapes spawn
@@ -338,22 +404,48 @@ export function isSeatedKind(kind: ShapeKind): boolean {
   return kind === "round_table" || kind === "square_table" || kind === "cushion";
 }
 
+// Kinds that carry a `table_no`. Distinct from isSeatedKind, which also
+// includes `cushion` — cushions are seats, not tables, and cushion-mode
+// events have no table numbers at all. Mirrors the DB CHECK constraint
+// event_floor_plan_shapes_table_no_kind_ck (migration 049).
+export function isTableKind(kind: ShapeKind): boolean {
+  return kind === "round_table" || kind === "square_table";
+}
+
 // Off-page margin. The 200×120 page is the printable area; the editor lets
 // admins drag shapes one page-width / -height beyond the boundaries on
 // every side as scratch space. Anything beyond this hard cap is clamped
 // (prevents accidental drags that send a shape into oblivion).
-const OFF_PAGE_MARGIN_X = VB_W;
-const OFF_PAGE_MARGIN_Y = VB_H;
+// Off-page scratch margin: one page-width / -height beyond every edge. Now
+// derived from the ACTUAL page rather than the 300×180 default, so a bigger
+// page gets proportionally more scratch space.
+export function clampBounds(page: PageSize = DEFAULT_PAGE): {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+} {
+  return {
+    xMin: -page.w,
+    xMax: page.w * 2,
+    yMin: -page.h,
+    yMax: page.h * 2,
+  };
+}
 
-export const X_MIN = -OFF_PAGE_MARGIN_X;
-export const X_MAX = VB_W + OFF_PAGE_MARGIN_X; // 400
-export const Y_MIN = -OFF_PAGE_MARGIN_Y;
-export const Y_MAX = VB_H + OFF_PAGE_MARGIN_Y; // 240
+// Legacy exports — the 300×180 bounds. Still referenced by the shapes API
+// route's Zod schema, which validates against the widest page any event could
+// use rather than per-request (see the comment there).
+export const X_MIN = -VB_W;
+export const X_MAX = VB_W * 2;
+export const Y_MIN = -VB_H;
+export const Y_MAX = VB_H * 2;
 
-export function clampShape(s: Shape): Shape {
-  const w = Math.max(0.5, Math.min(VB_W, s.width_pct));
-  const h = Math.max(0.5, Math.min(VB_H, s.height_pct));
-  const x = Math.max(X_MIN, Math.min(X_MAX - w, s.x_pct));
-  const y = Math.max(Y_MIN, Math.min(Y_MAX - h, s.y_pct));
+export function clampShape(s: Shape, page: PageSize = DEFAULT_PAGE): Shape {
+  const b = clampBounds(page);
+  const w = Math.max(0.5, Math.min(page.w, s.width_pct));
+  const h = Math.max(0.5, Math.min(page.h, s.height_pct));
+  const x = Math.max(b.xMin, Math.min(b.xMax - w, s.x_pct));
+  const y = Math.max(b.yMin, Math.min(b.yMax - h, s.y_pct));
   return { ...s, x_pct: x, y_pct: y, width_pct: w, height_pct: h };
 }

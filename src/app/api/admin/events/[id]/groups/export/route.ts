@@ -78,7 +78,12 @@ export async function GET(_req: Request, { params }: RouteCtx) {
         "Student ID": m.region_id ?? "",
         "Name CN": m.name_cn ?? "",
         "Name EN": m.name_en ?? "",
+        // "Group #" is the INTERNAL key and the importer's upsert target —
+        // its header text must stay byte-identical or the round-trip breaks.
         "Group #": g.group_no,
+        // The table the group sits at: what everyone actually reads. Export-only
+        // — table numbers live on the floor plan and are never set from a sheet.
+        "Table #": g.table_no ?? "",
         "Group Name EN": g.name_en ?? "",
         "Group Name CN": g.name_cn ?? "",
         Class: `${GROUP_CLASS_LABEL[g.group_class].cn} · ${GROUP_CLASS_LABEL[g.group_class].en}`,
@@ -96,7 +101,7 @@ export async function GET(_req: Request, { params }: RouteCtx) {
           m.pinned_group_no != null && m.pinned_group_no === g.group_no
             ? "Yes"
             : m.pinned_group_no != null
-              ? `→ #${m.pinned_group_no}`
+              ? `→ 组 ${m.pinned_group_no}`
               : "",
         "Family Partners": m.family_partner_region_ids.join(" / "),
         // Safety-net key, last column. Import prefers this uuid but falls
@@ -112,6 +117,7 @@ export async function GET(_req: Request, { params }: RouteCtx) {
       "Name CN",
       "Name EN",
       "Group #",
+      "Table #",
       "Group Name EN",
       "Group Name CN",
       "Class",
@@ -134,8 +140,9 @@ export async function GET(_req: Request, { params }: RouteCtx) {
   // double-clicks the column edge in Excel). Identity columns lead; the
   // uuid safety-net column trails at the end.
   sheet["!cols"] = [
-    { wch: 10 }, { wch: 16 }, { wch: 22 }, { wch: 8 }, { wch: 18 },
-    { wch: 16 }, { wch: 22 }, { wch: 14 }, { wch: 6 }, { wch: 6 },
+    { wch: 10 }, { wch: 16 }, { wch: 22 }, { wch: 8 }, { wch: 8 },
+    { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 14 }, { wch: 6 },
+    { wch: 6 },
     { wch: 9 }, { wch: 9 }, { wch: 22 }, { wch: 12 }, { wch: 5 },
     { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 28 }, { wch: 38 },
   ];

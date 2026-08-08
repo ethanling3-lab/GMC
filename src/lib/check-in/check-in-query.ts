@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServiceClient } from "../supabase";
+import { tableNoByGroupId } from "../floor-plan/table-numbers";
 import type {
   CheckInAbsentRow,
   CheckInGroupRow,
@@ -9,6 +10,17 @@ import type {
   CheckInTimeBucket,
   CheckInVelocity,
 } from "./types";
+
+// A person's two group numbers: the internal one and the table they sit at.
+// Staff-facing surfaces display table_no when present — see
+// src/lib/group-number.ts.
+type GroupNos = { group_no: number | null; table_no: number | null };
+
+type SeatGroupRow = {
+  participant_id: string;
+  group_id: string | null;
+  event_groups: { group_no: number | null } | null;
+};
 
 // Server-only loaders for the /admin/events/[id]/check-in page. The page
 // renders an initial snapshot from these helpers then the client polls
@@ -147,28 +159,28 @@ export async function loadRecent(
     .limit(limit);
   if (error) throw new Error(error.message);
 
-  // We compute group_no in a follow-up query rather than threading another
-  // join through PostgREST (cheaper than nesting another !inner).
+  // We compute the group numbers in follow-up queries rather than threading
+  // more joins through PostgREST (cheaper than nesting another !inner).
   const participantIds = (data ?? []).map(
     (r) => (r as unknown as { participant_id: string }).participant_id,
   );
-  const groupByParticipant = new Map<string, number | null>();
+  const groupByParticipant = new Map<string, GroupNos>();
   if (participantIds.length > 0) {
-    const { data: seats, error: seatErr } = await supabase
-      .from("event_seat_assignments")
-      .select("participant_id, event_groups!inner(group_no)")
-      .eq("event_id", eventId)
-      .in("participant_id", participantIds);
-    if (seatErr) throw new Error(seatErr.message);
-    for (const s of seats ?? []) {
-      const row = s as unknown as {
-        participant_id: string;
-        event_groups: { group_no: number | null } | null;
-      };
-      groupByParticipant.set(
-        row.participant_id,
-        row.event_groups?.group_no ?? null,
-      );
+    const [seatsRes, tableNos] = await Promise.all([
+      supabase
+        .from("event_seat_assignments")
+        .select("participant_id, group_id, event_groups!inner(group_no)")
+        .eq("event_id", eventId)
+        .in("participant_id", participantIds),
+      tableNoByGroupId(supabase, { eventId }),
+    ]);
+    if (seatsRes.error) throw new Error(seatsRes.error.message);
+    for (const s of seatsRes.data ?? []) {
+      const row = s as unknown as SeatGroupRow;
+      groupByParticipant.set(row.participant_id, {
+        group_no: row.event_groups?.group_no ?? null,
+        table_no: row.group_id ? tableNos.get(row.group_id) ?? null : null,
+      });
     }
   }
 
@@ -190,7 +202,8 @@ export async function loadRecent(
       region_id: row.participants.region_id,
       name_cn: row.participants.name_cn,
       name_en: row.participants.name_en,
-      group_no: groupByParticipant.get(row.participant_id) ?? null,
+      group_no: groupByParticipant.get(row.participant_id)?.group_no ?? null,
+      table_no: groupByParticipant.get(row.participant_id)?.table_no ?? null,
       checked_in_at: row.checked_in_at,
       method: row.method,
     };
@@ -209,6 +222,7 @@ export type ManualSearchRow = {
   name_en: string | null;
   phone: string | null;
   group_no: number | null;
+  table_no: number | null;
   checked_in_at: string | null;
   check_in_id: string | null;
   // M7.1d — surface enrollment-readiness signals so the scanner can
@@ -255,7 +269,7 @@ export async function searchEligibleForCheckIn(
     (r) => (r as unknown as { participant_id: string }).participant_id,
   );
 
-  const [{ data: checkIns }, { data: seats }] = await Promise.all([
+  const [{ data: checkIns }, { data: seats }, tableNos] = await Promise.all([
     supabase
       .from("check_ins")
       .select("id, enrollment_id, checked_in_at")
@@ -268,9 +282,10 @@ export async function searchEligibleForCheckIn(
       ? Promise.resolve({ data: [] as unknown[] })
       : supabase
           .from("event_seat_assignments")
-          .select("participant_id, event_groups!inner(group_no)")
+          .select("participant_id, group_id, event_groups!inner(group_no)")
           .eq("event_id", eventId)
           .in("participant_id", participantIds),
+    tableNoByGroupId(supabase, { eventId }),
   ]);
 
   const checkInByEnrolment = new Map<
@@ -285,16 +300,13 @@ export async function searchEligibleForCheckIn(
     });
   }
 
-  const groupByParticipant = new Map<string, number | null>();
+  const groupByParticipant = new Map<string, GroupNos>();
   for (const s of seats ?? []) {
-    const row = s as unknown as {
-      participant_id: string;
-      event_groups: { group_no: number | null } | null;
-    };
-    groupByParticipant.set(
-      row.participant_id,
-      row.event_groups?.group_no ?? null,
-    );
+    const row = s as unknown as SeatGroupRow;
+    groupByParticipant.set(row.participant_id, {
+      group_no: row.event_groups?.group_no ?? null,
+      table_no: row.group_id ? tableNos.get(row.group_id) ?? null : null,
+    });
   }
 
   return (data ?? []).map((r) => {
@@ -319,7 +331,8 @@ export async function searchEligibleForCheckIn(
       name_cn: row.participants.name_cn,
       name_en: row.participants.name_en,
       phone: row.participants.phone,
-      group_no: groupByParticipant.get(row.participant_id) ?? null,
+      group_no: groupByParticipant.get(row.participant_id)?.group_no ?? null,
+      table_no: groupByParticipant.get(row.participant_id)?.table_no ?? null,
       checked_in_at: checkIn?.checked_in_at ?? null,
       check_in_id: checkIn?.id ?? null,
       has_photo: row.participants.front_photo_url !== null,
@@ -483,6 +496,7 @@ export async function loadGroupRoster(
     { data: assignments, error: assignErr },
     { data: paid, error: paidErr },
     { data: checkIns, error: checkErr },
+    tableNos,
   ] = await Promise.all([
     supabase
       .from("event_groups")
@@ -503,6 +517,7 @@ export async function loadGroupRoster(
       .from("check_ins")
       .select("participant_id")
       .eq("event_id", eventId),
+    tableNoByGroupId(supabase, { eventId }),
   ]);
   if (groupErr) throw new Error(groupErr.message);
   if (assignErr) throw new Error(assignErr.message);
@@ -554,6 +569,7 @@ export async function loadGroupRoster(
   const rows: CheckInGroupRow[] = ((groups ?? []) as GroupRow[]).map((g) => ({
     group_id: g.id,
     group_no: g.group_no,
+    table_no: tableNos.get(g.id) ?? null,
     group_class: g.group_class,
     name_en: g.name_en,
     name_cn: g.name_cn,
@@ -565,6 +581,7 @@ export async function loadGroupRoster(
     rows.push({
       group_id: "__ungrouped",
       group_no: null,
+      table_no: null,
       group_class: null,
       name_en: "Ungrouped",
       name_cn: "未分组",
@@ -589,6 +606,7 @@ export async function loadAbsentees(
     { data: eligible, error: eligErr },
     { data: checked, error: checkErr },
     { data: assignments, error: assignErr },
+    tableNos,
   ] = await Promise.all([
     supabase
       .from("enrollments")
@@ -603,8 +621,9 @@ export async function loadAbsentees(
       .eq("event_id", eventId),
     supabase
       .from("event_seat_assignments")
-      .select("participant_id, event_groups!inner(group_no)")
+      .select("participant_id, group_id, event_groups!inner(group_no)")
       .eq("event_id", eventId),
+    tableNoByGroupId(supabase, { eventId }),
   ]);
   if (eligErr) throw new Error(eligErr.message);
   if (checkErr) throw new Error(checkErr.message);
@@ -621,20 +640,16 @@ export async function loadAbsentees(
     } | null;
   };
   type CheckRow = { participant_id: string };
-  type AssignRow = {
-    participant_id: string;
-    event_groups: { group_no: number | null } | null;
-  };
 
   const checkedSet = new Set<string>(
     ((checked ?? []) as CheckRow[]).map((c) => c.participant_id),
   );
-  const groupNoByParticipant = new Map<string, number | null>();
-  for (const a of (assignments ?? []) as unknown as AssignRow[]) {
-    groupNoByParticipant.set(
-      a.participant_id,
-      a.event_groups?.group_no ?? null,
-    );
+  const groupNoByParticipant = new Map<string, GroupNos>();
+  for (const a of (assignments ?? []) as unknown as SeatGroupRow[]) {
+    groupNoByParticipant.set(a.participant_id, {
+      group_no: a.event_groups?.group_no ?? null,
+      table_no: a.group_id ? tableNos.get(a.group_id) ?? null : null,
+    });
   }
 
   const absent: CheckInAbsentRow[] = [];
@@ -648,11 +663,15 @@ export async function loadAbsentees(
       name_cn: e.participant.name_cn,
       name_en: e.participant.name_en,
       phone: e.participant.phone,
-      group_no: groupNoByParticipant.get(e.participant_id) ?? null,
+      group_no: groupNoByParticipant.get(e.participant_id)?.group_no ?? null,
+      table_no: groupNoByParticipant.get(e.participant_id)?.table_no ?? null,
     });
   }
 
   absent.sort((a, b) => {
+    // Deliberately keyed on group_no, NOT table_no: group_no is always present
+    // once someone is grouped, so unseated groups stay together instead of
+    // scattering to the end of the list.
     // group_no asc, nulls last
     if (a.group_no !== b.group_no) {
       if (a.group_no === null) return 1;

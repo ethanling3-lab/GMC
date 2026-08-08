@@ -19,6 +19,9 @@ type Props = {
   groupNos: number[];
   // Every group number in the event, for the move target picker.
   allGroupNos: number[];
+  // group_no → the label to display for it. Wire values stay group_no (that's
+  // what to_group_no resolves by); only the text switches to table numbers.
+  labelOfGroupNo: (groupNo: number) => string;
   canSwap: boolean;
   // Why swap is unavailable, when it is — shown as the button's tooltip.
   swapHint: string;
@@ -33,6 +36,7 @@ export function GroupsBulkBar({
   count,
   groupNos,
   allGroupNos,
+  labelOfGroupNo,
   canSwap,
   swapHint,
   busy,
@@ -55,7 +59,7 @@ export function GroupsBulkBar({
         {groupNos.length > 0 ? (
           <span className="text-[11px] text-[var(--ink-faint)]">
             {groupNos.length === 1
-              ? `#${groupNos[0]}`
+              ? labelOfGroupNo(groupNos[0])
               : `across ${groupNos.length} groups`}
           </span>
         ) : null}
@@ -81,7 +85,7 @@ export function GroupsBulkBar({
           </option>
           {allGroupNos.map((n) => (
             <option key={n} value={n}>
-              #{n}
+              {labelOfGroupNo(n)}
             </option>
           ))}
         </select>

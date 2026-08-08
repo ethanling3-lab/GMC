@@ -9,6 +9,7 @@ import {
   ExportAllButton,
   type TemplateOption,
 } from "@/components/admin/group-reports/EventGroupReportsClient";
+import { groupNumber } from "@/lib/group-number";
 
 export const metadata: Metadata = { title: "Group reports · 小组报告 — Admin" };
 export const dynamic = "force-dynamic";
@@ -146,7 +147,7 @@ export default async function EventGroupReportsPage({ params }: PageProps) {
                   const tone = st?.status === "submitted" ? "bg-[#5b9a5d]/12 text-[#3a6b3b]" : st ? "bg-[var(--paper-deep)] text-[var(--ink-mute)]" : "bg-[var(--paper-deep)]/60 text-[var(--ink-faint)]";
                   return (
                     <tr key={g.id} className="border-t border-[var(--paper-shadow)]">
-                      <td className="py-3 pr-4 text-[var(--ink)] tabular-nums">#{g.group_no}</td>
+                      <td className="py-3 pr-4 text-[var(--ink)] tabular-nums">{groupNumber(g).short}</td>
                       <td className="py-3 pr-4 text-[var(--ink-soft)]">{leaderName}</td>
                       <td className="py-3 pr-4 text-[var(--ink-soft)] tabular-nums">{g.members.length}</td>
                       <td className="py-3 pr-4">

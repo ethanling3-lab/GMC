@@ -5,19 +5,37 @@
 // Slide-in floating panel anchored to the right edge of the canvas.
 // Renders only when a shape is selected; idle = nothing on screen.
 // Closing the panel (✕ or click empty canvas) clears selection.
+//
+// Vertical inset is top-14 / bottom-14, NOT top-3 / bottom-3: the canvas has
+// floating chips pinned to both right corners — the tools chip (save state,
+// zoom, Fit, Grid, Auto-number, Auto-place) at top-3 and the export chip at
+// bottom-3. At top-3/bottom-3 this panel sat on top of both, hiding the export
+// control entirely. 56px clears a one-row chip (12px inset + ~36px tall) plus
+// an 8px gap. Keep them in sync if either chip grows a second row.
 
+import { useState } from "react";
 import {
+  isSeatedKind,
+  isTableKind,
   SHAPE_LABEL_CN,
   SHAPE_LABEL_EN,
   type GroupRoster,
   type Shape,
   type SquareSeats,
 } from "./types";
+import { groupNumber } from "@/lib/group-number";
 
 type Props = {
   shape: Shape | null;
   roster: GroupRoster | null;
   allGroups: GroupRoster[];
+  // table_no → shape id, for the duplicate-number guard. Numbers are unique
+  // per event (partial unique index, migration 049), so the field refuses to
+  // save a number another table already holds.
+  takenTableNos: ReadonlyMap<number, string>;
+  // Event-wide seat-name scale, so the field can show what "inherit" means
+  // and offer a one-click reset back to it.
+  eventNameScale: number;
   seatingMode: "tables" | "cushions";
   canEdit: boolean;
   // Total selection count. 0 = idle (no panel), 1 = single (full inspector
@@ -43,6 +61,8 @@ export function ShapeInspector({
   shape,
   roster,
   allGroups,
+  takenTableNos,
+  eventNameScale,
   seatingMode,
   canEdit,
   selectedCount,
@@ -76,7 +96,7 @@ export function ShapeInspector({
 
   return (
     <aside
-      className="gmc-print-hide absolute right-3 top-3 bottom-3 w-[300px] rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] overflow-hidden h-auto z-10 flex flex-col"
+      className="gmc-print-hide absolute right-3 top-14 bottom-14 w-[300px] rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] overflow-hidden h-auto z-10 flex flex-col"
     >
       <div className="px-3 py-2.5 border-b border-[var(--paper-shadow)]/70 flex items-center justify-between gap-2 shrink-0">
         <div className="text-[9.5px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
@@ -102,8 +122,17 @@ export function ShapeInspector({
       <div className="overflow-y-auto flex-1">
         <div className="p-3 flex flex-col gap-4">
           <KindHeader shape={shape} />
-          {(shape.kind === "round_table" || shape.kind === "square_table")
-            && seatingMode === "tables" ? (
+          {/* Furniture identity before roster assignment — the table number is
+              what every downstream surface displays, so it comes first. */}
+          {isTableKind(shape.kind) ? (
+            <TableNumberField
+              shape={shape}
+              takenTableNos={takenTableNos}
+              disabled={!canEdit || shape.locked}
+              onChange={(n) => onUpdate({ table_no: n })}
+            />
+          ) : null}
+          {isTableKind(shape.kind) && seatingMode === "tables" ? (
             <AssignGroupField
               shape={shape}
               roster={roster}
@@ -138,6 +167,14 @@ export function ShapeInspector({
                   seat_count: total,
                 })
               }
+            />
+          ) : null}
+          {isSeatedKind(shape.kind) ? (
+            <NameScaleField
+              value={shape.name_scale}
+              eventDefault={eventNameScale}
+              disabled={!canEdit || shape.locked}
+              onChange={(n) => onUpdate({ name_scale: n })}
             />
           ) : null}
           <LabelField
@@ -573,6 +610,184 @@ function DeleteButton({
   );
 }
 
+// The table's physical number — what staff, attendees and every export
+// display. Deliberately NOT built on Stepper/SeatCountField: table numbers are
+// sparse and non-monotonic (a venue may run 1-12 then 21-32), so stepping
+// through them one at a time is the wrong control. Free numeric input plus
+// Clear / Auto shortcuts.
+function TableNumberField({
+  shape,
+  takenTableNos,
+  disabled,
+  onChange,
+}: {
+  shape: Shape;
+  takenTableNos: ReadonlyMap<number, string>;
+  disabled: boolean;
+  onChange: (n: number | null) => void;
+}) {
+  // Local draft so an in-progress duplicate is visible but never saved. The
+  // parent remounts this component per shape (key={shape.id}), so the draft
+  // can't leak between tables.
+  const [draft, setDraft] = useState<string>(
+    shape.table_no != null ? String(shape.table_no) : "",
+  );
+
+  const trimmed = draft.trim();
+  const parsed = trimmed.length > 0 ? Number(trimmed) : null;
+  const valid =
+    parsed !== null
+    && Number.isInteger(parsed)
+    && parsed >= 1
+    && parsed <= 999;
+  const dupOwner = valid ? takenTableNos.get(parsed) : undefined;
+  const isDup = dupOwner != null && dupOwner !== shape.id;
+  const isBadNumber = trimmed.length > 0 && !valid;
+
+  function commit(next: string) {
+    setDraft(next);
+    const t = next.trim();
+    if (t.length === 0) {
+      onChange(null);
+      return;
+    }
+    const n = Number(t);
+    if (!Number.isInteger(n) || n < 1 || n > 999) return;
+    // Refuse to propagate a duplicate. Keeps the whole debounced batch out of
+    // an error state and makes the route's 409 unreachable from here — the
+    // only remaining source is two admins in two tabs.
+    if (takenTableNos.get(n) != null && takenTableNos.get(n) !== shape.id) {
+      return;
+    }
+    onChange(n);
+  }
+
+  function autoAssign() {
+    let n = 1;
+    while (takenTableNos.has(n) && takenTableNos.get(n) !== shape.id) n += 1;
+    setDraft(String(n));
+    onChange(n);
+  }
+
+  const hint = isDup
+    ? "duplicate · 重复"
+    : isBadNumber
+    ? "1–999"
+    : shape.table_no == null
+    ? "unnumbered · 未编号"
+    : undefined;
+
+  return (
+    <FieldShell label="Table # · 桌号" hint={hint}>
+      <div className="flex items-stretch gap-1.5">
+        <input
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={999}
+          value={draft}
+          disabled={disabled}
+          placeholder="—"
+          onChange={(e) => commit(e.target.value)}
+          className="flex-1 min-w-0 px-2.5 py-1.5 rounded-[var(--radius-sm)] border bg-[var(--paper-warm)] text-[13px] tabular-nums text-[var(--ink)] focus:outline-none focus:shadow-[var(--shadow-focus)] disabled:opacity-50"
+          style={
+            isDup || isBadNumber
+              ? { borderColor: "rgba(185, 28, 28, 0.55)", color: "#B91C1C" }
+              : { borderColor: "var(--paper-shadow)" }
+          }
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={autoAssign}
+          title="Assign the lowest free number"
+          className="px-2 rounded-[var(--radius-sm)] border border-[var(--paper-shadow)] text-[10px] tracking-[0.16em] uppercase text-[var(--ink-soft)] hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] transition-colors disabled:opacity-50"
+        >
+          Auto
+        </button>
+        <button
+          type="button"
+          disabled={disabled || shape.table_no == null}
+          onClick={() => {
+            setDraft("");
+            onChange(null);
+          }}
+          title="Remove this table's number"
+          className="px-2 rounded-[var(--radius-sm)] border border-[var(--paper-shadow)] text-[10px] tracking-[0.16em] uppercase text-[var(--ink-faint)] hover:bg-[var(--paper)] hover:text-[var(--ink)] transition-colors disabled:opacity-40"
+        >
+          Clear
+        </button>
+      </div>
+      {isDup ? (
+        <p className="text-[10.5px] leading-snug" style={{ color: "#B91C1C" }}>
+          ⚠ Table {parsed} is already used · 桌号重复 — not saved
+        </p>
+      ) : null}
+    </FieldShell>
+  );
+}
+
+// Per-table seat-name font size. Null = inherit the event-wide setting, which
+// is the normal state — this exists for the one crowded 14-seat table whose
+// names collide, or a head table that wants its names bigger on the printout.
+//
+// Shown as a percentage because that is how the toolbar states the event
+// default, and admins reason in "a bit bigger", not in font units.
+function NameScaleField({
+  value,
+  eventDefault,
+  disabled,
+  onChange,
+}: {
+  value: number | null;
+  eventDefault: number;
+  disabled: boolean;
+  onChange: (n: number | null) => void;
+}) {
+  const inherited = value == null;
+  const effective = value ?? eventDefault;
+  const step = (delta: number) => {
+    const next = Math.round((effective + delta) * 100) / 100;
+    onChange(Math.max(0.5, Math.min(3, next)));
+  };
+
+  return (
+    <FieldShell
+      label="Name size · 姓名字号"
+      hint={inherited ? `inherit ${Math.round(eventDefault * 100)}%` : "custom"}
+    >
+      <div className="flex items-stretch border border-[var(--paper-shadow)] rounded-[var(--radius-sm)] overflow-hidden">
+        <Stepper
+          dir="-"
+          disabled={disabled || effective <= 0.5}
+          onClick={() => step(-0.1)}
+        />
+        <span
+          className="flex-1 min-w-0 inline-flex items-center justify-center bg-[var(--paper-warm)] text-[13px] tabular-nums"
+          style={{ color: inherited ? "var(--ink-mute)" : "var(--ink)" }}
+        >
+          {Math.round(effective * 100)}%
+        </span>
+        <Stepper
+          dir="+"
+          disabled={disabled || effective >= 3}
+          onClick={() => step(0.1)}
+        />
+      </div>
+      {!inherited ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange(null)}
+          className="self-start text-[10px] tracking-[0.16em] uppercase text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors disabled:opacity-40"
+        >
+          ↺ Use plan default · 跟随全局
+        </button>
+      ) : null}
+    </FieldShell>
+  );
+}
+
 function AssignGroupField({
   shape,
   roster,
@@ -591,8 +806,36 @@ function AssignGroupField({
   const overflow = roster ? Math.max(0, memberCount - seatCount) : 0;
   const empty = roster ? Math.max(0, seatCount - memberCount) : 0;
 
+  // Unseated groups FIRST — this dropdown exists to seat them, so the ones
+  // still needing a table are the ones you're most likely reaching for. Then
+  // seated groups in table order. Sorting by the internal group_no (which is
+  // how they arrive) makes the displayed table numbers look scrambled.
+  const unseatedCount = allGroups.filter((g) => g.table_no == null).length;
+  const sortedGroups = [...allGroups].sort((a, b) => {
+    if (a.table_no == null && b.table_no == null) {
+      return a.group_no - b.group_no;
+    }
+    if (a.table_no == null) return -1;
+    if (b.table_no == null) return 1;
+    return a.table_no - b.table_no;
+  });
+
   return (
-    <FieldShell label="Assign group · 分组" hint={roster ? `${memberCount} pax` : "—"}>
+    <FieldShell
+      label="Assign group · 分组"
+      hint={roster ? `${memberCount} pax` : "—"}
+    >
+      {/* Unseated groups are only visible once the dropdown is open, so state
+          the count up front — it's the thing the admin is here to resolve. */}
+      {unseatedCount > 0 ? (
+        <p
+          className="text-[10.5px] leading-snug -mt-0.5"
+          style={{ color: "#B91C1C" }}
+        >
+          ⚠️ {unseatedCount} group{unseatedCount === 1 ? "" : "s"} 未编桌 — no
+          table yet, listed first below.
+        </p>
+      ) : null}
       <div className="relative">
         <select
           value={shape.group_id ?? ""}
@@ -604,17 +847,45 @@ function AssignGroupField({
           className="w-full appearance-none px-2.5 py-1.5 pr-8 rounded-[var(--radius-sm)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[12.5px] text-[var(--ink)] focus:outline-none focus:border-[var(--cinnabar)]/50 focus:shadow-[var(--shadow-focus)] disabled:opacity-50"
         >
           <option value="">— None · 未分配 —</option>
-          {allGroups.map((g) => {
+          {sortedGroups.map((g) => {
             const cls = g.group_class
               ? GROUP_CLASS_LABEL[g.group_class] ?? g.group_class
               : null;
+            const seated = g.table_no != null;
+            // THIS dropdown is the one place that shows BOTH numbers, because
+            // its whole job is mapping a grouping onto a table — you can't do
+            // that if every row only tells you the table. So: the table it
+            // sits at (or a loud warning if none), then always the internal
+            // grouping number so a row reads "T4 · 组7" and matches the
+            // grouping identity from the Group assignment tab.
+            //
+            // Everywhere else stays table-number-only per the display model in
+            // src/lib/group-number.ts. `groupNumber()` is deliberately NOT used
+            // for the lead here — it collapses to one number by design.
+            const lead = seated
+              ? `T${g.table_no}`
+              : "⚠️ 未编桌 NO TABLE";
             const name =
               g.name_en && g.name_cn
                 ? `${g.name_cn} · ${g.name_en}`
-                : g.name_en ?? g.name_cn ?? `Table ${g.group_no}`;
+                : g.name_en ?? g.name_cn ?? null;
+            const parts = [
+              lead,
+              `组${g.group_no}`,
+              name,
+              `${g.members.length} pax`,
+              cls,
+            ].filter(Boolean);
             return (
-              <option key={g.id} value={g.id}>
-                {`#${g.group_no} · ${name} · ${g.members.length} pax${cls ? ` · ${cls}` : ""}`}
+              <option
+                key={g.id}
+                value={g.id}
+                // Chrome + Firefox honour this; Safari renders options through
+                // native controls and ignores it, which is why the ⚠️/NO TABLE
+                // text carries the signal on its own.
+                style={seated ? undefined : { color: "#B91C1C" }}
+              >
+                {parts.join(" · ")}
               </option>
             );
           })}
@@ -623,6 +894,12 @@ function AssignGroupField({
           ▾
         </span>
       </div>
+      {roster && shape.table_no == null ? (
+        <p className="text-[10.5px] leading-snug" style={{ color: "#B45309" }}>
+          ⚠ This table has no number · 未编号 — the group will show as{" "}
+          {groupNumber(roster).en} until you give the table one.
+        </p>
+      ) : null}
       {roster ? (
         <div className="mt-1 flex flex-col gap-1.5 px-2 py-2 rounded-[var(--radius-sm)] bg-[var(--paper)] border border-[var(--paper-shadow)]/60">
           <div className="flex items-baseline justify-between gap-2 text-[10.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
@@ -744,7 +1021,7 @@ function MultiSelectInspector({
 }) {
   return (
     <aside
-      className="gmc-print-hide absolute right-3 top-3 w-[300px] rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] overflow-hidden z-10"
+      className="gmc-print-hide absolute right-3 top-14 w-[300px] rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur-sm shadow-[var(--shadow-paper-2)] overflow-hidden z-10"
     >
       <div className="px-3 py-2.5 border-b border-[var(--paper-shadow)]/70 flex items-center justify-between gap-2">
         <div className="text-[9.5px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">

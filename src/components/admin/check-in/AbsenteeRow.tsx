@@ -1,6 +1,7 @@
 "use client";
 
 import type { CheckInAbsentRow } from "@/lib/check-in/types";
+import { groupNumber } from "@/lib/group-number";
 
 // One row in the "Not yet here · 未到场" chase list. Pulls phone for a
 // tel: tap-to-call CTA so door staff can phone late arrivals directly
@@ -31,7 +32,7 @@ export function AbsenteeRow({ row }: Props) {
       </span>
       {row.group_no !== null ? (
         <span className="text-[var(--ink-soft)] text-[10.5px] tracking-[0.08em] uppercase tabular-nums">
-          Group {row.group_no}
+          {groupNumber(row).en}
         </span>
       ) : (
         <span className="text-[var(--ink-faint)] text-[10.5px] tracking-[0.08em] uppercase">

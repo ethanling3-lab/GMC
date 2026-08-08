@@ -469,7 +469,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       return NextResponse.json(
         {
           error: "group_locked",
-          detail: `Group ${grp.group_no} is locked. Unlock it before removing members.`,
+          detail: "That group is locked. Unlock it before removing members.",
         },
         { status: 409 },
       );
@@ -694,7 +694,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         return NextResponse.json(
           {
             error: "target_group_locked",
-            detail: `Group ${tg.group_no} is locked. Unlock it before moving members in.`,
+            detail: "The destination group is locked. Unlock it before moving members in.",
           },
           { status: 409 },
         );
@@ -846,7 +846,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       return NextResponse.json(
         {
           error: "group_locked",
-          detail: `Group ${lockedGroup.group_no} is locked. Unlock it before swapping.`,
+          detail: "One of those groups is locked. Unlock it before swapping.",
         },
         { status: 409 },
       );
@@ -958,7 +958,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       return NextResponse.json(
         {
           error: "target_group_locked",
-          detail: `Group ${target.group_no} is locked. Unlock it before changing its leaders.`,
+          detail: "That group is locked. Unlock it before changing its leaders.",
         },
         { status: 409 },
       );
@@ -999,7 +999,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         return NextResponse.json(
           {
             error: "source_group_locked",
-            detail: `Group ${priorGroup.group_no} is locked. Unlock it before moving that person out.`,
+            detail: "That person\u2019s current group is locked. Unlock it before moving them out.",
           },
           { status: 409 },
         );
@@ -1136,7 +1136,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       return NextResponse.json(
         {
           error: "target_group_locked",
-          detail: `Group ${targetGroup.group_no} is locked. Unlock it before adding members.`,
+          detail: "The destination group is locked. Unlock it before adding members.",
         },
         { status: 409 },
       );
@@ -1239,7 +1239,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     return NextResponse.json(
       {
         error: "source_group_locked",
-        detail: `Group ${sourceGroup.group_no} is locked. Unlock it before moving members out.`,
+        detail: "The source group is locked. Unlock it before moving members out.",
       },
       { status: 409 },
     );
@@ -1262,7 +1262,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     return NextResponse.json(
       {
         error: "target_group_locked",
-        detail: `Group ${targetGroup.group_no} is locked. Unlock it before moving members in.`,
+        detail: "The destination group is locked. Unlock it before moving members in.",
       },
       { status: 409 },
     );

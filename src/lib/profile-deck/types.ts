@@ -66,6 +66,9 @@ export type ProfileDeckRow = {
   enrollment_status: string;
   // Group position (null when no group has been generated)
   group_no: number | null;
+  // Table the group sits at — the number the deck displays. Null when the group
+  // isn't seated yet. See src/lib/group-number.ts.
+  table_no: number | null;
   group_name_cn: string | null;
   group_name_en: string | null;
   group_class: GroupClassKey | null;

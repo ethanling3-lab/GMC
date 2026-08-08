@@ -41,6 +41,9 @@ export type LeaderRole = "zu_zhang" | "fu_zu_zhang";
 
 type Props = {
   groupNo: number;
+  // group_no → its display label (the table number once seated). Wire values
+  // stay group_no; only the text changes. See src/lib/group-number.ts.
+  labelOfGroupNo: (groupNo: number) => string;
   groupClass: GroupClass;
   groupLabel: string;
   initialRole: LeaderRole;
@@ -78,6 +81,7 @@ function candidateName(c: GroupBuilderLeaderCandidate): string {
 
 export function LeaderPickerDialog({
   groupNo,
+  labelOfGroupNo,
   groupClass,
   groupLabel,
   initialRole,
@@ -198,7 +202,7 @@ export function LeaderPickerDialog({
               Assign leader · 指派组长
             </div>
             <div className="mt-1 font-display text-[18px] leading-tight text-[var(--ink)] truncate">
-              #{groupNo} {groupLabel}
+              {labelOfGroupNo(groupNo)} {groupLabel}
             </div>
             <div className="mt-0.5 text-[11px] text-[var(--ink-faint)]">
               {GROUP_CLASS_LABEL[groupClass].cn} ·{" "}
@@ -392,8 +396,8 @@ export function LeaderPickerDialog({
                                 }`
                               : c.current_role === "zu_zhang"
                                 || c.current_role === "fu_zu_zhang"
-                                ? `⚠ leads #${c.current_group_no}`
-                                : `in #${c.current_group_no}`}
+                                ? `⚠ leads ${labelOfGroupNo(c.current_group_no)}`
+                                : `in ${labelOfGroupNo(c.current_group_no)}`}
                         </span>
                         {covers > 0 ? (
                           <span title="Growth goals declared in this group that this leader's strengths cover">

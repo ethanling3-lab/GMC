@@ -21,6 +21,9 @@ export type CheckInResult =
         name_en: string | null;
       };
       group_no: number | null;
+      // Table the group sits at — what the scanner card actually shows staff
+      // ("Group 7" where 7 is table 7). Null when the group isn't seated.
+      table_no: number | null;
       seat_no: number | null;
     }
   | { ok: false; error: CheckInError };
@@ -134,11 +137,35 @@ export async function performCheckIn(args: WriteArgs): Promise<CheckInResult> {
       .maybeSingle(),
     supabase
       .from("event_seat_assignments")
-      .select("seat_no, event_groups!inner(group_no)")
+      .select(
+        "seat_no, group_id, event_groups!inner(group_no, event_floor_plan_shapes(table_no))",
+      )
       .eq("event_id", eventId)
       .eq("participant_id", row.participant_id)
       .maybeSingle(),
   ]);
+
+  const seatGroup =
+    (
+      seat as unknown as {
+        event_groups?: {
+          group_no: number | null;
+          event_floor_plan_shapes?:
+            | { table_no: number | null }[]
+            | { table_no: number | null }
+            | null;
+        } | null;
+      } | null
+    )?.event_groups ?? null;
+
+  // A reverse (one-to-many) embed normally arrives as an array, but PostgREST
+  // collapses it to a single object when it can prove cardinality — accept both
+  // rather than letting a shape change here 500 a door scan.
+  const seatShapes = seatGroup?.event_floor_plan_shapes;
+  const tableNo =
+    (Array.isArray(seatShapes)
+      ? seatShapes.find((sh) => sh?.table_no != null)?.table_no
+      : seatShapes?.table_no) ?? null;
 
   await writeAuditLog({
     actor_id: actorId,
@@ -172,9 +199,8 @@ export async function performCheckIn(args: WriteArgs): Promise<CheckInResult> {
       name_cn: participant?.name_cn ?? null,
       name_en: participant?.name_en ?? null,
     },
-    group_no:
-      ((seat as unknown as { event_groups?: { group_no: number | null } } | null)
-        ?.event_groups?.group_no) ?? null,
+    group_no: seatGroup?.group_no ?? null,
+    table_no: tableNo,
     seat_no: seat?.seat_no ?? null,
   };
 }

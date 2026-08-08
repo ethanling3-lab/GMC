@@ -29,6 +29,9 @@ export type FaceBankEntry = {
   name_en: string | null;
   photo_url: string | null;
   group_no: number | null;
+  // Table the group sits at — the number the match card shows staff. Null when
+  // the group isn't seated yet. See src/lib/group-number.ts.
+  table_no: number | null;
   seat_no: number | null;
   embedding: FaceEmbedding;
 };

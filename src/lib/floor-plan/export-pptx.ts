@@ -22,6 +22,7 @@ import type {
   SeatRole,
 } from "@/components/admin/layout/types";
 import type { EventMeta } from "./export-pdf";
+import { groupNumber } from "@/lib/group-number";
 
 export type PptxExportOptions = {
   pixelScale?: number;
@@ -399,7 +400,10 @@ function buildGroupSlide(
   const classText = g.group_class
     ? `· ${CLASS_LABEL[g.group_class].cn} · ${CLASS_LABEL[g.group_class].en}`
     : "";
-  slide.addText(`GROUP ${g.group_no} · 组 ${g.group_no} ${classText}`, {
+  // The number is the TABLE the group sits at, falling back to its own
+  // number when unseated (see src/lib/group-number.ts).
+  const label = groupNumber(g);
+  slide.addText(`${label.eyebrow} ${classText}`, {
     x: M,
     y: 0.4,
     w: SLIDE_W - M * 2,
@@ -413,7 +417,7 @@ function buildGroupSlide(
 
   // Title — bilingual group name when present, fall back to "Group N".
   const titleCn = g.name_cn ?? "";
-  const titleEn = g.name_en ?? `Group ${g.group_no}`;
+  const titleEn = g.name_en ?? label.en;
 
   if (titleCn) {
     slide.addText(titleCn, {
@@ -472,7 +476,7 @@ function buildGroupSlide(
   });
 
   // Footer
-  slide.addText(`${meta.slug} · group ${g.group_no} of total roster`, {
+  slide.addText(`${meta.slug} · ${label.en.toLowerCase()} of total roster`, {
     x: M,
     y: SLIDE_H - 0.35,
     w: SLIDE_W - M * 2,

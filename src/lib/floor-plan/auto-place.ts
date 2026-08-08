@@ -6,9 +6,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Algorithm:
 //   1. Sort groups by class priority (strategic > key > growth > maintenance)
 //      then by group_no.
-//   2. Sort tables by distance from the stage (if a stage shape exists) —
-//      closest first. If no stage shape, fall back to y_pct ascending (top
-//      of canvas = front).
+//   2. Order tables: by table_no when every table is numbered (the numbers
+//      already encode layout order, and going by them keeps placement
+//      deterministic across re-runs). Otherwise by distance from the stage
+//      shape — closest first — falling back to y_pct ascending when there is
+//      no stage (top of canvas = front).
 //   3. Greedy pair: for each group in priority order, assign the first
 //      remaining table whose seat_count >= group's member count.
 //   4. Auto-seat: within each placed group, sort members by role (zu_zhang
@@ -30,6 +32,7 @@ type Table = {
   width_pct: number;
   height_pct: number;
   seat_count: number | null;
+  table_no: number | null;
   group_id: string | null;
 };
 
@@ -97,7 +100,7 @@ export async function autoPlaceAndSeat(
     service
       .from("event_floor_plan_shapes")
       .select(
-        "id, kind, x_pct, y_pct, width_pct, height_pct, seat_count, group_id",
+        "id, kind, x_pct, y_pct, width_pct, height_pct, seat_count, table_no, group_id",
       )
       .eq("event_id", eventId)
       .in("kind", ["round_table", "square_table"])
@@ -172,12 +175,23 @@ export async function autoPlaceAndSeat(
     });
 
   // ---------------------------------------------------------------------------
-  // 5. Sort tables by distance from stage (closest first); fall back to
-  //    y_pct ascending if no stage.
+  // 5. Order the tables for greedy pairing.
+  //
+  //    When every table is numbered, pair in TABLE NUMBER order: the numbers
+  //    already encode layout order (Auto-number assigns them front-to-back,
+  //    left-to-right), and going by them makes placement deterministic — the
+  //    top-priority group lands at table 1 every time, and re-running doesn't
+  //    reshuffle which group sits where.
+  //
+  //    Otherwise fall back to geometry: distance from stage (closest first),
+  //    or y_pct ascending when there's no stage.
   // ---------------------------------------------------------------------------
+  const allNumbered =
+    tables.length > 0 && tables.every((t) => t.table_no != null);
   const stageX = stage ? stage.x_pct + stage.width_pct / 2 : null;
   const stageY = stage ? stage.y_pct + stage.height_pct / 2 : null;
   const sortedTables = tables.slice().sort((a, b) => {
+    if (allNumbered) return (a.table_no ?? 0) - (b.table_no ?? 0);
     const ax = a.x_pct + a.width_pct / 2;
     const ay = a.y_pct + a.height_pct / 2;
     const bx = b.x_pct + b.width_pct / 2;
@@ -255,31 +269,55 @@ export async function autoPlaceAndSeat(
   const placedGroupIds = new Set(placements.map((p) => p.group_id));
 
   // 7a. Update event_floor_plan_shapes.group_id (+ seat_count bump if the
-  //     placed group is bigger than the table's current seat count) in
-  //     parallel.
-  const tableUpdates = tables.map((t) => {
-    if (reservedTableIds.has(t.id)) {
-      // Locked group's table — leave alone.
-      return Promise.resolve({ error: null });
-    }
+  //     placed group is bigger than the table's current seat count).
+  //
+  //     TWO PHASES, for the same reason as 7b below: the unique partial index
+  //     on (event_id, group_id) (migration 050) means one group sits at one
+  //     table. If group G moves from table A to table B and we fired both
+  //     updates in one Promise.all, B's write could commit BEFORE A's release
+  //     → UNIQUE VIOLATION, even though the end state is valid.
+  //
+  //     Phase A: release group_id on every non-locked table that is changing.
+  //     Phase B: claim the new group_id (+ seat_count bump).
+  const changing = tables.filter((t) => {
+    if (reservedTableIds.has(t.id)) return false; // locked — leave alone
     const newGroupId = placementByShape.get(t.id)?.group_id ?? null;
     const newSeatCount = seatCountBumps.get(t.id);
-    const groupChanged = t.group_id !== newGroupId;
-    const seatChanged =
-      newSeatCount !== undefined && newSeatCount !== t.seat_count;
-    if (!groupChanged && !seatChanged) {
-      return Promise.resolve({ error: null });
-    }
-    const patch: { group_id: string | null; seat_count?: number } = {
-      group_id: newGroupId,
-    };
-    if (seatChanged) patch.seat_count = newSeatCount;
-    return service
-      .from("event_floor_plan_shapes")
-      .update(patch)
-      .eq("id", t.id);
+    return (
+      t.group_id !== newGroupId
+      || (newSeatCount !== undefined && newSeatCount !== t.seat_count)
+    );
   });
-  const tableResults = await Promise.all(tableUpdates);
+
+  const releasing = changing.filter((t) => t.group_id !== null);
+  if (releasing.length > 0) {
+    const { error: releaseErr } = await service
+      .from("event_floor_plan_shapes")
+      .update({ group_id: null })
+      .eq("event_id", eventId)
+      .in(
+        "id",
+        releasing.map((t) => t.id),
+      );
+    if (releaseErr) return { error: releaseErr.message };
+  }
+
+  const tableResults = await Promise.all(
+    changing.map((t) => {
+      const newGroupId = placementByShape.get(t.id)?.group_id ?? null;
+      const newSeatCount = seatCountBumps.get(t.id);
+      const patch: { group_id: string | null; seat_count?: number } = {
+        group_id: newGroupId,
+      };
+      if (newSeatCount !== undefined && newSeatCount !== t.seat_count) {
+        patch.seat_count = newSeatCount;
+      }
+      return service
+        .from("event_floor_plan_shapes")
+        .update(patch)
+        .eq("id", t.id);
+    }),
+  );
   for (const r of tableResults) {
     if (r.error) return { error: r.error.message };
   }

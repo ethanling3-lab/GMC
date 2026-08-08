@@ -6,6 +6,7 @@ import type {
   GroupReportMember,
   LeaderGroupReportItem,
 } from "@/lib/group-report-portal-types";
+import { tableNoByGroupId } from "@/lib/floor-plan/table-numbers";
 
 // Server-only read/gate path for the leader-facing group report. A participant
 // "leads" a group when their event_seat_assignments.role is zu_zhang/fu_zu_zhang
@@ -99,10 +100,18 @@ export async function loadLeaderGroupReports(
     statusByGroup.set(s.group_id, s.status);
   }
 
+  // Scoped by group id, not event id — a participant can lead groups across
+  // several events and there is no single event_id here. Must use the service
+  // client: event_floor_plan_shapes RLS is admin-only.
+  const tableNos = await tableNoByGroupId(service, {
+    groupIds: rows.map((r) => r.id),
+  });
+
   return rows
     .map((r) => ({
       group_id: r.id,
       group_no: r.group_no,
+      table_no: tableNos.get(r.id) ?? null,
       event_id: r.event_id,
       event_title: r.event!.title_cn ?? r.event!.title_en ?? null,
       status: statusByGroup.get(r.id) ?? null,
@@ -141,6 +150,11 @@ export async function loadGroupReportForFill(
     .is("deleted_at", null)
     .maybeSingle();
   const schema = normalizeGroupReportSchema((tpl as { schema: unknown } | null)?.schema);
+
+  // Which table this group sits at — the number the 组长 sees on their report.
+  const tableNo =
+    (await tableNoByGroupId(service, { groupIds: [group.id] })).get(group.id)
+    ?? null;
 
   // Members of the group — privacy-scoped (region_id + name + role only).
   const { data: seats } = await service
@@ -185,7 +199,12 @@ export async function loadGroupReportForFill(
     : null;
 
   return {
-    group: { id: group.id, group_no: group.group_no, event_id: group.event_id },
+    group: {
+      id: group.id,
+      group_no: group.group_no,
+      table_no: tableNo,
+      event_id: group.event_id,
+    },
     event: { id: group.event.id, title_en: group.event.title_en, title_cn: group.event.title_cn },
     schema,
     members,

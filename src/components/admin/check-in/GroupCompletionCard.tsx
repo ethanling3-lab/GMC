@@ -1,6 +1,7 @@
 "use client";
 
 import type { CheckInGroupRow } from "@/lib/check-in/types";
+import { groupNumber } from "@/lib/group-number";
 
 // Compact chip-style card for one event_groups row in the dashboard's
 // "per-group completion" grid. Shows group number + checked-in vs
@@ -19,10 +20,17 @@ export function GroupCompletionCard({ row }: Props) {
   const done = pct >= 100 && row.expected_count > 0;
   const idle = row.expected_count > 0 && row.checked_in_count === 0;
 
+  // The chip shows the TABLE number once the group is seated; an unseated
+  // group falls back to its internal number and keeps the 未编桌 marker so the
+  // two number spaces can't be confused.
+  const num = groupNumber(row);
+  const unseated = row.group_no !== null && !num.placed;
   const label =
     row.group_no === null
       ? row.name_cn ?? row.name_en ?? "—"
-      : `#${row.group_no}`;
+      : unseated
+      ? `⚠️ 未编桌 组${row.group_no}`
+      : num.short;
   const subLabel =
     row.group_no !== null && (row.name_cn || row.name_en)
       ? row.name_cn ?? row.name_en
@@ -38,7 +46,15 @@ export function GroupCompletionCard({ row }: Props) {
       }
     >
       <div className="flex items-baseline justify-between gap-2">
-        <div className="text-[12px] tracking-[0.04em] font-medium text-[var(--ink)] truncate">
+        <div
+          className="text-[12px] tracking-[0.04em] font-medium truncate"
+          style={{ color: unseated ? "#B91C1C" : "var(--ink)" }}
+          title={
+            unseated
+              ? `Not seated at a table — this is the internal group number (组 ${row.group_no}), not a table number.`
+              : undefined
+          }
+        >
           {label}
           {subLabel ? (
             <span className="ml-1.5 text-[var(--ink-faint)] font-normal text-[10.5px] tracking-[0.06em] uppercase">

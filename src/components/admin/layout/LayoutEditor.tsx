@@ -26,11 +26,15 @@ import { FloatingExportChip } from "./FloatingExportChip";
 import {
   clampShape,
   defaultsForKind,
+  isTableKind,
   mapDetectedCandidate,
   paletteForMode,
-  VB_H,
-  VB_W,
+  PAGE_PRESETS,
+  presetIdFor,
+  type PageSize,
 } from "./types";
+import { autoNumberTables, nextFreeTableNo } from "@/lib/floor-plan/auto-number";
+import { parseTableNo } from "@/lib/group-number";
 import type {
   DetectedCandidate,
   FloorPlanAsset,
@@ -168,6 +172,91 @@ export function LayoutEditor({
   const [autoPlaceMessage, setAutoPlaceMessage] = useState<
     null | { tone: "ok" | "error"; text: string }
   >(null);
+
+  // Auto-number — assigns table_no by layout order. Purely local (no API
+  // route): it flows through the normal history + dirty + debounced-save
+  // path, so ⌘Z undoes a whole renumber.
+  const [autoNumberMessage, setAutoNumberMessage] = useState<
+    null | { tone: "ok" | "error"; text: string }
+  >(null);
+
+  // Event-wide seat-name font scale. Lives in local state so the canvas
+  // re-renders immediately, and is persisted through the layout/settings route
+  // rather than the shape payload (it's an event column, not a shape column).
+  // Individual tables override it via shape.name_scale.
+  const [nameScale, setNameScaleState] = useState<number>(
+    event.floor_plan_name_scale,
+  );
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  // Printable page size (millimetres). Local state so the canvas reflows the
+  // moment a preset is picked; persisted through the same settings route.
+  const [page, setPageState] = useState<PageSize>({
+    w: event.floor_plan_page_w,
+    h: event.floor_plan_page_h,
+  });
+  const [pagePreset, setPagePreset] = useState<string | null>(
+    event.floor_plan_page_preset ?? presetIdFor(
+      event.floor_plan_page_w,
+      event.floor_plan_page_h,
+    ),
+  );
+
+  const patchSettings = useCallback(
+    async (patch: Record<string, number | string | null>) => {
+      setSettingsError(null);
+      try {
+        const res = await fetch(
+          `/api/admin/events/${event.id}/layout/settings`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch),
+          },
+        );
+        if (!res.ok) {
+          const json = (await res.json().catch(() => ({}))) as {
+            error?: string;
+            detail?: string;
+          };
+          throw new Error(json.detail ?? json.error ?? `HTTP ${res.status}`);
+        }
+      } catch (err) {
+        setSettingsError(
+          err instanceof Error ? err.message : "could not save setting",
+        );
+      }
+    },
+    [event.id],
+  );
+
+  const setPage = useCallback(
+    (next: PageSize, presetId: string | null) => {
+      if (!canEdit) return;
+      setPageState(next);
+      setPagePreset(presetId);
+      // Shapes are NOT re-clamped here: their coordinates stay put, and a
+      // smaller page just means some sit off-page (visible, draggable back in)
+      // rather than being silently moved. Rewriting 40 positions on a page
+      // change would be a destructive surprise.
+      void patchSettings({
+        page_w: next.w,
+        page_h: next.h,
+        page_preset: presetId,
+      });
+    },
+    [canEdit, patchSettings],
+  );
+
+  const setNameScale = useCallback(
+    (next: number) => {
+      if (!canEdit) return;
+      const clamped = Math.max(0.5, Math.min(3, next));
+      setNameScaleState(clamped);
+      void patchSettings({ name_scale: clamped });
+    },
+    [canEdit, patchSettings],
+  );
 
   // Mirrors the live <svg> from FloorPlanCanvas so PNG/PDF/PPT export can
   // serialize it without weaving forwardRef through the canvas component.
@@ -507,13 +596,39 @@ export function LayoutEditor({
     [event.seating_mode],
   );
 
+  // Re-derive each group's table_no from the LIVE shapes, overriding whatever
+  // the server computed at page load.
+  //
+  // The server's `groups[].table_no` is a snapshot: pairing a group to a table
+  // (or unpairing it) only mutates local `shapes` state and schedules a save,
+  // so the prop stays stale until a reload. Reading it directly inverted every
+  // seated/unseated signal — a group you just placed still read 未编桌, and one
+  // you just unassigned kept showing its old table number.
+  //
+  // shapes.group_id is the authoritative pairing (see table-numbers.ts), so
+  // inverting it here is the same computation the server does, just live.
+  const liveGroups = useMemo<GroupRoster[]>(() => {
+    const tableNoByGroup = new Map<string, number>();
+    for (const s of shapes) {
+      if (s.group_id != null && s.table_no != null) {
+        if (!tableNoByGroup.has(s.group_id)) {
+          tableNoByGroup.set(s.group_id, s.table_no);
+        }
+      }
+    }
+    return groups.map((g) => {
+      const live = tableNoByGroup.get(g.id) ?? null;
+      return live === g.table_no ? g : { ...g, table_no: live };
+    });
+  }, [groups, shapes]);
+
   // Index groups by id for O(1) lookup when ShapeNode rendering resolves
   // shape.group_id → roster.
   const groupsById = useMemo(() => {
     const m = new Map<string, GroupRoster>();
-    for (const g of groups) m.set(g.id, g);
+    for (const g of liveGroups) m.set(g.id, g);
     return m;
-  }, [groups]);
+  }, [liveGroups]);
 
   const selectedRoster = useMemo<GroupRoster | null>(() => {
     if (!selected || !selected.group_id) return null;
@@ -616,28 +731,37 @@ export function LayoutEditor({
         shapes.length === 0
           ? 0
           : Math.max(...shapes.map((s) => s.z_order)) + 1;
-      const shape: Shape = clampShape({
+      const shape: Shape = clampShape(
+        {
         id,
         kind,
-        x_pct: VB_W / 2 - d.width_pct / 2 + jx,
-        y_pct: VB_H / 2 - d.height_pct / 2 + jy,
+        x_pct: page.w / 2 - d.width_pct / 2 + jx,
+        y_pct: page.h / 2 - d.height_pct / 2 + jy,
         width_pct: d.width_pct,
         height_pct: d.height_pct,
         rotation_deg: 0,
         seat_count: d.seat_count,
         seats_per_side: d.seats_per_side,
+        // Number tables on spawn so a table dropped after an Auto-number run
+        // is never blank. Fills the lowest free number, so replacing a deleted
+        // table reuses its number instead of jumping past it.
+        table_no: isTableKind(kind) ? nextFreeTableNo(shapes) : null,
+        // Null = inherit the event-wide name scale.
+        name_scale: null,
         label_en: d.label_en,
         label_cn: d.label_cn,
         group_id: null,
         locked: false,
         z_order: z,
-      });
+        },
+        page,
+      );
       setShapes((prev) => [...prev, shape]);
       selectOnly(id);
       dirtyRef.current.add(id);
       scheduleSave();
     },
-    [canEdit, shapes, scheduleSave, maybePushHistory, selectOnly],
+    [canEdit, shapes, scheduleSave, maybePushHistory, selectOnly, page],
   );
 
   // Accept a vision candidate by spawning a real shape with its mapped
@@ -648,13 +772,9 @@ export function LayoutEditor({
     (candidate: DetectedCandidate) => {
       if (!canEdit) return;
       maybePushHistory();
-      const mapped = mapDetectedCandidate(candidate, imageNatural);
+      const mapped = mapDetectedCandidate(candidate, imageNatural, page);
       const d = defaultsForKind(candidate.kind);
       const id = uuid();
-      const z =
-        shapesRef.current.length === 0
-          ? 0
-          : Math.max(...shapesRef.current.map((s) => s.z_order)) + 1;
       const seatCount =
         candidate.seat_count !== null && candidate.seat_count > 0
           ? candidate.seat_count
@@ -672,23 +792,43 @@ export function LayoutEditor({
       const cy = mapped.y + mapped.height / 2;
       const w = Math.max(2, mapped.width * ACCEPT_SHRINK);
       const h = Math.max(2, mapped.height * ACCEPT_SHRINK);
-      const shape: Shape = clampShape({
-        id,
-        kind: candidate.kind,
-        x_pct: cx - w / 2,
-        y_pct: cy - h / 2,
-        width_pct: w,
-        height_pct: h,
-        rotation_deg: 0,
-        seat_count: seatCount,
-        seats_per_side: d.seats_per_side,
-        label_en: candidate.label,
-        label_cn: null,
-        group_id: null,
-        locked: false,
-        z_order: z,
+      // Vision reads the venue's PRINTED table number off the plan, so promote
+      // it into the structured column — the same trust the label_en write
+      // already expresses. Falls back to the next free number when the printed
+      // number is unreadable or already claimed.
+      const printedNo = parseTableNo(candidate.label);
+      // z_order and table_no are derived inside the updater, not from
+      // shapesRef: acceptAllCandidates calls this synchronously in a loop, and
+      // shapesRef doesn't advance between iterations — so reading it there
+      // would hand every unnumbered candidate the SAME number and trip the
+      // unique index. `prev` is authoritative.
+      setShapes((prev) => {
+        const z =
+          prev.length === 0 ? 0 : Math.max(...prev.map((s) => s.z_order)) + 1;
+        const taken =
+          printedNo != null
+          && prev.some((s) => isTableKind(s.kind) && s.table_no === printedNo);
+        const shape: Shape = clampShape({
+          id,
+          kind: candidate.kind,
+          x_pct: cx - w / 2,
+          y_pct: cy - h / 2,
+          width_pct: w,
+          height_pct: h,
+          rotation_deg: 0,
+          seat_count: seatCount,
+          seats_per_side: d.seats_per_side,
+          table_no:
+            printedNo != null && !taken ? printedNo : nextFreeTableNo(prev),
+          name_scale: null,
+          label_en: candidate.label,
+          label_cn: null,
+          group_id: null,
+          locked: false,
+          z_order: z,
+        }, page);
+        return [...prev, shape];
       });
-      setShapes((prev) => [...prev, shape]);
       // Don't steal selection during a bulk-accept run — admin may still
       // be reviewing other candidates. Just persist the new shape.
       dirtyRef.current.add(id);
@@ -698,7 +838,7 @@ export function LayoutEditor({
         prev ? prev.filter((c) => c.id !== candidate.id) : prev,
       );
     },
-    [canEdit, imageNatural, maybePushHistory, scheduleSave],
+    [canEdit, imageNatural, maybePushHistory, scheduleSave, page],
   );
 
   const acceptAllCandidates = useCallback(() => {
@@ -761,18 +901,94 @@ export function LayoutEditor({
     }
   }, [canEdit, event.id, autoPlaceBusy]);
 
+  // Auto-number every unlocked table by layout order. Local + synchronous:
+  // no API route, no reload — the change rides the normal history/dirty/save
+  // path so ⌘Z reverts the whole renumber.
+  //
+  // ⌥/Alt-click switches to fill-blanks-only, which preserves every existing
+  // number and only fills the gaps.
+  const runAutoNumber = useCallback(
+    (fillBlanksOnly: boolean) => {
+      if (!canEdit) return;
+      const preview = autoNumberTables(shapesRef.current, { fillBlanksOnly });
+      if (preview.numbered === 0) {
+        setAutoNumberMessage({
+          tone: "error",
+          text: "No tables to number · 没有桌子",
+        });
+        return;
+      }
+      if (preview.changes.size === 0) {
+        setAutoNumberMessage({
+          tone: "ok",
+          text: `Already numbered · ${preview.numbered} tables`,
+        });
+        return;
+      }
+      const lockedNote =
+        preview.skipped.length > 0
+          ? ` ${preview.skipped.length} locked table(s) keep their numbers.`
+          : "";
+      const scope = fillBlanksOnly
+        ? `Fill in ${preview.changes.size} unnumbered table(s)?`
+        : `Renumber ${preview.changes.size} table(s) by layout order — front to back, left to right, across ${preview.rows} row(s)?`;
+      if (!window.confirm(`${scope}${lockedNote} ⌘Z undoes this.`)) return;
+
+      maybePushHistory();
+      setShapes((prev) =>
+        prev.map((s) =>
+          preview.changes.has(s.id)
+            ? { ...s, table_no: preview.changes.get(s.id)! }
+            : s,
+        ),
+      );
+      for (const id of preview.changes.keys()) dirtyRef.current.add(id);
+      scheduleSave();
+      setAutoNumberMessage({
+        tone: "ok",
+        text: `${preview.changes.size} numbered · ${preview.rows} row${
+          preview.rows === 1 ? "" : "s"
+        }`,
+      });
+    },
+    [canEdit, maybePushHistory, scheduleSave],
+  );
+
   const updateShape = useCallback(
     (id: string, patch: Partial<Shape>) => {
       if (!canEdit) return;
       maybePushHistory();
-      setShapes((prev) =>
-        prev.map((s) => (s.id === id ? clampShape({ ...s, ...patch }) : s)),
-      );
+      setShapes((prev) => {
+        // Pairing a group to a table is 1:1. The schema only enforces the
+        // easy direction (a shape holds one group_id) — nothing stopped two
+        // shapes pointing at the SAME group, which double-renders that roster
+        // and, now that table numbers are the displayed identity, would give
+        // one group two different numbers. Clear the previous holder.
+        const stealingGroup =
+          typeof patch.group_id === "string" ? patch.group_id : null;
+        return prev.map((s) => {
+          if (s.id === id) return clampShape({ ...s, ...patch }, page);
+          if (stealingGroup !== null && s.group_id === stealingGroup) {
+            dirtyRef.current.add(s.id);
+            return { ...s, group_id: null };
+          }
+          return s;
+        });
+      });
       dirtyRef.current.add(id);
       scheduleSave();
     },
-    [canEdit, scheduleSave, maybePushHistory],
+    [canEdit, scheduleSave, maybePushHistory, page],
   );
+
+  // table_no → shape id, for the inspector's duplicate-number guard.
+  const takenTableNos = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const s of shapes) {
+      if (isTableKind(s.kind) && s.table_no != null) m.set(s.table_no, s.id);
+    }
+    return m;
+  }, [shapes]);
 
   const deleteShape = useCallback(
     (id: string) => {
@@ -794,7 +1010,7 @@ export function LayoutEditor({
       });
       scheduleSave();
     },
-    [canEdit, scheduleSave, maybePushHistory],
+    [canEdit, scheduleSave, maybePushHistory, page],
   );
 
   const bumpZ = useCallback(
@@ -815,7 +1031,7 @@ export function LayoutEditor({
       dirtyRef.current.add(id);
       scheduleSave();
     },
-    [canEdit, scheduleSave, maybePushHistory],
+    [canEdit, scheduleSave, maybePushHistory, page],
   );
 
   // ---------------------------------------------------------------------------
@@ -884,7 +1100,7 @@ export function LayoutEditor({
         group_id: null, // never duplicate a group binding
         locked: false,
         z_order: baseZ + 1 + i,
-      });
+      }, page);
     });
     setShapes((prev) => [...prev, ...copies]);
     // Select the new copies, primary = last.
@@ -893,7 +1109,7 @@ export function LayoutEditor({
     setSelectedIdRaw(newIds[newIds.length - 1] ?? null);
     for (const c of copies) dirtyRef.current.add(c.id);
     scheduleSave();
-  }, [canEdit, selectedIds, scheduleSave, maybePushHistory]);
+  }, [canEdit, selectedIds, scheduleSave, maybePushHistory, page]);
 
   const nudgeSelected = useCallback(
     (dx: number, dy: number) => {
@@ -1106,6 +1322,8 @@ export function LayoutEditor({
           canEdit={canEdit}
           revealNames={revealNames}
           gridSnap={gridSnap}
+          nameScale={nameScale}
+          page={page}
           asset={asset}
           imageNatural={imageNatural}
           candidates={candidates}
@@ -1146,6 +1364,14 @@ export function LayoutEditor({
           autoPlaceBusy={autoPlaceBusy}
           autoPlaceMessage={autoPlaceMessage}
           onAutoPlace={runAutoPlace}
+          autoNumberMessage={autoNumberMessage}
+          onAutoNumber={runAutoNumber}
+          nameScale={nameScale}
+          onNameScaleChange={setNameScale}
+          page={page}
+          pagePreset={pagePreset}
+          onPageChange={setPage}
+          settingsError={settingsError}
         />
 
         <FloatingBackgroundChip
@@ -1172,16 +1398,22 @@ export function LayoutEditor({
             title_cn: event.title_cn,
             seating_mode: event.seating_mode,
           }}
-          groups={groups}
+          groups={liveGroups}
           revealNames={revealNames}
           onRevealChange={setRevealNames}
           onExported={onExported}
         />
 
         <ShapeInspector
+          // Remount per shape so TableNumberField's local draft state (which
+          // holds an in-progress duplicate without saving it) can't leak from
+          // one table to the next.
+          key={selected?.id ?? "none"}
           shape={selected}
           roster={selectedRoster}
-          allGroups={groups}
+          allGroups={liveGroups}
+          takenTableNos={takenTableNos}
+          eventNameScale={nameScale}
           seatingMode={event.seating_mode}
           canEdit={canEdit}
           selectedCount={selectedIds.size}
@@ -1263,6 +1495,14 @@ function FloatingTopChip({
   autoPlaceBusy,
   autoPlaceMessage,
   onAutoPlace,
+  autoNumberMessage,
+  onAutoNumber,
+  nameScale,
+  onNameScaleChange,
+  page,
+  pagePreset,
+  onPageChange,
+  settingsError,
 }: {
   saveState: SaveState;
   saveError: string | null;
@@ -1277,6 +1517,14 @@ function FloatingTopChip({
   autoPlaceBusy: boolean;
   autoPlaceMessage: null | { tone: "ok" | "error"; text: string };
   onAutoPlace: () => void;
+  autoNumberMessage: null | { tone: "ok" | "error"; text: string };
+  onAutoNumber: (fillBlanksOnly: boolean) => void;
+  nameScale: number;
+  onNameScaleChange: (next: number) => void;
+  page: PageSize;
+  pagePreset: string | null;
+  onPageChange: (next: PageSize, presetId: string | null) => void;
+  settingsError: string | null;
 }) {
   function zoomBy(factor: number) {
     const next = Math.max(0.25, Math.min(6, view.scale * factor));
@@ -1320,6 +1568,40 @@ function FloatingTopChip({
         Fit
       </button>
 
+      {/* Printable page size. Units are millimetres, so the presets are true
+          paper sizes and the PDF/PNG/PPTX exports inherit the aspect. */}
+      {canEdit ? (
+        <>
+          <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+          <div className="relative inline-flex items-center">
+            <select
+              value={pagePreset ?? "custom"}
+              onChange={(e) => {
+                const p = PAGE_PRESETS.find((x) => x.id === e.target.value);
+                if (!p) return;
+                onPageChange({ w: p.w, h: p.h }, p.id);
+              }}
+              title={`Printable page size · 打印尺寸 — currently ${page.w}×${page.h} mm`}
+              className="appearance-none bg-transparent pr-4 text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-soft)] hover:text-[var(--cinnabar-deep)] focus:outline-none cursor-pointer"
+            >
+              {pagePreset == null ? (
+                <option value="custom" disabled>
+                  {`${page.w}×${page.h}`}
+                </option>
+              ) : null}
+              {PAGE_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-0 text-[var(--ink-faint)] text-[9px]">
+              ▾
+            </span>
+          </div>
+        </>
+      ) : null}
+
       <span className="w-px h-4 bg-[var(--paper-shadow)]" />
 
       {canEdit ? (
@@ -1327,7 +1609,7 @@ function FloatingTopChip({
           type="button"
           onClick={() => onGridSnapChange(!gridSnap)}
           aria-pressed={gridSnap}
-          title="Snap to grid · G"
+          title="Snap to a 5-unit grid · G. Alignment guides show while dragging either way."
           className={`inline-flex items-center gap-1.5 px-2 h-6 rounded-full text-[10.5px] tracking-[0.16em] uppercase transition-colors ${
             gridSnap
               ? "bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
@@ -1341,8 +1623,96 @@ function FloatingTopChip({
         </button>
       ) : null}
 
+      {canEdit ? (
+        <>
+          <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+          {/* Event-wide seat-name size. Applies to every table that hasn't set
+              its own override in the inspector. Steps rather than a free input:
+              the useful range is narrow and the canvas re-renders live. */}
+          <span
+            className="inline-flex items-center gap-1 text-[10.5px] tracking-[0.16em] uppercase text-[var(--ink-faint)]"
+            title="Seat-name text size for the whole plan · 姓名字号. Override a single table in its inspector."
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
+              <path d="M1.5 3 H6.5 M4 3 V9.5" />
+              <path d="M7 5.5 H10.8 M8.9 5.5 V9.5" />
+            </svg>
+            <button
+              type="button"
+              onClick={() => onNameScaleChange(nameScale - 0.1)}
+              disabled={nameScale <= 0.5}
+              title="Smaller"
+              className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] disabled:opacity-40 transition-colors text-[13px] leading-none"
+            >
+              −
+            </button>
+            <span className="tabular-nums text-[var(--ink-soft)] min-w-[34px] text-center">
+              {Math.round(nameScale * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => onNameScaleChange(nameScale + 0.1)}
+              disabled={nameScale >= 3}
+              title="Larger"
+              className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] disabled:opacity-40 transition-colors text-[13px] leading-none"
+            >
+              +
+            </button>
+            {nameScale !== 1 ? (
+              <button
+                type="button"
+                onClick={() => onNameScaleChange(1)}
+                title="Reset to 100%"
+                className="text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] transition-colors"
+              >
+                ↺
+              </button>
+            ) : null}
+          </span>
+          {settingsError ? (
+            <span
+              className="text-[10px] tracking-[0.06em] shrink-0 max-w-[160px] truncate"
+              style={{ color: "#B91C1C" }}
+              title={settingsError}
+            >
+              {settingsError}
+            </span>
+          ) : null}
+        </>
+      ) : null}
+
       {canEdit && seatingMode === "tables" ? (
         <>
+          <span className="w-px h-4 bg-[var(--paper-shadow)]" />
+          <button
+            type="button"
+            onClick={(e) => onAutoNumber(e.altKey)}
+            title="Number tables by layout order — front to back, left to right · ⌥ = fill blanks only"
+            className="inline-flex items-center gap-1.5 px-2 h-6 rounded-full text-[10.5px] tracking-[0.16em] uppercase text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar-wash)] transition-colors"
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.2 3.4 L3.4 2.6 V5.6" />
+              <path d="M6.6 2.6 H8.4 A0.9 0.9 0 0 1 8.4 4.1 H7.4 A1 1 0 0 0 6.6 5.6 H8.6" />
+              <path d="M1.8 8 H10.2" />
+              <path d="M3.4 9.9 V10.4 M6 9.9 V10.4 M8.6 9.9 V10.4" />
+            </svg>
+            Auto-number
+          </button>
+          {autoNumberMessage ? (
+            <span
+              className="text-[10px] tracking-[0.06em] tabular-nums shrink-0 max-w-[200px] truncate"
+              style={{
+                color:
+                  autoNumberMessage.tone === "ok"
+                    ? "var(--ink-soft)"
+                    : "#B91C1C",
+              }}
+              title={autoNumberMessage.text}
+            >
+              {autoNumberMessage.text}
+            </span>
+          ) : null}
+
           <span className="w-px h-4 bg-[var(--paper-shadow)]" />
           <button
             type="button"

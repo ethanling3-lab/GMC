@@ -11,6 +11,7 @@ import {
   playWarn,
   primeAudio,
 } from "@/lib/check-in/audio-cues";
+import { groupNumber } from "@/lib/group-number";
 
 // Focused scanner station — designed for door staff on a single phone or
 // tablet. Strips everything organizational (sparkline, group grid,
@@ -38,6 +39,7 @@ type FeedbackState =
         region_id: string | null;
       };
       group_no: number | null;
+      table_no: number | null;
       seat_no: number | null;
       method: "qr" | "manual";
     }
@@ -51,6 +53,7 @@ type ManualSearchRow = {
   name_en: string | null;
   phone: string | null;
   group_no: number | null;
+  table_no: number | null;
   checked_in_at: string | null;
   check_in_id: string | null;
 };
@@ -161,6 +164,7 @@ export function ScannerStation({
           region_id: string | null;
         };
         group_no: number | null;
+        table_no: number | null;
         seat_no: number | null;
         check_in: { method: "qr" | "manual" };
       };
@@ -168,6 +172,7 @@ export function ScannerStation({
         kind: "success",
         participant: r.participant,
         group_no: r.group_no,
+        table_no: r.table_no,
         seat_no: r.seat_no,
         method: r.check_in.method,
       });
@@ -523,7 +528,7 @@ function SuccessCard({
         <div className="mt-3 inline-flex items-center gap-2 text-[12px] text-[var(--ink-soft)]">
           {feedback.group_no !== null ? (
             <span className="inline-flex items-center h-[22px] px-2.5 rounded-[var(--radius-pill)] bg-[var(--paper-deep)] tabular-nums">
-              Group {feedback.group_no}
+              {groupNumber(feedback).bilingual}
             </span>
           ) : null}
           {feedback.seat_no !== null ? (
@@ -611,7 +616,7 @@ function ManualRow({
           {row.name_cn ?? row.name_en ?? "(unnamed)"}
         </div>
         <div className="text-[10.5px] text-[var(--ink-faint)] tabular-nums truncate">
-          {row.group_no !== null ? `Group ${row.group_no} · ` : ""}
+          {row.group_no !== null ? `${groupNumber(row).en} · ` : ""}
           {row.phone ?? ""}
         </div>
       </div>
