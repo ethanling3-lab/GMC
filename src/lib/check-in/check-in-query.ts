@@ -10,6 +10,7 @@ import type {
   CheckInTimeBucket,
   CheckInVelocity,
 } from "./types";
+import { UNGROUPED_GROUP_ID } from "./types";
 
 // A person's two group numbers: the internal one and the table they sit at.
 // Staff-facing surfaces display table_no when present — see
@@ -579,7 +580,7 @@ export async function loadGroupRoster(
 
   if (ungroupedExpected > 0) {
     rows.push({
-      group_id: "__ungrouped",
+      group_id: UNGROUPED_GROUP_ID,
       group_no: null,
       table_no: null,
       group_class: null,

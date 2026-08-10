@@ -47,6 +47,11 @@ export function AdminShell({
 }) {
   const [userPref, setUserPref] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Defaults to true so SSR and the first client render emit the desktop
+  // column exactly as before — no hydration change. Flips post-mount on
+  // narrow viewports, where the sidebar becomes an off-canvas drawer.
+  const [isDesktop, setIsDesktop] = useState(true);
   const pathname = usePathname();
   const liveSegment = useSelectedLayoutSegment();
 
@@ -71,6 +76,33 @@ export function AdminShell({
   // localStorage read.
   const isInboxRoute = segment === "inbox";
   const effectiveCollapsed = (mounted && userPref) || isInboxRoute;
+  // The 76px rail is a desktop affordance — inside the mobile drawer it
+  // would render icon-only nav in a 260px panel. Force the full layout there.
+  const sidebarCollapsed = isDesktop ? effectiveCollapsed : false;
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const apply = () => setIsDesktop(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  // The drawer overlays content, so a route change must dismiss it —
+  // otherwise it stays open over the page the user just navigated to.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  // Escape closes the drawer, matching the scrim click.
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileNavOpen]);
 
   // Defensive cleanup on every route change. With React 19 transitions +
   // portaled dialog modals (createPortal to document.body), there's a small
@@ -106,12 +138,27 @@ export function AdminShell({
         <Sidebar
           admin={admin}
           segment={segment}
-          collapsed={effectiveCollapsed}
+          collapsed={sidebarCollapsed}
           onToggle={toggle}
+          mobileOpen={mobileNavOpen}
+          onMobileClose={() => setMobileNavOpen(false)}
+        />
+
+        {/* Scrim — only ever hit-testable while the mobile drawer is open. */}
+        <div
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+          className={`fixed inset-0 z-40 bg-[var(--ink)]/25 backdrop-blur-[2px] md:hidden
+                      transition-opacity duration-[var(--dur-base)] ease-[var(--ease-out)]
+                      motion-reduce:transition-none ${
+                        mobileNavOpen
+                          ? "opacity-100"
+                          : "opacity-0 pointer-events-none"
+                      }`}
         />
 
         <div className="flex-1 min-w-0 flex flex-col">
-          <TopBar />
+          <TopBar onOpenNav={() => setMobileNavOpen(true)} />
           <main
             className="flex-1 min-w-0 relative"
             style={{
@@ -120,7 +167,11 @@ export function AdminShell({
                 "radial-gradient(700px 420px at -4% 110%, rgba(122,143,179,0.05), transparent 65%)",
             }}
           >
-            <div className="px-6 md:px-10 py-10">{children}</div>
+            {/* Gutter comes from --admin-gutter-* so the inbox's negative-margin
+                escape can stay in lockstep with it. See globals.css. */}
+            <div className="px-[var(--admin-gutter-x)] py-[var(--admin-gutter-y)]">
+              {children}
+            </div>
           </main>
         </div>
       </div>

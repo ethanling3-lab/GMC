@@ -10,6 +10,7 @@ import type {
   CheckInTimeBucket,
   CheckInVelocity,
 } from "@/lib/check-in/types";
+import { UNGROUPED_GROUP_ID } from "@/lib/check-in/types";
 import { Sparkline } from "./Sparkline";
 import { GroupCompletionCard } from "./GroupCompletionCard";
 import { AbsenteeRow } from "./AbsenteeRow";
@@ -172,7 +173,7 @@ export function CheckInClient({
               Groups · 小组进度
             </div>
             <div className="text-[10.5px] tracking-[0.12em] uppercase text-[var(--ink-faint)] tabular-nums">
-              {groupsSettledCount(groups)} / {groups.length} settled
+              {groupsSettledCount(groups)} / {realGroups(groups).length} settled
             </div>
           </div>
           <div className="px-4 pb-4 pt-1 overflow-y-auto max-h-[440px]">
@@ -268,9 +269,17 @@ export function CheckInClient({
 
 // -- Helpers ----------------------------------------------------------------
 
+// The roster carries a synthetic "Ungrouped" bucket so unseated attendees
+// stay visible in the grid. It isn't a group, so the settled ratio counts
+// real groups only — otherwise the denominator reads one higher than the
+// group count shown everywhere else.
+function realGroups(groups: CheckInGroupRow[]): CheckInGroupRow[] {
+  return groups.filter((g) => g.group_id !== UNGROUPED_GROUP_ID);
+}
+
 function groupsSettledCount(groups: CheckInGroupRow[]): number {
   let n = 0;
-  for (const g of groups) {
+  for (const g of realGroups(groups)) {
     if (g.expected_count > 0 && g.checked_in_count >= g.expected_count) n += 1;
   }
   return n;

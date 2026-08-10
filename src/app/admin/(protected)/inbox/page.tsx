@@ -55,7 +55,7 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
 
       {/* <xl: render the full inbox-list page inline. Own scroll container. */}
       <div className="xl:hidden flex-1 min-h-0 overflow-y-auto">
-        <div className="px-6 md:px-10 py-10">
+        <div className="px-[var(--admin-gutter-x)] py-[var(--admin-gutter-y)]">
           <div className="flex items-end justify-between gap-6 flex-wrap mb-6">
             <div>
               <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">

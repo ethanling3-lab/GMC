@@ -27,18 +27,42 @@ type SidebarProps = {
   segment: string | null;
   collapsed: boolean;
   onToggle: () => void;
+  /** Below `md` the sidebar is an off-canvas drawer rather than a column. */
+  mobileOpen: boolean;
+  onMobileClose: () => void;
 };
 
-export function Sidebar({ admin, segment, collapsed, onToggle }: SidebarProps) {
+export function Sidebar({
+  admin,
+  segment,
+  collapsed,
+  onToggle,
+  mobileOpen,
+  onMobileClose,
+}: SidebarProps) {
   const displayName = admin.name_en ?? admin.name_cn ?? admin.email;
 
   return (
     <aside
       data-collapsed={collapsed ? "true" : "false"}
-      className="relative border-r border-[var(--paper-shadow)] bg-[var(--paper-warm)]
-                 flex flex-col h-[100dvh] sticky top-0
-                 transition-[width] duration-[var(--dur-base)] ease-[var(--ease-out)]"
-      style={{ width: collapsed ? 76 : 260 }}
+      data-mobile-open={mobileOpen ? "true" : "false"}
+      // Two layouts in one element. Below `md` it's a fixed drawer that
+      // slides over the content at a full 260px — the 76px rail is a
+      // desktop affordance and unusable as a touch target. From `md` up it
+      // returns to the sticky column whose width follows the collapse pref.
+      className={`fixed inset-y-0 left-0 z-50 w-[260px] h-[100dvh]
+                 shadow-[var(--shadow-paper-2)]
+                 md:sticky md:top-0 md:z-auto md:w-[var(--gmc-sidebar-w)] md:shadow-none
+                 border-r border-[var(--paper-shadow)] bg-[var(--paper-warm)]
+                 flex flex-col
+                 transition-[transform,width] duration-[var(--dur-base)] ease-[var(--ease-out)]
+                 motion-reduce:transition-none
+                 md:translate-x-0 ${
+                   mobileOpen ? "translate-x-0" : "-translate-x-full"
+                 }`}
+      style={
+        { "--gmc-sidebar-w": collapsed ? "76px" : "260px" } as React.CSSProperties
+      }
     >
       {/* Brand header */}
       <div
@@ -102,15 +126,41 @@ export function Sidebar({ admin, segment, collapsed, onToggle }: SidebarProps) {
           )}
         </Link>
 
-        {/* Collapse toggle — hugs the right edge */}
+        {/* Close drawer — mobile only, where the collapse rail doesn't apply */}
+        <button
+          type="button"
+          onClick={onMobileClose}
+          aria-label="Close navigation"
+          className="md:hidden absolute right-4 top-6 z-10 w-8 h-8 rounded-full
+                     inline-flex items-center justify-center
+                     text-[var(--ink-mute)] hover:text-[var(--cinnabar)]
+                     hover:bg-[var(--cinnabar-wash)]
+                     focus-visible:shadow-[var(--shadow-focus)]
+                     transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-out)]"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <path d="M2 2l8 8M10 2l-8 8" />
+          </svg>
+        </button>
+
+        {/* Collapse toggle — hugs the right edge. Desktop only. */}
         <button
           type="button"
           onClick={onToggle}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-pressed={collapsed}
-          className="absolute -right-3 top-7 z-10 w-6 h-6 rounded-full
+          className="hidden md:flex absolute -right-3 top-7 z-10 w-6 h-6 rounded-full
                      bg-[var(--paper-warm)] border border-[var(--paper-shadow)]
-                     flex items-center justify-center
+                     items-center justify-center
                      text-[var(--ink-mute)] hover:text-[var(--cinnabar)]
                      shadow-[var(--shadow-paper-1)]
                      hover:shadow-[var(--shadow-paper-2)]
