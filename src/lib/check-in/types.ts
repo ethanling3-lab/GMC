@@ -60,6 +60,11 @@ export type CheckInVelocity = {
   eta_iso: string | null;
 };
 
+// Sentinel id for the synthetic "Ungrouped" bucket the roster appends so
+// paid attendees without a seat assignment stay visible. It is not an
+// event_groups row, so anything counting real groups must exclude it.
+export const UNGROUPED_GROUP_ID = "__ungrouped";
+
 export type CheckInGroupRow = {
   group_id: string;
   group_no: number | null;          // null = "Ungrouped" synthetic bucket

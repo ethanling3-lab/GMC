@@ -63,7 +63,7 @@ function useCrumbs(
   }, [pathname, overrides]);
 }
 
-export function TopBar() {
+export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
   const pathname = usePathname() ?? "/admin";
   const labelOverrides = useBreadcrumbLabels();
   const crumbs = useCrumbs(pathname, labelOverrides);
@@ -115,10 +115,35 @@ export function TopBar() {
       className="sticky top-0 z-30 h-16 border-b border-[var(--paper-shadow)]
                  bg-[color-mix(in_srgb,var(--paper-warm)_86%,transparent)]
                  backdrop-blur-md
-                 flex items-center gap-4 px-6 md:px-8"
+                 flex items-center gap-3 md:gap-4 px-4 md:px-8"
     >
+      {/* Open navigation — mobile only; the sidebar is off-canvas below md */}
+      <button
+        type="button"
+        onClick={onOpenNav}
+        aria-label="Open navigation"
+        className="md:hidden -ml-1 inline-flex items-center justify-center flex-none w-9 h-9 rounded-[var(--radius-md)]
+                   text-[var(--ink-mute)] hover:text-[var(--cinnabar)]
+                   hover:bg-[var(--cinnabar-wash)]
+                   focus-visible:shadow-[var(--shadow-focus)]
+                   transition-[background-color,color] duration-[var(--dur-fast)] ease-[var(--ease-out)]"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <path d="M2 4h12M2 8h12M2 12h12" />
+        </svg>
+      </button>
+
       {/* Breadcrumbs */}
-      <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
+      <nav aria-label="Breadcrumb" className="min-w-0 flex-1 overflow-hidden">
         <ol className="flex items-center gap-2 text-[12px] text-[var(--ink-mute)] min-w-0">
           {crumbs.map((c, i) => {
             const isLast = i === crumbs.length - 1;

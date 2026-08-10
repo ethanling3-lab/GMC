@@ -30,7 +30,10 @@ export default function InboxLayout({
   return (
     <SelectionProvider>
       <InboxKeyboardHost />
-      <div className="-mx-6 md:-mx-10 -my-10 flex h-[calc(100dvh-4rem)] min-h-0">
+      <div
+        className="mx-[calc(var(--admin-gutter-x)*-1)] my-[calc(var(--admin-gutter-y)*-1)]
+                   flex h-[calc(100dvh-4rem)] min-h-0"
+      >
         <aside
           className="hidden lg:flex flex-none w-[260px] h-full
                      border-r border-[var(--paper-shadow)] bg-[var(--paper-warm)]

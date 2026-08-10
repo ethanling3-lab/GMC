@@ -56,6 +56,14 @@
   --radius-lg: 16px;
   --radius-pill: 999px;
 
+  /* Admin shell gutter. The inbox is a full-bleed three-pane layout, so it
+     escapes this padding with negative margins and its list pane re-applies
+     it. Those three values MUST agree or the inbox hangs off the viewport
+     edge — which it did, by 4px horizontally and 12px vertically, once the
+     shell's mobile padding changed and the literals didn't. Change here only. */
+  --admin-gutter-x: 20px;
+  --admin-gutter-y: 28px;
+
   /* Motion */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
@@ -70,6 +78,13 @@
   --font-display-fallback: "Noto Sans SC", Georgia, serif;
   --font-body-fallback:    "Noto Sans SC", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", sans-serif;
   --font-mono:             "JetBrains Mono", ui-monospace, monospace;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --admin-gutter-x: 40px;
+    --admin-gutter-y: 40px;
+  }
 }
 
 @theme inline {
