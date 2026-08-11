@@ -89,7 +89,14 @@ export type SendMessageInput = {
   /** WhatsApp-only: template send. */
   template?: {
     name: string;
-    language_code: "zh_CN" | "en_US";
+    /**
+     * META'S language string for this template, verbatim — `"en"`, `"zh_CN"`,
+     * `"en_US"`, whatever Meta reported. Deliberately NOT the internal
+     * `TemplateLanguage` union: those two were the same type here, which is
+     * how the internal `en_US` key reached the wire and made every English
+     * send fail. Resolve with metaLanguageFor() / resolveMetaLanguage().
+     */
+    language_code: string;
     components?: unknown[];
   };
 };

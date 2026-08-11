@@ -4,9 +4,24 @@ import { writeAuditLog } from "@/lib/audit";
 import { getAdapter, type ChannelKey } from "./channels";
 import { findTemplate } from "./whatsapp-templates";
 import {
+  isMarketingFrequencyCapError,
+  isMarketingOptOutError,
   isOutsideWindowError,
+  metaLanguageFor,
   type TemplateLanguage,
 } from "./whatsapp-templates-types";
+
+/**
+ * Machine tag for a send failure. Kept in step with BroadcastErrorCode in
+ * src/lib/broadcasts/types.ts — the broadcast retry flow decides what to
+ * re-queue from these values, so a new code must be considered there too.
+ */
+export type SendErrorCode =
+  | "outside_window"
+  | "opted_out"
+  | "frequency_capped"
+  | "provider"
+  | null;
 
 // Channel-agnostic outbound. Wave 2a keeps the single-message path synchronous:
 // compose → write message row (pending) → call adapter.sendMessage → stamp
@@ -60,8 +75,8 @@ export type SendOutboundResult = {
   external_message_id: string | null;
   mocked: boolean;
   error: string | null;
-  /** Stable machine tag for the client — 'outside_window' | 'provider' | null */
-  error_code: "outside_window" | "provider" | null;
+  /** Stable machine tag for the client. See SendErrorCode. */
+  error_code: SendErrorCode;
 };
 
 export type SendOutboundMediaResult = {
@@ -136,7 +151,8 @@ async function sendSingle(args: {
   let bodyText: string;
   let templatePayload: {
     name: string;
-    language_code: TemplateLanguage;
+    /** Meta's wire value — see the note on SendMessagePayload.template. */
+    language_code: string;
     components: unknown[];
   } | null = null;
   let templateMeta: {
@@ -163,11 +179,15 @@ async function sendSingle(args: {
     bodyText = def.render(input.params, input.languageCode);
     templatePayload = {
       name: def.name,
-      language_code: input.languageCode,
+      // Meta's own code for this template, NOT our internal key. GMC's
+      // templates are approved as `en`; sending the internal `en_US` fails
+      // with 132001 because Meta matches language exactly.
+      language_code: metaLanguageFor(def, input.languageCode),
       components: def.buildComponents(input.params),
     };
     templateMeta = {
       name: def.name,
+      // The internal key is what's stored + rendered in the thread.
       language: input.languageCode,
       params: input.params,
     };
@@ -478,7 +498,7 @@ async function finaliseMessage(
 ): Promise<{
   newStatus: "sent" | "failed" | "pending";
   externalMessageId: string | null;
-  errorCode: "outside_window" | "provider" | null;
+  errorCode: SendErrorCode;
 }> {
   const service = createSupabaseServiceClient();
   const success = !result.error && Boolean(result.external_message_id);
@@ -488,13 +508,26 @@ async function finaliseMessage(
       ? "pending"
       : "failed";
 
-  const errorCode: "outside_window" | "provider" | null = success
+  // Order matters: the two marketing-policy codes are checked BEFORE the
+  // generic provider bucket, because that bucket is what the broadcast
+  // retry-failed button re-queues. Collapsing them into `provider` meant one
+  // click re-sent to everyone who had opted out (131050) and everyone Meta had
+  // frequency-capped (131049) — both of which Meta counts against the quality
+  // rating that gates every messaging-tier increase.
+  //
+  // This is the call site isMarketingOptOutError / isMarketingFrequencyCapError
+  // were written for; until now they were dead exports.
+  const errorCode: SendErrorCode = success
     ? null
-    : isOutsideWindowError(result.error)
-      ? "outside_window"
-      : result.error
-        ? "provider"
-        : null;
+    : isMarketingOptOutError(result.error)
+      ? "opted_out"
+      : isMarketingFrequencyCapError(result.error)
+        ? "frequency_capped"
+        : isOutsideWindowError(result.error)
+          ? "outside_window"
+          : result.error
+            ? "provider"
+            : null;
 
   const update: Record<string, unknown> = {
     delivery_status: newStatus,

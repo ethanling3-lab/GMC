@@ -274,7 +274,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   // Fetch the participant for notification dispatch.
   const { data: pRow } = await service
     .from("participants")
-    .select("id, region_id, name_en, name_cn, email, phone, language_fluency")
+    .select("id, region_id, name_en, name_cn, email, phone, region, language_fluency")
     .eq("id", participantId)
     .maybeSingle();
 

@@ -1,9 +1,17 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 // Shared participant upsert helper. Both the public /api/register route and
 // the admin manual-enrol route funnel through here so the participant insert
 // shape (and the migration-009 fallback for referrer columns) is in one place.
+//
+// This is also where `phone_e164` is derived (migration 052). Deriving it at
+// WRITE time is what lets the inbound webhook match an incoming wa_id with a
+// single indexed equality — a normalise-on-read helper cannot be indexed, and
+// that is exactly why identity.softMatchExistingParticipant was silently
+// auto-creating duplicate participants for anyone whose stored number carried
+// a space. See src/lib/whatsapp/phone.ts.
 
 export type ParticipantInsertInput = {
   name_en: string;
@@ -36,6 +44,11 @@ function buildPayload(input: ParticipantInsertInput): Record<string, unknown> {
     name_en: input.name_en,
     email: input.email,
     phone: input.phone,
+    // Raw `phone` above is kept verbatim — it is the evidence when a send
+    // fails. Null here means unnormalisable (contradictory country code, or
+    // no country code and an unknown region); the row still saves, and
+    // scripts/backfill-phone-e164.ts lists it for a human.
+    phone_e164: toE164OrNull(input.phone, input.region),
     region: input.region,
     language_fluency: input.language_fluency ?? null,
     gender: input.gender ?? null,
@@ -59,7 +72,20 @@ function buildPayload(input: ParticipantInsertInput): Record<string, unknown> {
   return payload;
 }
 
-// Strips referrer_* and retries when the column doesn't exist (pre-009).
+// Columns that may not exist yet on a database this build is deployed
+// against: referrer_* predate migration 009, phone_e164 arrives in 052. On
+// 42703 (column does not exist) they are dropped and the write is retried, so
+// the app stays deployable ahead of its migrations.
+function withoutOptionalColumns(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const { referrer_name, referrer_contact, phone_e164, ...rest } = payload;
+  void referrer_name;
+  void referrer_contact;
+  void phone_e164;
+  return rest;
+}
+
 async function safeUpdate(
   client: SupabaseClient,
   id: string,
@@ -67,10 +93,10 @@ async function safeUpdate(
 ) {
   const res = await client.from("participants").update(payload).eq("id", id);
   if (res.error && (res.error as { code?: string }).code === "42703") {
-    const { referrer_name, referrer_contact, ...rest } = payload;
-    void referrer_name;
-    void referrer_contact;
-    return client.from("participants").update(rest).eq("id", id);
+    return client
+      .from("participants")
+      .update(withoutOptionalColumns(payload))
+      .eq("id", id);
   }
   return res;
 }
@@ -82,19 +108,16 @@ async function safeInsert(
   // Migration 012 dropped the auto-assign trigger, so participant inserts
   // land with region_id = NULL until an admin approves. The participant_id
   // is allocated by the database default; nothing to retry here.
-  // 42703 = column does not exist (pre-009). Drop referrer_* and retry once.
+  // 42703 = column does not exist. Drop the optional columns and retry once.
   const primary = await client
     .from("participants")
     .insert(payload)
     .select("id, region_id")
     .single();
   if (primary.error && (primary.error as { code?: string }).code === "42703") {
-    const { referrer_name, referrer_contact, ...rest } = payload;
-    void referrer_name;
-    void referrer_contact;
     return client
       .from("participants")
-      .insert(rest)
+      .insert(withoutOptionalColumns(payload))
       .select("id, region_id")
       .single();
   }

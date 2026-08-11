@@ -50,11 +50,19 @@ export const BROADCAST_RECIPIENT_STATUS_VALUES: readonly BroadcastRecipientStatu
   "skipped",
 ] as const;
 
-// Stable machine tag for recipient failures. The retry-failed flow only
-// re-queues 'outside_window' + 'provider'; 'no_address' + 'cancelled' stay.
+// Stable machine tag for recipient failures.
+//
+// Retry eligibility is an ALLOWLIST in requeueFailedRecipients — a code that
+// isn't listed there is never re-sent. 'opted_out' and 'frequency_capped' are
+// deliberately absent: Meta treats both as signals to stop, and re-sending
+// damages the quality rating that gates every messaging-tier increase. They
+// used to be indistinguishable from 'provider', so one click on Retry failed
+// re-sent to every person who had opted out.
 export type BroadcastErrorCode =
   | "no_address"
   | "outside_window"
+  | "opted_out"
+  | "frequency_capped"
   | "provider"
   | "cancelled"
   | "unknown";
@@ -239,6 +247,8 @@ export const BROADCAST_CHANNEL_LABEL: Record<BroadcastChannel, { en: string; cn:
 export const BROADCAST_ERROR_CODE_LABEL: Record<BroadcastErrorCode, { en: string; cn: string }> = {
   no_address: { en: "No address", cn: "无联络方式" },
   outside_window: { en: "Outside 24h window", cn: "超出 24h 时窗" },
+  opted_out: { en: "Opted out", cn: "已退订" },
+  frequency_capped: { en: "Meta frequency cap", cn: "Meta 频率限制" },
   provider: { en: "Provider error", cn: "供应商错误" },
   cancelled: { en: "Cancelled", cn: "已取消" },
   unknown: { en: "Unknown error", cn: "未知错误" },

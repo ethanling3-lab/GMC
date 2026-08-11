@@ -23,10 +23,22 @@ import { writeAuditLogBatch, type AuditAction } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
 import { buildCheckInUrl, ensureQrToken } from "@/lib/check-in/qr-token";
+import { mapWithConcurrency } from "@/lib/concurrency";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 26;
+
+// Region-ID minting is a single SQL call per row and serialises per country
+// inside the function, so it can run wider than the notification fan-out.
+const REGION_ID_CONCURRENCY = 10;
+// Each notification is an SMTP send plus a Graph call. 6 matches
+// BROADCAST_WHATSAPP_CONCURRENCY, which is the pacing the WABA already sees.
+const NOTIFY_CONCURRENCY = 6;
+// Stop STARTING sends at 20s so in-flight ones can finish inside the 26s
+// ceiling. Anything not started is reported back as `not_notified` rather
+// than being silently counted as delivered.
+const NOTIFY_DEADLINE_MS = 20_000;
 
 const BULK_ACTIONS = [
   "approve",
@@ -83,7 +95,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const { data: rows, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, region, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)",
     )
     .eq("event_id", eventId)
     .in("id", body.ids);
@@ -209,12 +221,14 @@ export async function POST(req: Request, { params }: RouteCtx) {
   // serialized per-country inside the SQL function, so 200 SG approvals
   // serialize among themselves but run in parallel with MY approvals.
   if (body.action === "approve" || body.action === "mark_paid") {
-    await Promise.all(
-      found.map((r) => ensureRegionId(service, r.participant_id)),
+    await mapWithConcurrency(
+      found,
+      (r) => ensureRegionId(service, r.participant_id),
+      { concurrency: REGION_ID_CONCURRENCY },
     );
   }
 
-  const notifyTasks = found.map(async (r) => {
+  const notifyOne = async (r: (typeof found)[number]) => {
     if (!r.participant || !r.event) return;
     const event = r.event;
     const p = r.participant;
@@ -267,13 +281,34 @@ export async function POST(req: Request, { params }: RouteCtx) {
     } catch (err) {
       console.warn("[enrollments.bulk] notify failed for", r.id, err);
     }
+  };
+
+  // The status change is already committed above; only the notifications run
+  // here. Bounded so 500 selected rows don't open 500 concurrent SMTP + Graph
+  // calls, and deadlined so we stop starting new ones before the 26s function
+  // ceiling kills us mid-send.
+  const notify = await mapWithConcurrency(found, notifyOne, {
+    concurrency: NOTIFY_CONCURRENCY,
+    deadlineMs: NOTIFY_DEADLINE_MS,
   });
-  await Promise.all(notifyTasks);
+
+  if (notify.timedOut) {
+    console.warn(
+      `[enrollments.bulk] notify deadline hit — ${notify.completed}/${found.length} sent, ${notify.skipped} not attempted`,
+    );
+  }
 
   return NextResponse.json({
     action: body.action,
     affected: found.length,
     skipped: skippedIds.length,
+    // The action applied to every row in `affected`; these describe the
+    // NOTIFICATIONS only. `not_notified > 0` means those participants had
+    // their enrolment updated but were never told — they need a per-row
+    // resend. Previously this route reported success for all 500 regardless.
+    notified: notify.completed,
+    not_notified: notify.skipped,
+    notify_timed_out: notify.timedOut,
   });
 }
 
@@ -295,6 +330,7 @@ type EnrichedRow = {
     name_cn: string | null;
     email: string | null;
     phone: string | null;
+    region: string | null;
     language_fluency: string | null;
   } | null;
   event: {

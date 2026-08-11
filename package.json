@@ -10,6 +10,10 @@
     "start": "next start",
     "seed-admin": "node scripts/seed-admin.mjs",
     "seed-test-dummies": "tsx scripts/seed-test-dummies.ts",
+    "check:phone": "tsx scripts/check-phone-normalizer.ts",
+    "check:templates": "tsx scripts/check-whatsapp-templates.ts",
+    "create:templates": "tsx scripts/create-whatsapp-templates.ts",
+    "backfill:phone": "tsx scripts/backfill-phone-e164.ts",
     "migrate-wa-templates": "node --env-file=scripts/.migration.env scripts/migrate-whatsapp-templates.mjs",
     "migrate-wa-templates:dry": "node --env-file=scripts/.migration.env scripts/migrate-whatsapp-templates.mjs --dry-run"
   },

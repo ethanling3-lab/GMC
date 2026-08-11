@@ -8,6 +8,7 @@ import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
 import { isEligibleVolunteer } from "@/lib/participant-recruit";
 import { resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
+import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -91,7 +92,16 @@ export async function POST(req: Request) {
   // `<phone-digits>@no-email.gmc` so the (email, phone) unique constraint
   // doesn't collide AND admins can spot synthetic placeholders. The lead
   // can fix it later via /me/profile.
-  const phoneDigits = body.phone.replace(/\D/g, "");
+  const leadRegion = volunteer.region_id?.slice(0, 2) ?? "SG"; // best-guess region from volunteer's region_id prefix
+
+  // Build the placeholder off the CANONICAL number, not the raw digits. Two
+  // volunteers capturing the same person as '012-345 6789' and '+60123456789'
+  // produced different placeholder emails, and upsertParticipant matches on
+  // (email, phone) — so the same lead was landing twice. Falls back to raw
+  // digits when the number won't normalise, which at least preserves the old
+  // behaviour rather than colliding every unnormalisable lead on one address.
+  const canonical = toE164OrNull(body.phone, leadRegion);
+  const phoneDigits = (canonical ?? body.phone).replace(/\D/g, "");
   const leadEmail = body.email && body.email.length > 0 ? body.email : `${phoneDigits}@no-email.gmc`;
 
   const upsert = await upsertParticipant(service, {
@@ -99,7 +109,7 @@ export async function POST(req: Request) {
     name_cn: body.name_cn ?? null,
     email: leadEmail,
     phone: body.phone,
-    region: volunteer.region_id?.slice(0, 2) ?? "SG", // best-guess region from volunteer's region_id prefix
+    region: leadRegion,
     status: "new",
   });
 

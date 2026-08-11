@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChannelKey } from "./channels";
 import { writeAuditLog } from "@/lib/audit";
+import { waIdToE164 } from "@/lib/whatsapp/phone";
 
 // Channel-agnostic identity resolver. Given an inbound (channel, identifier)
 // pair, find the participant that owns it. If none exists, create a new
@@ -63,16 +64,30 @@ export async function resolveIdentity(
   }
 
   // 3. Auto-create a lead participant + identifier.
-  const { data: created, error: createErr } = await service
+  const leadRow: Record<string, unknown> = {
+    status: "lead",
+    // Set phone at creation time for WhatsApp so later queries match naturally.
+    phone: channel === "whatsapp" ? normalized : null,
+    // A wa_id is already canonical, so the auto-created lead is immediately
+    // matchable by the indexed lookup above — no backfill pass needed.
+    phone_e164: channel === "whatsapp" ? normalized : null,
+    email: channel === "email" ? normalized : null,
+  };
+  let { data: created, error: createErr } = await service
     .from("participants")
-    .insert({
-      status: "lead",
-      // Set phone at creation time for WhatsApp so later queries match naturally.
-      phone: channel === "whatsapp" ? normalized : null,
-      email: channel === "email" ? normalized : null,
-    })
+    .insert(leadRow)
     .select("id")
     .single();
+  if (createErr && (createErr as { code?: string }).code === "42703") {
+    // phone_e164 doesn't exist yet (deployed ahead of migration 052).
+    const { phone_e164, ...rest } = leadRow;
+    void phone_e164;
+    ({ data: created, error: createErr } = await service
+      .from("participants")
+      .insert(rest)
+      .select("id")
+      .single());
+  }
   if (createErr || !created) {
     throw new Error(`identity: participant insert failed: ${createErr?.message}`);
   }
@@ -105,10 +120,9 @@ export async function resolveIdentity(
 function normalize(channel: ChannelKey, raw: string): string {
   const trimmed = raw.trim();
   if (channel === "whatsapp") {
-    // Ensure leading '+', digits-only suffix — keeps us compatible with
-    // participants.phone which stores '+<digits>'.
-    const digits = trimmed.replace(/[^\d]/g, "");
-    return digits ? `+${digits}` : trimmed;
+    // Inbound identifiers are Meta wa_ids — already international, digits
+    // only. See waIdToE164 for why they don't go through normalizePhone.
+    return waIdToE164(trimmed);
   }
   if (channel === "email") return trimmed.toLowerCase();
   // LINE user ids are case-sensitive — don't touch them.
@@ -121,13 +135,33 @@ async function softMatchExistingParticipant(
   normalized: string,
 ): Promise<string | null> {
   if (channel === "whatsapp") {
-    const { data } = await service
+    // Match on phone_e164 (migration 052) OR the raw phone. The raw-only
+    // equality this used to do is why participants stored as '+65 86111315'
+    // never matched an inbound '+6586111315' — resolveIdentity fell through
+    // to step 3 and auto-created a DUPLICATE participant for someone already
+    // registered, then hung their conversation off the wrong record.
+    //
+    // `phone` stays in the OR so an inbound message still resolves on a
+    // database where the 052 backfill hasn't run.
+    const { data, error } = await service
       .from("participants")
       .select("id")
-      .eq("phone", normalized)
+      .or(`phone_e164.eq.${normalized},phone.eq.${normalized}`)
       .neq("status", "inactive")
       .limit(1)
       .maybeSingle();
+    // 42703 = phone_e164 doesn't exist yet (code deployed ahead of 052).
+    // Retry on the raw column alone rather than auto-creating a duplicate.
+    if (error && (error as { code?: string }).code === "42703") {
+      const retry = await service
+        .from("participants")
+        .select("id")
+        .eq("phone", normalized)
+        .neq("status", "inactive")
+        .limit(1)
+        .maybeSingle();
+      return (retry.data as { id: string } | null)?.id ?? null;
+    }
     return (data as { id: string } | null)?.id ?? null;
   }
   if (channel === "email") {

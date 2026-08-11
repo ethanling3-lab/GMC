@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AdminContext } from "@/lib/admin-guard";
 import { resolveAudience } from "./audience";
-import type { AudienceFilter, BroadcastChannel } from "./types";
+import type { AudienceFilter, BroadcastChannel, BroadcastErrorCode } from "./types";
 
 // Re-resolves the audience for a broadcast and inserts pending recipient
 // rows. Called by:
@@ -67,7 +67,7 @@ export async function materialiseRecipients(
   const CHUNK = 500;
   for (let i = 0; i < rows.length; i += CHUNK) {
     const slice = rows.slice(i, i + CHUNK);
-    const { error } = await service
+    const { data, error } = await service
       .from("broadcast_recipients")
       .upsert(slice, {
         onConflict: "broadcast_id,participant_id,channel",
@@ -75,9 +75,11 @@ export async function materialiseRecipients(
       })
       .select("id");
     if (error) throw new Error(`materialise insert failed: ${error.message}`);
-    // Without count we can't know how many actually inserted vs collided —
-    // accept the conservative approximation.
-    queued += slice.length;
+    // `ignoreDuplicates` compiles to ON CONFLICT DO NOTHING RETURNING id,
+    // so the returned rows ARE the rows actually inserted — collisions
+    // return nothing. Counting the slice instead overcounted every
+    // re-materialisation of an existing broadcast.
+    queued += data?.length ?? 0;
   }
 
   // Re-count pending (this is the queue depth the fan-out will work
@@ -100,10 +102,23 @@ type InsertRow = {
   status: "pending";
 };
 
-// Re-queues failed recipients for retry. Only `outside_window` and
-// `provider` codes are eligible — `no_address` and `cancelled` stay
-// skipped. Resets status to 'pending', clears error fields. The
-// background fan-out picks them up on next invocation.
+// Re-queues failed recipients for retry.
+//
+// Eligibility is an ALLOWLIST, deliberately. `no_address` and `cancelled`
+// can't succeed on a retry, and — more importantly — `opted_out` (Meta
+// 131050) and `frequency_capped` (131049) MUST NOT be retried: Meta treats
+// both as instructions to stop, and re-sending burns the quality rating that
+// gates every messaging-tier increase. Before those two codes existed they
+// were bucketed as `provider`, so one click on "Retry failed" re-sent to
+// every person who had opted out of marketing.
+//
+// Anything added to BroadcastErrorCode must be considered here explicitly.
+const RETRYABLE_ERROR_CODES: readonly BroadcastErrorCode[] = [
+  "outside_window",
+  "provider",
+  "unknown",
+];
+
 export async function requeueFailedRecipients(
   service: SupabaseClient,
   broadcastId: string,
@@ -119,7 +134,7 @@ export async function requeueFailedRecipients(
     })
     .eq("broadcast_id", broadcastId)
     .eq("status", "failed")
-    .in("error_code", ["outside_window", "provider", "unknown"])
+    .in("error_code", RETRYABLE_ERROR_CODES)
     .select("id");
   if (error) throw new Error(`retry-failed update failed: ${error.message}`);
   return { requeued: data?.length ?? 0 };

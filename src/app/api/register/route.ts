@@ -5,6 +5,8 @@ import { buildRegistrationSchemaFor } from "@/lib/validation";
 import { createToken, verifyPrefillToken } from "@/lib/tokens";
 import { sendEmail } from "@/lib/email";
 import { sendWhatsAppTemplate } from "@/lib/whatsapp";
+import { normalizePhone } from "@/lib/whatsapp/phone";
+import { resolveMetaLanguage } from "@/lib/inbox/whatsapp-templates";
 import { normalizeFormSchema } from "@/lib/event-form-schema";
 import {
   upsertParticipant,
@@ -318,20 +320,31 @@ export async function POST(req: NextRequest) {
     }),
   });
 
-  const waRes = await sendWhatsAppTemplate({
-    to: input.phone,
-    template: "gmc_confirm_registration",
-    languageCode: emailLocale === "en" ? "en_US" : "zh_CN",
-    components: [
-      {
-        type: "body",
-        parameters: [
-          { type: "text", text: input.name_en },
-          { type: "text", text: confirmUrl },
+  // Normalised, not raw. This call site was missed when the E.164 work landed
+  // in enrollment-notifications, so a number typed as '012-345 6789' went to
+  // Meta verbatim and the very first message a registrant should receive
+  // failed. Null (unnormalisable) skips the send rather than guessing.
+  const waPhone = normalizePhone(input.phone, resolvedRegion);
+  const waTo = waPhone.ok ? waPhone.e164 : null;
+  const waRes = waTo
+    ? await sendWhatsAppTemplate({
+        to: waTo,
+        template: "gmc_confirm_registration",
+        languageCode: await resolveMetaLanguage(
+          "gmc_confirm_registration",
+          emailLocale === "en" ? "en_US" : "zh_CN",
+        ),
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: input.name_en },
+              { type: "text", text: confirmUrl },
+            ],
+          },
         ],
-      },
-    ],
-  });
+      })
+    : null;
 
   await supabase.from("notifications").insert([
     {
@@ -352,11 +365,24 @@ export async function POST(req: NextRequest) {
       event_id: event.id,
       channel: "whatsapp",
       template: "gmc_confirm_registration",
-      to_address: input.phone,
-      status: waRes.mocked ? "pending" : waRes.error ? "failed" : "sent",
-      provider_id: waRes.id ?? null,
-      error_message: waRes.error ?? null,
-      sent_at: waRes.mocked || waRes.error ? null : new Date().toISOString(),
+      // Raw typed number when we couldn't normalise it — that string is the
+      // evidence someone needs to fix the record.
+      to_address: waTo ?? input.phone,
+      // An unusable number is logged as a failure rather than silently
+      // skipped, so it shows up wherever failed sends are reviewed instead of
+      // leaving no row at all.
+      status: !waRes
+        ? "failed"
+        : waRes.mocked
+          ? "pending"
+          : waRes.error
+            ? "failed"
+            : "sent",
+      provider_id: waRes?.id ?? null,
+      error_message: waPhone.ok
+        ? waRes?.error ?? null
+        : `unusable phone number — ${waPhone.reason}: ${waPhone.detail}`,
+      sent_at: !waRes || waRes.mocked || waRes.error ? null : new Date().toISOString(),
     },
   ]);
 
@@ -365,7 +391,13 @@ export async function POST(req: NextRequest) {
     region_id: regionId,
     delivery: {
       email: emailRes.mocked ? "mocked" : emailRes.error ? "failed" : "sent",
-      whatsapp: waRes.mocked ? "mocked" : waRes.error ? "failed" : "sent",
+      whatsapp: !waRes
+        ? "failed"
+        : waRes.mocked
+          ? "mocked"
+          : waRes.error
+            ? "failed"
+            : "sent",
     },
     // Only exposed in development so developers can manually click-through during testing.
     // In production the link only reaches the participant.

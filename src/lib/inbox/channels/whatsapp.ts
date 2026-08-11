@@ -1,4 +1,6 @@
 import "server-only";
+import { graphBase } from "@/lib/whatsapp/graph";
+import { waIdToE164 } from "@/lib/whatsapp/phone";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type {
   ChannelAdapter,
@@ -19,7 +21,8 @@ import type {
 // Graceful fallback when credentials are absent: verify/send operate in
 // mocked mode so local dev without Meta verification still round-trips.
 
-const GRAPH_API = "https://graph.facebook.com/v22.0";
+// Base URL comes from the shared module so the version is bumped once.
+const GRAPH_API = graphBase();
 
 function isConfigured(): boolean {
   return Boolean(
@@ -38,7 +41,21 @@ export function isWhatsAppConfigured(): boolean {
 async function verifyWebhook(req: Request, rawBody: string): Promise<boolean> {
   const secret = process.env.WHATSAPP_APP_SECRET;
   if (!secret) {
-    // Dev mode without creds — treat as valid if mock flag set; otherwise fail-closed.
+    // Local mock mode: accept unsigned bodies so the webhook can be exercised
+    // without Meta creds.
+    //
+    // Hard-gated on NODE_ENV. Previously this was the flag alone, so a
+    // WHATSAPP_APP_SECRET that went missing in production — a rotation typo,
+    // a Netlify env not copied to a new deploy context — silently turned the
+    // production webhook into an unauthenticated write endpoint that anyone
+    // could post messages into. The flag is a development affordance and can
+    // never be one in production.
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "[whatsapp.verify] WHATSAPP_APP_SECRET is missing in production — rejecting webhook. Unsigned delivery is never accepted here.",
+      );
+      return false;
+    }
     return process.env.WHATSAPP_WEBHOOK_ALLOW_UNSIGNED === "1";
   }
 
@@ -204,13 +221,11 @@ function normalizeInbound(
   };
 }
 
-// WhatsApp wa_id is digits only (e.g. '6591234567'). Normalize to '+6591234567'
-// so it matches participants.phone which stores leading '+'.
-function normalizeWhatsAppId(waId: string): string {
-  const digits = waId.replace(/[^\d]/g, "");
-  if (!digits) return waId;
-  return `+${digits}`;
-}
+// WhatsApp wa_id is digits only (e.g. '6591234567'). Normalize to
+// '+6591234567' so it matches participants.phone_e164. The implementation
+// moved to src/lib/whatsapp/phone.ts — this alias keeps the call sites below
+// reading the way they did.
+const normalizeWhatsAppId = waIdToE164;
 
 // =============================================================================
 // Media download — two-step: GET /{media_id} → URL, GET URL → bytes
@@ -388,7 +403,16 @@ async function uploadMedia(
 export async function sendWhatsAppTemplate(params: {
   to: string;
   template: string;
-  languageCode: "zh_CN" | "en_US";
+  /**
+   * META'S language string, not our internal TemplateLanguage key — `"en"`,
+   * `"zh_CN"`, whatever `GET /{waba}/message_templates` reported for this
+   * template. Callers resolve it with resolveMetaLanguage().
+   *
+   * This was typed `"zh_CN" | "en_US"` and every caller passed the literal
+   * `"en_US"`, which matches no GMC template (they are approved as `en`), so
+   * every English send failed with 132001 and was never logged as such.
+   */
+  languageCode: string;
   components?: Array<{ type: "body"; parameters: Array<{ type: "text"; text: string }> }>;
 }): Promise<{ mocked: boolean; id?: string; error?: string }> {
   const res = await sendMessage({

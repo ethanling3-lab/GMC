@@ -3,6 +3,8 @@ import { createSupabaseServiceClient } from "./supabase";
 import { sendEmail } from "./email";
 import { sendWhatsAppTemplate } from "./whatsapp";
 import { participantEmailLocale } from "./i18n";
+import { normalizePhone } from "./whatsapp/phone";
+import { resolveMetaLanguage } from "./inbox/whatsapp-templates";
 
 // Enrollment-state notifications. Called from the bulk + per-row admin
 // routes whenever the journey stage changes. Follows the same bilingual
@@ -17,8 +19,33 @@ type Participant = {
   name_cn: string | null;
   email: string | null;
   phone: string | null;
+  /** Supplies the country code when `phone` was typed without one. */
+  region: string | null;
   language_fluency: string | null;
 };
+
+/**
+ * The number to hand Meta, or the reason there isn't one.
+ *
+ * Until now these three notifications passed `participant.phone` — the raw
+ * typed string — straight to Graph. A number entered as '012-345 6789' was
+ * sent verbatim and rejected, so approval looked successful while the
+ * participant heard nothing on WhatsApp.
+ *
+ * Derived from the raw `phone` rather than the stored `phone_e164` column on
+ * purpose: it keeps `phone` the single thing a human has to correct when a
+ * row is flagged, and it means this path works whether or not migration 052
+ * has been applied.
+ *
+ * `problem` is null when there is simply no phone on file — that is a normal
+ * email-only participant, not a failure worth surfacing.
+ */
+function whatsappTarget(p: Participant): { to: string | null; problem: string | null } {
+  if (!p.phone || !p.phone.trim()) return { to: null, problem: null };
+  const res = normalizePhone(p.phone, p.region);
+  if (res.ok) return { to: res.e164, problem: null };
+  return { to: null, problem: `${res.reason}: ${res.detail}` };
+}
 
 type EventRow = {
   id: string;
@@ -114,11 +141,15 @@ export async function notifyApproved({
     ? await sendEmail({ to: participant.email, subject, html })
     : null;
 
-  const waRes = participant.phone
+  const wa = whatsappTarget(participant);
+  const waRes = wa.to
     ? await sendWhatsAppTemplate({
-        to: participant.phone,
+        to: wa.to,
         template: "gmc_enrollment_approved",
-        languageCode: locale === "zh" ? "zh_CN" : "en_US",
+        languageCode: await resolveMetaLanguage(
+          "gmc_enrollment_approved",
+          locale === "zh" ? "zh_CN" : "en_US",
+        ),
         components: [
           {
             type: "body",
@@ -139,9 +170,11 @@ export async function notifyApproved({
     event_id: event.id,
     email: { to: participant.email, template: "enrollment_approved", result: emailRes },
     whatsapp: {
-      to: participant.phone,
+      to: wa.to,
       template: "gmc_enrollment_approved",
       result: waRes,
+      problem: wa.problem,
+      rawPhone: participant.phone,
     },
   });
 
@@ -216,11 +249,15 @@ export async function notifyRejected({
     ? await sendEmail({ to: participant.email, subject, html })
     : null;
 
-  const waRes = participant.phone
+  const wa = whatsappTarget(participant);
+  const waRes = wa.to
     ? await sendWhatsAppTemplate({
-        to: participant.phone,
+        to: wa.to,
         template: waTemplate,
-        languageCode: locale === "zh" ? "zh_CN" : "en_US",
+        languageCode: await resolveMetaLanguage(
+          waTemplate,
+          locale === "zh" ? "zh_CN" : "en_US",
+        ),
         components: [
           {
             type: "body",
@@ -243,9 +280,11 @@ export async function notifyRejected({
       result: emailRes,
     },
     whatsapp: {
-      to: participant.phone,
+      to: wa.to,
       template: waTemplate,
       result: waRes,
+      problem: wa.problem,
+      rawPhone: participant.phone,
     },
   });
 }
@@ -313,11 +352,15 @@ export async function notifyPaymentReceived({
     ? await sendEmail({ to: participant.email, subject, html })
     : null;
 
-  const waRes = participant.phone
+  const wa = whatsappTarget(participant);
+  const waRes = wa.to
     ? await sendWhatsAppTemplate({
-        to: participant.phone,
+        to: wa.to,
         template: "gmc_payment_received",
-        languageCode: locale === "zh" ? "zh_CN" : "en_US",
+        languageCode: await resolveMetaLanguage(
+          "gmc_payment_received",
+          locale === "zh" ? "zh_CN" : "en_US",
+        ),
         components: [
           {
             type: "body",
@@ -337,9 +380,11 @@ export async function notifyPaymentReceived({
     event_id: event.id,
     email: { to: participant.email, template: "payment_received", result: emailRes },
     whatsapp: {
-      to: participant.phone,
+      to: wa.to,
       template: "gmc_payment_received",
       result: waRes,
+      problem: wa.problem,
+      rawPhone: participant.phone,
     },
   });
 
@@ -363,7 +408,20 @@ async function logNotifications(params: {
   enrollment_id: string;
   event_id: string;
   email: { to: string | null; template: string; result: DispatchRes };
-  whatsapp: { to: string | null; template: string; result: DispatchRes };
+  whatsapp: {
+    to: string | null;
+    template: string;
+    result: DispatchRes;
+    /**
+     * Set when the participant HAS a phone but it could not be turned into a
+     * dialable number, so no send was attempted. Logged as a failed row —
+     * without this the notifications table simply had no entry, which is how
+     * unreachable participants went unnoticed since launch.
+     */
+    problem?: string | null;
+    /** Raw typed number, for the failed row's to_address. */
+    rawPhone?: string | null;
+  };
 }): Promise<void> {
   const rows: Record<string, unknown>[] = [];
   if (params.email.to && params.email.result) {
@@ -406,6 +464,20 @@ async function logNotifications(params: {
         params.whatsapp.result.mocked || params.whatsapp.result.error
           ? null
           : new Date().toISOString(),
+    });
+  }
+  if (params.whatsapp.problem) {
+    rows.push({
+      participant_id: params.participant_id,
+      enrollment_id: params.enrollment_id,
+      event_id: params.event_id,
+      channel: "whatsapp",
+      template: params.whatsapp.template,
+      to_address: params.whatsapp.rawPhone ?? null,
+      status: "failed",
+      provider_id: null,
+      error_message: `unusable phone number — ${params.whatsapp.problem}`,
+      sent_at: null,
     });
   }
   if (rows.length === 0) return;

@@ -11,6 +11,7 @@ import {
   type ParticipantUpdate,
 } from "@/lib/participant-update-schema";
 import { writeAuditLog } from "@/lib/audit";
+import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -58,7 +59,9 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const supabase = await createSupabaseServerClient();
 
   // Scoped read first — confirms the admin can see this participant.
-  let scopeCheck = supabase.from("participants").select("id").eq("id", id);
+  // `region` comes back too — it supplies the country code when an edited
+  // phone has no international prefix (see the phone_e164 block below).
+  let scopeCheck = supabase.from("participants").select("id, region").eq("id", id);
   scopeCheck = applyRoleScope(scopeCheck, admin.role, admin.id, admin.region);
   const { data: scoped, error: scopeErr } = await scopeCheck.maybeSingle();
   if (scopeErr || !scoped) {
@@ -74,6 +77,28 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   // stored as columns. Everything else flows straight to UPDATE.
   const { family_member_ids, conflict_member_ids, ...columnRest } = patch;
   const columnPatch: Record<string, unknown> = { ...columnRest };
+
+  // Keep phone_e164 in step with phone (migration 052). Editing either the
+  // number or the region can change the canonical form — '86111315' is a
+  // different number under SG than under HK — so recompute whenever either
+  // moves. Null when unnormalisable; the raw edit still saves, and
+  // scripts/backfill-phone-e164.ts surfaces the row.
+  if ("phone" in columnPatch || "region" in columnPatch) {
+    const scopedRow = scoped as { id: string; region: string | null };
+    const nextPhone =
+      "phone" in columnPatch
+        ? (columnPatch.phone as string | null)
+        : ((await service
+            .from("participants")
+            .select("phone")
+            .eq("id", id)
+            .maybeSingle()).data as { phone: string | null } | null)?.phone ?? null;
+    const nextRegion =
+      "region" in columnPatch
+        ? (columnPatch.region as string | null)
+        : scopedRow.region;
+    columnPatch.phone_e164 = toE164OrNull(nextPhone, nextRegion);
+  }
 
   // Programme membership (migration 043): when programme_id changes, derive
   // the FROZEN validity window + the legacy programme_tier enum here so the

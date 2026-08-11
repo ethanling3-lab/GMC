@@ -5,6 +5,7 @@ import {
   type TemplateDefinition as SyncTemplateDefinition,
 } from "./whatsapp-templates-sync";
 import {
+  metaLanguageFor,
   renderTemplateBody,
   type TemplateLanguage,
   type TemplateSummary,
@@ -50,6 +51,30 @@ export async function refreshTemplates(): Promise<void> {
   await getTemplates({ refresh: true });
 }
 
+/**
+ * The language string to send to Meta for a template, resolved from the live
+ * registry.
+ *
+ * The lifecycle senders (enrollment-notifications, /api/register) don't go
+ * through the registry — they hand-build components and call
+ * sendWhatsAppTemplate directly — so they need this to avoid re-introducing
+ * the `en_US` guess. It reads the same 5-minute in-memory cache the composer
+ * uses, so it is a network call only on a cold start, and it degrades to
+ * FALLBACK_META_LANGUAGE rather than throwing: a notification must not fail
+ * because the template registry is briefly unreachable.
+ */
+export async function resolveMetaLanguage(
+  templateName: string,
+  language: TemplateLanguage,
+): Promise<string> {
+  try {
+    const def = await findTemplate(templateName);
+    return metaLanguageFor(def, language);
+  } catch {
+    return metaLanguageFor(null, language);
+  }
+}
+
 export function toSummary(def: TemplateDefinition): TemplateSummary {
   return {
     name: def.name,
@@ -61,5 +86,6 @@ export function toSummary(def: TemplateDefinition): TemplateSummary {
     languages: def.languages,
     params: def.params,
     body_by_language: def.body_by_language,
+    meta_language_by_language: def.meta_language_by_language,
   };
 }

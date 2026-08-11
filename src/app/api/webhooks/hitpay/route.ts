@@ -63,7 +63,7 @@ export async function POST(req: Request) {
   const { data: row, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, status, payment_status, amount_paid, amount_due, payment_method, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
+      "id, event_id, status, payment_status, amount_paid, amount_due, payment_method, payment_provider_id, participant:participants(id, region_id, name_en, name_cn, email, phone, region, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
     )
     .eq("payment_provider_id", fields.payment_request_id)
     .maybeSingle();
@@ -172,6 +172,7 @@ export async function POST(req: Request) {
       name_cn: string | null;
       email: string | null;
       phone: string | null;
+      region: string | null;
       language_fluency: string | null;
     } | null;
     type EventShape = {

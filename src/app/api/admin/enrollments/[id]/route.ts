@@ -120,7 +120,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const { data: row, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, price_tier_key, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price, price_tiers)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, price_tier_key, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, region, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price, price_tiers)",
     )
     .eq("id", enrollmentId)
     .maybeSingle();
@@ -486,6 +486,7 @@ type ParticipantShape = {
   name_cn: string | null;
   email: string | null;
   phone: string | null;
+  region: string | null;
   language_fluency: string | null;
 };
 

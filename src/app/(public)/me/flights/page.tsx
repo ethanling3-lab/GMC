@@ -51,7 +51,9 @@ export default async function MeFlightsPage() {
                       {f.airline ? <span className="text-[12px] italic text-[var(--ink-soft)] ml-2">{f.airline}</span> : null}
                     </div>
                     <div className="mt-1 text-[12px] text-[var(--ink-soft)] tabular-nums">
-                      {f.iata ? `${f.iata}` : "—"}
+                      {f.origin_airport || f.destination_airport
+                        ? `${f.origin_airport ?? "—"} → ${f.destination_airport ?? "—"}`
+                        : "—"}
                       {f.scheduled_at
                         ? ` · ${new Date(f.scheduled_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
                         : ""}

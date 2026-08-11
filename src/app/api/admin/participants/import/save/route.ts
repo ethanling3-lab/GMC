@@ -6,6 +6,7 @@ import {
   ExtractedRowSchema,
   type ExtractedRow,
 } from "@/lib/participant-import-schema";
+import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,6 +32,10 @@ function columnsFrom(r: ExtractedRow) {
     name_cn: r.name_cn,
     email: r.email,
     phone: r.phone,
+    // Canonical dialable form (migration 052). Bulk imports are the likeliest
+    // source of odd formatting — pasted from spreadsheets, hand-typed by
+    // volunteers — so normalising at the boundary matters most here.
+    phone_e164: toE164OrNull(r.phone, r.region),
     region: r.region,
     // Import schema's `language` enum is zh / en / both; participants.language_fluency
     // is cn / en / both. Map zh → cn at the boundary.

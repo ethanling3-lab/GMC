@@ -13,6 +13,7 @@ import {
   applyRoleScope,
   type ParticipantFilters,
 } from "@/lib/participants-query";
+import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 // Audience resolver — returns the (participant × channel) leaves the
 // fan-out will deliver to. Two modes; both end at the same Recipient
@@ -107,7 +108,10 @@ export async function resolveAudience(
       // Identifier table is canonical; phone is fallback (mirrors the
       // soft-fallback in inbox/identity.ts:60-79).
       const fromIdentifier = whatsappAddresses.get(r.participant_id);
-      const fallback = r.phone ? toE164(r.phone) : null;
+      // `r.region` supplies the country code for a number typed without one.
+      // The old local toE164 knew no country, so it turned '0123456789' into
+      // '+0123456789' and quietly counted that row as reachable.
+      const fallback = toE164OrNull(r.phone, r.region);
       addresses.whatsapp = fromIdentifier ?? fallback;
     }
     if (channels.includes("email")) {
@@ -282,25 +286,16 @@ async function loadWhatsAppAddresses(
     if (error) throw new Error(error.message);
     for (const row of (data ?? []) as Array<{ participant_id: string; identifier: string }>) {
       // First identifier wins (oldest = most likely the registration phone).
+      // These come from Meta already in international form, so no region is
+      // needed — but run them through the same normaliser so a hand-entered
+      // identifier can't slip past in a different shape.
       if (!out.has(row.participant_id)) {
-        out.set(row.participant_id, toE164(row.identifier));
+        const e164 = toE164OrNull(row.identifier, null);
+        if (e164) out.set(row.participant_id, e164);
       }
     }
   }
   return out;
-}
-
-// Cheap E.164-ish normalizer. Strips spaces, dashes, parens; preserves a
-// leading +. WhatsApp accepts a raw digit string without +; we keep the +
-// for display + audit clarity. Matches send.ts behavior.
-function toE164(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-  const cleaned = trimmed.replace(/[\s\-().]/g, "");
-  if (cleaned.startsWith("+")) return cleaned;
-  // If it already looks like a digit-only number, prepend +.
-  if (/^\d{6,15}$/.test(cleaned)) return `+${cleaned}`;
-  return cleaned; // last resort — let the adapter complain
 }
 
 // ---------------------------------------------------------------------------

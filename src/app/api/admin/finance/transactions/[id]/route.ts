@@ -161,7 +161,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const { data: row, error: enrollErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, participant:participants(id, region_id, name_en, name_cn, email, phone, region, language_fluency), event:events(id, slug, title_en, title_cn, start_date, currency, price)",
     )
     .eq("id", enrollmentId)
     .maybeSingle();
@@ -249,6 +249,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
           name_cn: string | null;
           email: string | null;
           phone: string | null;
+          region: string | null;
           language_fluency: string | null;
         } | null;
       }).participant;

@@ -1,4 +1,5 @@
 import "server-only";
+import { graphBase } from "@/lib/whatsapp/graph";
 import type {
   TemplateLanguage,
   TemplateSummary,
@@ -18,7 +19,7 @@ import { buildParamSpecs } from "./whatsapp-template-labels";
 // reject anything with unmet header vars with a clear 132xxx error that
 // surfaces in the composer.
 
-const GRAPH_API = "https://graph.facebook.com/v22.0";
+const GRAPH_API = graphBase();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export type TemplateDefinition = {
@@ -31,6 +32,8 @@ export type TemplateDefinition = {
   languages: readonly TemplateLanguage[];
   params: readonly TemplateSummary["params"][number][];
   body_by_language: Readonly<Partial<Record<TemplateLanguage, string>>>;
+  /** Meta's own language string per slot — see metaLanguageFor(). */
+  meta_language_by_language: Readonly<Partial<Record<TemplateLanguage, string>>>;
   /** Build Meta's components[] payload from variable_N params. */
   buildComponents(params: Record<string, string>): WhatsAppComponent[];
 };
@@ -80,6 +83,12 @@ function isConfigured(): boolean {
 // Meta returns language codes like `en`, `en_US`, `zh_CN`. We standardise to
 // en_US / zh_CN — any other variant is dropped (we don't support sending to
 // locales we haven't registered).
+//
+// This folding is for GROUPING ONLY — one UI toggle per language. The raw
+// value is preserved per template in `meta_language_by_language` and is what
+// goes on the wire. Folding it and then sending the folded value is what made
+// every English send fail: GMC's templates are approved as `en`, we asked Meta
+// for `en_US`, and Meta matches exactly.
 function normaliseLanguage(raw: string | undefined): TemplateLanguage | null {
   if (!raw) return null;
   const lower = raw.toLowerCase();
@@ -142,25 +151,43 @@ async function fetchMetaTemplates(): Promise<MetaTemplateRow[]> {
     );
   }
 
-  const url =
+  // Follow paging. A single ?limit=100 request silently truncated the
+  // registry at 100 templates — a template beyond that simply vanished
+  // from the composer with no error. Meta caps `limit` at 100, so the
+  // cursor has to be walked. Same loop as listTemplates() in
+  // scripts/migrate-whatsapp-templates.mjs.
+  let url: string | null =
     `${GRAPH_API}/${process.env.WHATSAPP_WABA_ID}/message_templates` +
     `?limit=100&fields=name,language,status,category,components`;
 
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-    },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new TemplateSyncError(
-      `Meta templates fetch ${res.status}: ${text.slice(0, 300)}`,
-      "meta_error",
-    );
+  const rows: MetaTemplateRow[] = [];
+  // Safety cap — a malformed cursor that points at itself would otherwise
+  // spin forever inside a request.
+  const MAX_PAGES = 20;
+
+  for (let page = 0; url && page < MAX_PAGES; page += 1) {
+    const res: Response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new TemplateSyncError(
+        `Meta templates fetch ${res.status}: ${text.slice(0, 300)}`,
+        "meta_error",
+      );
+    }
+    const json = (await res.json()) as {
+      data?: MetaTemplateRow[];
+      paging?: { next?: string | null };
+    };
+    rows.push(...(json.data ?? []));
+    url = json.paging?.next ?? null;
   }
-  const json = (await res.json()) as { data?: MetaTemplateRow[] };
-  return json.data ?? [];
+
+  return rows;
 }
 
 function parseTemplateRows(rows: MetaTemplateRow[]): TemplateDefinition[] {
@@ -172,6 +199,7 @@ function parseTemplateRows(rows: MetaTemplateRow[]): TemplateDefinition[] {
       category: TemplateSummary["category"];
       languages: TemplateLanguage[];
       bodies: Partial<Record<TemplateLanguage, string>>;
+      metaLanguages: Partial<Record<TemplateLanguage, string>>;
       slotCount: number;
     }
   >();
@@ -188,10 +216,13 @@ function parseTemplateRows(rows: MetaTemplateRow[]): TemplateDefinition[] {
     if (!body?.text) continue; // body-less templates aren't sendable through our flow
 
     const slots = countBodyVariables(body.text);
+    // Meta's own string, untouched — this is what the send path puts on the wire.
+    const metaLanguage = (row.language ?? "").trim();
     const existing = groups.get(row.name);
     if (existing) {
       if (!existing.languages.includes(language)) existing.languages.push(language);
       existing.bodies[language] = body.text;
+      if (metaLanguage) existing.metaLanguages[language] = metaLanguage;
       if (slots > existing.slotCount) existing.slotCount = slots;
     } else {
       groups.set(row.name, {
@@ -199,6 +230,9 @@ function parseTemplateRows(rows: MetaTemplateRow[]): TemplateDefinition[] {
         category: normaliseCategory(row.category),
         languages: [language],
         bodies: { [language]: body.text } as Partial<Record<TemplateLanguage, string>>,
+        metaLanguages: (metaLanguage
+          ? { [language]: metaLanguage }
+          : {}) as Partial<Record<TemplateLanguage, string>>,
         slotCount: slots,
       });
     }
@@ -218,6 +252,7 @@ function parseTemplateRows(rows: MetaTemplateRow[]): TemplateDefinition[] {
       languages: g.languages,
       params,
       body_by_language: g.bodies,
+      meta_language_by_language: g.metaLanguages,
       buildComponents(values) {
         return [
           {

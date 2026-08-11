@@ -41,6 +41,7 @@ type EnrichedRow = {
     name_cn: string | null;
     email: string | null;
     phone: string | null;
+    region: string | null;
     language_fluency: string | null;
   } | null;
   event: {
@@ -70,7 +71,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   // Pull enrolment + participant + event. Fall back when migration 011
   // isn't applied yet (no reject_reason / reject_note columns).
   const baseSelect =
-    "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, participant:participants(id, region_id, name_en, name_cn, email, phone, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)";
+    "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, participant:participants(id, region_id, name_en, name_cn, email, phone, region, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price)";
   const fullSelect = `${baseSelect}, reject_reason, reject_note`;
 
   let res = await service

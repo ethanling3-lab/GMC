@@ -160,7 +160,10 @@ async function sendWhatsApp(
         : "failed";
   return {
     status: outcome,
-    error_code: single.error_code === "outside_window" ? "outside_window" : single.error_code === "provider" ? "provider" : null,
+    // Pass the send layer's classification straight through. The two
+    // marketing-policy codes must survive to broadcast_recipients — that row
+    // is what decides whether Retry failed re-sends to this person.
+    error_code: single.error_code,
     error_message: single.error,
     external_message_id: single.external_message_id,
     conversation_id: conversationId,

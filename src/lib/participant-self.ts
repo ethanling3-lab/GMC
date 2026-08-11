@@ -120,7 +120,10 @@ export type SelfFlightRow = {
   direction: "arrival" | "departure";
   flight_number: string | null;
   airline: string | null;
-  iata: string | null;
+  // Real column names. This previously asked for a single `iata` column,
+  // which does not exist in flight_info — see loadSelfFlights below.
+  origin_airport: string | null;
+  destination_airport: string | null;
   scheduled_at: string | null;
   terminal: string | null;
   confirmed: boolean;
@@ -143,13 +146,24 @@ export async function loadSelfFlights(participantId: string): Promise<SelfFlight
   const enrollmentIds = [...enrollmentIdToEvent.keys()];
   if (enrollmentIds.length === 0) return [];
 
-  const { data: flights } = await service
+  // This query previously asked for `iata` and `confirmed`, neither of
+  // which exists on flight_info (the real columns are origin_airport /
+  // destination_airport / confirmed_at). PostgREST returned a 400 every
+  // time, the error was discarded by destructuring only `data`, and the
+  // page rendered "No flight information on file yet." unconditionally —
+  // for every participant, since launch. Hence the explicit throw: a
+  // broken query here must be loud, not an empty list.
+  const { data: flights, error } = await service
     .from("flight_info")
     .select(
-      "id, enrollment_id, direction, flight_number, airline, iata, scheduled_at, terminal, confirmed",
+      "id, enrollment_id, direction, flight_number, airline, origin_airport, destination_airport, scheduled_at, terminal, confirmed_at",
     )
     .in("enrollment_id", enrollmentIds)
     .order("scheduled_at", { ascending: true, nullsFirst: false });
+
+  if (error) {
+    throw new Error(`loadSelfFlights: ${error.message}`);
+  }
 
   return ((flights ?? []) as unknown as Array<{
     id: string;
@@ -157,14 +171,19 @@ export async function loadSelfFlights(participantId: string): Promise<SelfFlight
     direction: "arrival" | "departure";
     flight_number: string | null;
     airline: string | null;
-    iata: string | null;
+    origin_airport: string | null;
+    destination_airport: string | null;
     scheduled_at: string | null;
     terminal: string | null;
-    confirmed: boolean;
+    confirmed_at: string | null;
   }>).map((f) => {
     const ev = enrollmentIdToEvent.get(f.enrollment_id) ?? null;
+    const { confirmed_at, ...rest } = f;
     return {
-      ...f,
+      ...rest,
+      // Staff confirmation is recorded as a timestamp; the portal only
+      // needs the boolean.
+      confirmed: confirmed_at != null,
       event_title: ev ? ev.title_en ?? ev.title_cn : null,
     };
   });
