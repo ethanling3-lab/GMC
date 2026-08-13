@@ -14,9 +14,25 @@
 // Versioning: bump CACHE_PREFIX to invalidate on deploy. The activate
 // handler nukes any older caches.
 
-const CACHE_PREFIX = "gmc-scanner-v1";
+const CACHE_PREFIX = "gmc-scanner-v2";
 const HTML_CACHE = `${CACHE_PREFIX}-html`;
 const STATIC_CACHE = `${CACHE_PREFIX}-static`;
+
+// Self-heal on localhost.
+//
+// The static cache-first rule below is safe in production (content-hashed
+// filenames — a new build emits new URLs) and actively harmful in development
+// (Turbopack uses stable path-based names, so the first copy is pinned
+// forever). ServiceWorkerRegister already refuses to register outside
+// production, but that only runs on the scanner route — a machine that
+// installed this worker earlier and never returns to /scan would keep it.
+//
+// So the worker retires itself. Browsers re-fetch sw.js on navigations within
+// scope, so any /admin visit on localhost is enough to trigger this.
+const IS_LOCALHOST =
+  self.location.hostname === "localhost" ||
+  self.location.hostname === "127.0.0.1" ||
+  self.location.hostname === "[::1]";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -26,6 +42,17 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      if (IS_LOCALHOST) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+        await self.registration.unregister();
+        // Reload open clients so they leave with fresh, uncached code rather
+        // than sitting on whatever this worker last handed them.
+        const clients = await self.clients.matchAll({ type: "window" });
+        for (const c of clients) c.navigate(c.url);
+        return;
+      }
+
       const keys = await caches.keys();
       await Promise.all(
         keys
@@ -38,6 +65,10 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  // Belt and braces: even before activate finishes retiring this worker on
+  // localhost, never serve a cached response there.
+  if (IS_LOCALHOST) return;
+
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
