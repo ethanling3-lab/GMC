@@ -1,13 +1,16 @@
 import "server-only";
 import type { ChannelAdapter } from "./adapter";
 import { whatsappAdapter } from "./whatsapp";
-import { lineAdapter } from "./line";
 
-export type ChannelKey = "whatsapp" | "line" | "email";
+// LINE was dropped in the 2026-08-11 simplification pass: one live channel is
+// enough to get right, and every conditional it added was a conditional in the
+// way of the WhatsApp work. The `comm_channel` Postgres enum keeps its 'line'
+// value (dropping an enum value is painful and buys nothing), so historical
+// rows still read back fine — there is simply no adapter to dispatch to.
+export type ChannelKey = "whatsapp" | "email";
 
 const REGISTRY: Record<Exclude<ChannelKey, "email">, ChannelAdapter> = {
   whatsapp: whatsappAdapter,
-  line: lineAdapter,
 };
 
 export function getAdapter(channel: ChannelKey): ChannelAdapter {
@@ -18,4 +21,4 @@ export function getAdapter(channel: ChannelKey): ChannelAdapter {
   return adapter;
 }
 
-export { whatsappAdapter, lineAdapter };
+export { whatsappAdapter };

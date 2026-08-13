@@ -5,7 +5,6 @@
 // through Turbopack's bundler boundary.
 
 import type {
-  ParticipantStatus,
   MotivationTag,
 } from "@/lib/participants-query";
 
@@ -93,15 +92,15 @@ export type BroadcastLanguageFluency = "en" | "cn" | "both";
 
 export type ParticipantMasterFilter = {
   mode: "participant_master";
-  region: string | null; // ISO country code; auto-forced for regional_lead
-  // Empty array = "all statuses" (default excludes 'lead' — leads are noise).
-  status: ParticipantStatus[] | null;
+  region: string | null; // ISO country code; optional, no longer role-forced
+  // Archived people are excluded unless you explicitly ask for them. This is
+  // the ONLY reachability exclusion left on this filter — the participant
+  // lifecycle enum that used to sit here was dropped in migration 053 after
+  // its default silently hid every WhatsApp-only contact from every broadcast.
+  include_archived: boolean;
   motivation: MotivationTag | null;
   programme_tier: BroadcastProgrammeTier | null;
   is_old_student: boolean | null;
-  // Filter to participants who have an address for at least one of these
-  // channels. Composer auto-sets this to the broadcast's channels.
-  require_any_of_channels: BroadcastChannel[] | null;
 };
 
 // A programme SLUG from the admin-managed programmes table (dynamic). The 4
@@ -207,13 +206,12 @@ export const INTERPOLATION_TOKENS: readonly InterpolationTokenSpec[] = [
   { token: "${payment_link}", label_en: "Payment link", label_cn: "付款链接", scope: "enrollment" },
 ] as const;
 
-// Returns the list of unresolved tokens in a string. Used by the composer
-// preview pane to surface typos and by the pre-send sanity check.
-export function findUnresolvedTokens(s: string | null | undefined): string[] {
-  if (!s) return [];
-  const matches = s.match(/\$\{[a-zA-Z0-9_.]+\}/g);
-  return matches ?? [];
-}
+// Unresolved-token detection moved to src/lib/outbound-tokens.ts so the
+// broadcast composer and the inbox send path share one definition — and so it
+// is actually *called*. The version that lived here matched only `${...}`,
+// claimed in its own comment to be wired into a pre-send check, and had zero
+// call sites; a message reading "Hi {name}" reached a real number past it.
+export { findUnresolvedTokens } from "@/lib/outbound-tokens";
 
 // ---------------------------------------------------------------------------
 // Bilingual status labels (used by pills + audit metadata)

@@ -86,7 +86,7 @@ function defaultNameFor(f: SavedViewFilters): string {
   if (f.scope !== "mine") parts.push(capitalize(f.scope));
   if (f.channel) parts.push(capitalize(f.channel));
   if (f.status) parts.push(capitalize(f.status));
-  if (f.lifecycle) parts.push(capitalize(f.lifecycle));
+  if (f.identity) parts.push(capitalize(f.identity));
   if (f.tag) parts.push(`#${f.tag}`);
   if (f.q) parts.push(`"${f.q.slice(0, 20)}"`);
   return parts.slice(0, 4).join(" · ");

@@ -5,14 +5,6 @@ import {
   REGIONS,
 } from "@/lib/participant-import-schema";
 
-export const STATUSES = [
-  "new",
-  "info_verified",
-  "cs_enriched",
-  "active",
-  "inactive",
-] as const;
-
 export const ZU_ZHANG_TIERS = [
   "key_recruitment",
   "recruitment",
@@ -203,7 +195,10 @@ export const ParticipantUpdateSchema = z
     // participant set during registration.
     facial_recognition_consent: z.boolean().optional(),
 
-    status: z.enum(STATUSES).optional(),
+    // NOTE: `identity_confidence` (migration 053, replacing the dropped
+    // `status` lifecycle enum) is deliberately NOT editable here. It gates
+    // which tools the AI may hand a conversation, so it is set only in code —
+    // on auto-create, on the lead-merge RPC, and on a completed enrollment.
   })
   .strict();
 
@@ -234,7 +229,6 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "face_type",
   "parameter_framework",
   "cs_notes",
-  "status",
   "zu_zhang_tier",
   "zu_zhang_grade",
   "zu_zhang_dimensions",

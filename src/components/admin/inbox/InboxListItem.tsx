@@ -91,7 +91,7 @@ function CompactItem({
   const p = row.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
-  const isLead = p?.status === "lead";
+  const isLead = p?.identity_confidence === "unverified";
 
   // Selection state takes visual priority over the active-thread tint so
   // bulk operations stay legible.
@@ -148,7 +148,7 @@ function CompactItem({
             </span>
             {isLead ? (
               <span className="flex-none text-[8.5px] tracking-[0.18em] uppercase text-[var(--gold-deep,var(--ink-mute))] bg-[var(--gold-soft)] border border-[var(--gold)]/40 rounded-[var(--radius-pill)] px-1 py-px">
-                Lead
+                Unverified
               </span>
             ) : null}
           </div>
@@ -174,7 +174,7 @@ function CardedItem({
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
   const regionId = p?.region_id;
-  const isLead = p?.status === "lead";
+  const isLead = p?.identity_confidence === "unverified";
   const statusLabel = CONVERSATION_STATUS_LABEL[row.status]?.en ?? row.status;
   const statusTone = CONVERSATION_STATUS_TONE[row.status] ?? "neutral";
   const assignedName =
@@ -224,7 +224,7 @@ function CardedItem({
             </span>
             {isLead ? (
               <span className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[9px] tracking-[0.22em] uppercase text-[var(--ink)]">
-                Lead
+                Unverified
               </span>
             ) : null}
           </div>

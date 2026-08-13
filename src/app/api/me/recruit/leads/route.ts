@@ -110,7 +110,6 @@ export async function POST(req: Request) {
     email: leadEmail,
     phone: body.phone,
     region: leadRegion,
-    status: "new",
   });
 
   // Set referrer_id on the lead's participant row (one-time-only — don't

@@ -126,7 +126,7 @@ export async function POST(req: Request) {
 
   const { data: created, error: insertErr } = await supabase
     .from("participants")
-    .insert({ ...fields, status: fields.status ?? "new" })
+    .insert({ ...fields, identity_confidence: "verified" })
     .select("id, region_id")
     .maybeSingle();
 

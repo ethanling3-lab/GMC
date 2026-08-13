@@ -57,7 +57,10 @@ export async function POST(req: NextRequest) {
       region: input.region,
       occupation: input.occupation || null,
       industry: input.industry || null,
-      status: "info_verified",
+      // Confirming through a tokenised link is the strongest identity signal
+      // we get short of a payment: this person held the link and affirmed
+      // their own details. Promote them (migration 053).
+      identity_confidence: "verified",
     })
     .eq("id", enrollment.participant_id);
 

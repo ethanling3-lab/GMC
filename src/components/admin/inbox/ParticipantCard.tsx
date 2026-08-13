@@ -31,7 +31,7 @@ export function ParticipantCard({
 
   const displayName = participantDisplay(participant);
   const hasRealName = Boolean((participant.name_en ?? participant.name_cn ?? "").trim());
-  const isLead = participant.status === "lead";
+  const isLead = participant.identity_confidence === "unverified";
 
   return (
     <div className="rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]">
@@ -59,7 +59,7 @@ export function ParticipantCard({
         {isLead ? (
           <div className="mt-2.5 flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center h-[20px] px-2 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.2em] uppercase text-[var(--ink)]">
-              Lead
+              Unverified
             </span>
             <MergeLeadButton leadId={participant.id} leadDisplay={displayName} />
           </div>

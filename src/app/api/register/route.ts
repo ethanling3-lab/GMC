@@ -150,7 +150,6 @@ export async function POST(req: NextRequest) {
     birth_date: input.birth_date || null,
     occupation: input.occupation || null,
     industry: input.industry || null,
-    status: "new",
     referrer_name: input.referrer_name?.trim() || null,
     referrer_contact: input.referrer_contact?.trim() || null,
     facial_recognition_consent: input.facial_recognition_consent === true,

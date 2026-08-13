@@ -6,7 +6,6 @@ import { requireAdmin } from "@/lib/admin-guard";
 import {
   applyRoleScope,
   type MotivationTag,
-  type ParticipantStatus,
 } from "@/lib/participants-query";
 import { IdentityEditor } from "@/components/admin/participants/detail/IdentityEditor";
 import { ProfileEditor } from "@/components/admin/participants/detail/ProfileEditor";
@@ -29,7 +28,6 @@ import {
   AssignmentEditor,
   type AdminOption,
 } from "@/components/admin/participants/detail/AssignmentEditor";
-import { StatusEditor } from "@/components/admin/participants/detail/StatusEditor";
 import { ActionsCard } from "@/components/admin/participants/detail/ActionsCard";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 import { loadActiveProgrammes, loadProgrammeMap } from "@/lib/programmes/load";
@@ -108,7 +106,6 @@ type Participant = {
   cs_notes: string | null;
   referrer_name: string | null;
   referrer_contact: string | null;
-  status: ParticipantStatus;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -378,7 +375,6 @@ export default async function ParticipantDetailPage({ params }: Props) {
               />
               {p.region_id ?? "—"}
             </span>
-            <StatusEditor participantId={p.id} initial={p.status} />
             {regionName ? (
               <span className="text-[12px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">
                 {regionName}

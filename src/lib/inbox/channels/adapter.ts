@@ -40,7 +40,7 @@ export type SendResult = {
 };
 
 export type ChannelAdapter = {
-  channel: "whatsapp" | "line" | "email";
+  channel: "whatsapp" | "email";
 
   /** Webhook signature verification. Returns true on valid sig. */
   verifyWebhook(req: Request, rawBody: string): Promise<boolean>;
@@ -113,7 +113,7 @@ export type ParsedWebhookResult = {
   messages: ParsedInboundMessage[];
   /** Delivery-status updates for prior outbound messages. */
   statuses: Array<{
-    channel: "whatsapp" | "line" | "email";
+    channel: "whatsapp" | "email";
     external_message_id: string;
     status: "sent" | "delivered" | "read" | "failed";
     error?: string;

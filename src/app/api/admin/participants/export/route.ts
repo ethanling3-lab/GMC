@@ -181,7 +181,7 @@ export async function GET(req: Request) {
     parts.push(`selected-${selectedIds.length}`);
   } else {
     if (filters.region) parts.push(filters.region.toLowerCase());
-    if (filters.status) parts.push(filters.status);
+    if (filters.identity) parts.push(filters.identity);
   }
   parts.push(stamp);
   const filename = `${parts.join("-")}.csv`;

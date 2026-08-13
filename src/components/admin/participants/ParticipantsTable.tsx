@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ParticipantStatus } from "@/lib/participants-query";
 import {
   STUDENT_QUALIFICATION_LABEL,
   effectiveQualification,
@@ -17,7 +16,7 @@ export type ParticipantRow = {
   name_en: string | null;
   region: string | null;
   email: string | null;
-  status: ParticipantStatus;
+  identity_confidence: string;
   financial_score: number | null;
   influence_score: number | null;
   student_qualification: StudentQualification | null;
@@ -40,76 +39,15 @@ type Props = {
   customerService: CsAdmin[];
 };
 
-const STATUS_LABEL: Record<ParticipantStatus, string> = {
-  new: "New",
-  info_verified: "Info Verified",
-  cs_enriched: "CS Enriched",
-  active: "Active",
-  inactive: "Inactive",
-  lead: "Lead",
+// participant_status was dropped in migration 053. The roster hides unverified
+// rows by default, so the only chip worth rendering is the exception: a row
+// auto-created from an inbound message that nobody has linked to a real person.
+const UNVERIFIED_TONE = {
+  dot: "bg-[var(--gold)]",
+  bg: "bg-[var(--gold-soft)]",
+  ring: "border-[var(--gold)]/40",
+  text: "text-[var(--ink)]",
 };
-
-const STATUS_ZH: Record<ParticipantStatus, string> = {
-  new: "新",
-  info_verified: "信息已核",
-  cs_enriched: "资料完善",
-  active: "活跃",
-  inactive: "停用",
-  lead: "潜在",
-};
-
-const STATUS_TONE: Record<
-  ParticipantStatus,
-  { dot: string; bg: string; ring: string; text: string }
-> = {
-  new: {
-    dot: "bg-[var(--cinnabar)]",
-    bg: "bg-[var(--cinnabar-wash)]",
-    ring: "border-[var(--cinnabar)]/25",
-    text: "text-[var(--cinnabar-deep)]",
-  },
-  info_verified: {
-    dot: "bg-[var(--jade)]",
-    bg: "bg-[var(--jade-wash)]",
-    ring: "border-[var(--jade)]/25",
-    text: "text-[var(--jade-deep)]",
-  },
-  cs_enriched: {
-    dot: "bg-[var(--cinnabar-soft)]",
-    bg: "bg-[var(--gold-soft)]",
-    ring: "border-[var(--cinnabar-soft)]/35",
-    text: "text-[var(--cinnabar-deep)]",
-  },
-  active: {
-    dot: "bg-[var(--ink)]",
-    bg: "bg-[var(--paper-deep)]",
-    ring: "border-[var(--ink-faint)]/40",
-    text: "text-[var(--ink)]",
-  },
-  inactive: {
-    dot: "bg-[var(--ink-faint)]",
-    bg: "bg-[var(--paper)]",
-    ring: "border-[var(--paper-shadow)]",
-    text: "text-[var(--ink-mute)]",
-  },
-  lead: {
-    dot: "bg-[var(--gold)]",
-    bg: "bg-[var(--gold-soft)]",
-    ring: "border-[var(--gold)]/40",
-    text: "text-[var(--ink)]",
-  },
-};
-
-// Bulk-action menu shows only statuses an admin can manually pick. `lead` is
-// system-created from the inbox ingest and should only transition out via
-// explicit "Merge with existing participant" flow — not a bulk reassign.
-const ALL_STATUSES: ParticipantStatus[] = [
-  "new",
-  "info_verified",
-  "cs_enriched",
-  "active",
-  "inactive",
-];
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -285,27 +223,6 @@ export function ParticipantsTable({
     }
   }
 
-  async function runSetStatus(next: ParticipantStatus) {
-    if (selected.size === 0) return;
-    setOpenMenu(null);
-    setBusy("set_status");
-    setError(null);
-    try {
-      const ids = Array.from(selected);
-      await postBulk({ action: "set_status", ids, status: next });
-      const count = ids.length;
-      setSelected(new Set());
-      router.refresh();
-      setToast({
-        message: `${count.toLocaleString()} set to ${STATUS_LABEL[next]}`,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Set status failed");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function runAssignCs(adminId: string | null) {
     if (selected.size === 0) return;
     setOpenMenu(null);
@@ -384,40 +301,6 @@ export function ParticipantsTable({
             disabled={busy !== null}
           />
 
-          {/* Set status dropdown */}
-          <div className="relative">
-            <BulkButton
-              label="Set status"
-              caret
-              onClick={() => setOpenMenu(openMenu === "status" ? null : "status")}
-              busy={busy === "set_status"}
-              disabled={busy !== null}
-              active={openMenu === "status"}
-            />
-            {openMenu === "status" ? (
-              <Menu>
-                {ALL_STATUSES.map((s) => {
-                  const tone = STATUS_TONE[s];
-                  return (
-                    <MenuItem key={s} onClick={() => runSetStatus(s)}>
-                      <span
-                        className={`inline-flex items-center gap-2 px-2 py-0.5 rounded-full border text-[10px] tracking-[0.14em] uppercase ${tone.bg} ${tone.ring} ${tone.text}`}
-                      >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${tone.dot}`}
-                          aria-hidden="true"
-                        />
-                        {STATUS_LABEL[s]}
-                      </span>
-                      <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
-                        {STATUS_ZH[s]}
-                      </span>
-                    </MenuItem>
-                  );
-                })}
-              </Menu>
-            ) : null}
-          </div>
 
           {/* Assign CS dropdown */}
           <div className="relative">
@@ -498,7 +381,7 @@ export function ParticipantsTable({
               <th scope="col" className="px-5 py-3.5 font-medium">Name</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Region</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Contact</th>
-              <th scope="col" className="px-5 py-3.5 font-medium">Status</th>
+              <th scope="col" className="px-5 py-3.5 font-medium">Flags</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Qualification · 等级</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Registered</th>
             </tr>
@@ -534,7 +417,6 @@ export function ParticipantsTable({
               </tr>
             ) : (
               rows.map((r) => {
-                const tone = STATUS_TONE[r.status];
                 const isArchived = Boolean(r.archived_at);
                 const isSelected = selected.has(r.id);
                 return (
@@ -586,17 +468,20 @@ export function ParticipantsTable({
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
-                                      text-[10px] tracking-[0.14em] uppercase
-                                      ${tone.bg} ${tone.ring} ${tone.text}`}
-                        >
+                        {r.identity_confidence === "unverified" ? (
                           <span
-                            className={`w-1.5 h-1.5 rounded-full ${tone.dot}`}
-                            aria-hidden="true"
-                          />
-                          {STATUS_LABEL[r.status]}
-                        </span>
+                            className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
+                                        text-[10px] tracking-[0.14em] uppercase
+                                        ${UNVERIFIED_TONE.bg} ${UNVERIFIED_TONE.ring} ${UNVERIFIED_TONE.text}`}
+                            title="Auto-created from an inbound message; not yet linked to a known person."
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${UNVERIFIED_TONE.dot}`}
+                              aria-hidden="true"
+                            />
+                            Unverified
+                          </span>
+                        ) : null}
                         {isArchived ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-[var(--ink-faint)]/30 bg-[var(--paper-deep)] text-[9px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">
                             Archived

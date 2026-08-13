@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
+import { assertNoUnresolvedTokens } from "@/lib/outbound-tokens";
 import { getAdapter, type ChannelKey } from "./channels";
 import { findTemplate } from "./whatsapp-templates";
 import {
@@ -105,6 +106,21 @@ export async function sendOutboundMessage(
 
   const channel = conv.channel as ChannelKey;
   const to = conv.external_thread_id as string;
+
+  // Refuse to ship an unresolved placeholder. This is the single choke point
+  // every outbound message passes through — composer text, snippet insertions,
+  // template parameters, media captions, broadcast sends (which delegate here)
+  // and AI replies — so the guard lives here rather than at each caller.
+  //
+  // Template *bodies* are not checked: their text is Meta-approved and its
+  // `{{1}}` slots are filled by def.render() further down. What IS checked is
+  // the parameter values we supply, since a `{name}` typed into a param field
+  // is interpolated verbatim into the approved body.
+  if (input.kind === "template") {
+    assertNoUnresolvedTokens(...Object.values(input.params));
+  } else {
+    assertNoUnresolvedTokens(input.bodyText);
+  }
 
   if (input.kind === "media") {
     if (channel !== "whatsapp") {

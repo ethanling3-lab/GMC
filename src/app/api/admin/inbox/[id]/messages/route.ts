@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { sendOutboundMessage } from "@/lib/inbox/send";
+import { UnresolvedTokenError } from "@/lib/outbound-tokens";
 import { writeAuditLog } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -167,6 +168,15 @@ export async function POST(req: Request, { params }: RouteCtx) {
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
+    // An unresolved placeholder is the sender's mistake, not a server fault:
+    // 400 with the offending tokens named, so the composer can say which ones
+    // rather than showing a generic failure the admin can only retry.
+    if (err instanceof UnresolvedTokenError) {
+      return NextResponse.json(
+        { error: "unresolved_tokens", detail: err.message, tokens: err.tokens },
+        { status: 400 },
+      );
+    }
     const msg = err instanceof Error ? err.message : "send_failed";
     return NextResponse.json(
       { error: "send_failed", detail: msg },

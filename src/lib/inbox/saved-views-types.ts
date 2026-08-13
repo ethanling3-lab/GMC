@@ -37,7 +37,7 @@ export function hasActiveFilters(f: SavedViewFilters): boolean {
     f.scope !== "mine" ||
     f.channel !== null ||
     f.status !== null ||
-    f.lifecycle !== null ||
+    f.identity !== null ||
     f.tag !== null ||
     f.q.length > 0
   );
@@ -51,7 +51,7 @@ export function savedViewHref(f: SavedViewFilters): string {
   if (f.scope !== "mine") params.set("scope", f.scope);
   if (f.channel) params.set("channel", f.channel);
   if (f.status) params.set("status", f.status);
-  if (f.lifecycle) params.set("lifecycle", f.lifecycle);
+  if (f.identity) params.set("identity", f.identity);
   if (f.tag) params.set("tag", f.tag);
   if (f.q) params.set("q", f.q);
   const qs = params.toString();

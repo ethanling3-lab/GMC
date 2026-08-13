@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type {
   InboxListFilters,
-  ParticipantLifecycle,
+  IdentityConfidence,
 } from "@/lib/inbox/inbox-query";
 import type { Tag } from "@/lib/inbox/tags-types";
 import { tintHex } from "@/lib/inbox/tags-types";
@@ -11,7 +11,7 @@ import { SavedViewItem } from "./SavedViewItem";
 
 // Inbox sub-nav (left column of /admin/inbox). Renders one stacked list of
 // "saved views" — each link is just a URL with a different filter set —
-// grouped into Scope, Channels, and Lifecycle sections. Server-rendered: the
+// grouped into Scope, Channels, and Identity sections. Server-rendered: the
 // active state is derived from the current filters, not client state.
 //
 // Modeled on Respond.io's sidebar: a single column of links + collapsible
@@ -25,21 +25,17 @@ type Counts = {
   mine: number;
   unassigned: number;
   all: number;
-  channels: { whatsapp: number; line: number };
+  channels: { whatsapp: number };
 };
 
-const LIFECYCLE_ITEMS: Array<{
-  key: ParticipantLifecycle;
+const IDENTITY_ITEMS: Array<{
+  key: IdentityConfidence;
   label: string;
   labelZh: string;
-  emoji: string;
+  icon: React.ReactNode;
 }> = [
-  { key: "lead", label: "New Lead", labelZh: "新线索", emoji: "🌱" },
-  { key: "new", label: "New", labelZh: "新", emoji: "🆕" },
-  { key: "info_verified", label: "Verified", labelZh: "已核实", emoji: "✅" },
-  { key: "cs_enriched", label: "Enriched", labelZh: "已补全", emoji: "📝" },
-  { key: "active", label: "Active", labelZh: "活跃", emoji: "⭐" },
-  { key: "inactive", label: "Inactive", labelZh: "未活跃", emoji: "💤" },
+  { key: "unverified", label: "Unverified", labelZh: "待确认", icon: <UnverifiedIcon /> },
+  { key: "verified", label: "Known", labelZh: "已确认", icon: <KnownIcon /> },
 ];
 
 export function InboxSidebar({
@@ -57,7 +53,7 @@ export function InboxSidebar({
     scope: filters.scope,
     channel: filters.channel,
     status: filters.status,
-    lifecycle: filters.lifecycle,
+    identity: filters.identity,
     tag: filters.tag,
     q: filters.q,
   });
@@ -114,28 +110,21 @@ export function InboxSidebar({
             count={counts.channels.whatsapp}
             color="#25D366"
           />
-          <ChannelLink
-            filters={filters}
-            code="line"
-            label="LINE"
-            count={counts.channels.line}
-            color="#06C755"
-          />
         </nav>
 
         <SectionDivider />
 
-        {/* Lifecycle section (participant.status) */}
-        <SectionHeader>Lifecycle · 生命周期</SectionHeader>
+        {/* Identity section (participants.identity_confidence) */}
+        <SectionHeader>Identity · 身份</SectionHeader>
         <nav className="px-2 py-1 pb-3">
-          {LIFECYCLE_ITEMS.map((item) => (
-            <LifecycleLink
+          {IDENTITY_ITEMS.map((item) => (
+            <IdentityLink
               key={item.key}
               filters={filters}
               code={item.key}
               label={item.label}
               labelZh={item.labelZh}
-              emoji={item.emoji}
+              icon={item.icon}
             />
           ))}
         </nav>
@@ -185,7 +174,7 @@ export function InboxSidebar({
 
 function TagLink({ filters, tag }: { filters: InboxListFilters; tag: Tag }) {
   const active = filters.tag === tag.slug;
-  // Same-slug click toggles off, mirroring the channel/lifecycle pattern.
+  // Same-slug click toggles off, mirroring the channel/identity pattern.
   const href = buildHref(filters, { tag: active ? null : tag.slug });
   return (
     <Link
@@ -244,13 +233,13 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 function buildHref(
   filters: InboxListFilters,
-  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "lifecycle" | "tag">>,
+  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "identity" | "tag">>,
 ): string {
   const next = {
     scope: filters.scope,
     channel: filters.channel,
     status: filters.status,
-    lifecycle: filters.lifecycle,
+    identity: filters.identity,
     tag: filters.tag,
     ...patch,
   };
@@ -258,7 +247,7 @@ function buildHref(
   if (next.scope !== "mine") params.set("scope", next.scope);
   if (next.channel) params.set("channel", next.channel);
   if (next.status) params.set("status", next.status);
-  if (next.lifecycle) params.set("lifecycle", next.lifecycle);
+  if (next.identity) params.set("identity", next.identity);
   if (next.tag) params.set("tag", next.tag);
   if (filters.q) params.set("q", filters.q);
   const qs = params.toString();
@@ -280,10 +269,10 @@ function ScopeLink({
   count: number;
   icon: React.ReactNode;
 }) {
-  const active = filters.scope === code && !filters.lifecycle && !filters.channel && !filters.tag;
-  // Clearing channel + lifecycle when clicking a scope link mirrors the Gmail
+  const active = filters.scope === code && !filters.identity && !filters.channel && !filters.tag;
+  // Clearing channel + identity when clicking a scope link mirrors the Gmail
   // "All Mail" UX — picking a scope is a reset, not a refinement.
-  const href = buildHref(filters, { scope: code, channel: null, lifecycle: null, tag: null });
+  const href = buildHref(filters, { scope: code, channel: null, identity: null, tag: null });
   return (
     <Link
       href={href}
@@ -334,7 +323,7 @@ function ChannelLink({
 }) {
   const active = filters.channel === code;
   // Clicking the same channel again clears it; cross-filter compatible.
-  const href = buildHref(filters, { channel: active ? null : code, lifecycle: null });
+  const href = buildHref(filters, { channel: active ? null : code, identity: null });
   return (
     <Link
       href={href}
@@ -366,21 +355,21 @@ function ChannelLink({
   );
 }
 
-function LifecycleLink({
+function IdentityLink({
   filters,
   code,
   label,
   labelZh,
-  emoji,
+  icon,
 }: {
   filters: InboxListFilters;
-  code: ParticipantLifecycle;
+  code: IdentityConfidence;
   label: string;
   labelZh: string;
-  emoji: string;
+  icon: React.ReactNode;
 }) {
-  const active = filters.lifecycle === code;
-  const href = buildHref(filters, { lifecycle: active ? null : code });
+  const active = filters.identity === code;
+  const href = buildHref(filters, { identity: active ? null : code });
   return (
     <Link
       href={href}
@@ -394,8 +383,11 @@ function LifecycleLink({
                       : "text-[var(--ink-soft)] hover:bg-[var(--paper-deep)] hover:text-[var(--ink)]"
                   }`}
     >
-      <span className="flex-none text-[14px] leading-none w-4 text-center" aria-hidden="true">
-        {emoji}
+      <span
+        className={`flex-none w-4 h-4 ${active ? "text-[var(--cinnabar)]" : "text-[var(--ink-mute)] group-hover:text-[var(--ink-soft)]"}`}
+        aria-hidden="true"
+      >
+        {icon}
       </span>
       <span className="flex-1 truncate font-display tracking-[-0.005em]">
         {label}
@@ -425,6 +417,25 @@ function PersonIcon() {
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="8" cy="6" r="2.6" />
       <path d="M3 13.5c.7-2.4 2.7-4 5-4s4.3 1.6 5 4" />
+    </svg>
+  );
+}
+
+function UnverifiedIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.6" />
+      <path d="M6.5 6.4a1.6 1.6 0 0 1 3.1.5c0 1.1-1.6 1.3-1.6 2.4" />
+      <path d="M8 11.5h.01" />
+    </svg>
+  );
+}
+
+function KnownIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.6" />
+      <path d="M5.6 8.2l1.7 1.7 3.2-3.6" />
     </svg>
   );
 }

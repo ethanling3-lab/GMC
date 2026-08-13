@@ -1,13 +1,13 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type ParticipantStatus =
-  | "new"
-  | "info_verified"
-  | "cs_enriched"
-  | "active"
-  | "inactive"
-  | "lead";
+/**
+ * Replaces the old `participant_status` lifecycle enum (dropped in migration
+ * 053). Not a lifecycle — it answers exactly one question: has this row been
+ * confirmed to be a real, distinct person? See the migration for the full
+ * rationale.
+ */
+export type IdentityConfidence = "unverified" | "verified";
 
 export type MotivationTag =
   | "clean"
@@ -19,7 +19,14 @@ export type MotivationTag =
 export type ParticipantFilters = {
   q?: string;
   region?: string;
-  status?: ParticipantStatus;
+  /**
+   * Omitted = the ROSTER default (verified only). `"all"` = no filter at all.
+   *
+   * The distinction is load-bearing: outreach must pass `"all"` explicitly.
+   * Letting "unset" mean "verified only" everywhere is how the old lifecycle
+   * enum silently shrank every broadcast audience.
+   */
+  identity?: IdentityConfidence | "all";
   motivation?: MotivationTag;
   sort?: "recent" | "oldest" | "region_id" | "name" | "qualification";
   /** "active" (default) hides archived, "archived" shows only archived, "all" shows both. */
@@ -28,14 +35,7 @@ export type ParticipantFilters = {
 
 export const DEFAULT_PAGE_SIZE = 50;
 
-const STATUS_VALUES: ParticipantStatus[] = [
-  "new",
-  "info_verified",
-  "cs_enriched",
-  "active",
-  "inactive",
-  "lead",
-];
+const IDENTITY_VALUES: IdentityConfidence[] = ["unverified", "verified"];
 
 const MOTIVATION_VALUES: MotivationTag[] = [
   "clean",
@@ -71,10 +71,10 @@ export function parseFilters(sp: URLSearchParams | Record<string, string | strin
       ? regionRaw
       : undefined;
 
-  const statusRaw = get("status");
-  const status =
-    statusRaw && (STATUS_VALUES as string[]).includes(statusRaw)
-      ? (statusRaw as ParticipantStatus)
+  const identityRaw = get("identity");
+  const identity =
+    identityRaw && (IDENTITY_VALUES as string[]).includes(identityRaw)
+      ? (identityRaw as IdentityConfidence)
       : undefined;
 
   const motivationRaw = get("motivation");
@@ -93,7 +93,7 @@ export function parseFilters(sp: URLSearchParams | Record<string, string | strin
   const archived: ParticipantFilters["archived"] =
     archivedRaw === "archived" || archivedRaw === "all" ? archivedRaw : "active";
 
-  return { q, region, status, motivation, sort, archived };
+  return { q, region, identity, motivation, sort, archived };
 }
 
 export function parsePage(sp: URLSearchParams | Record<string, string | string[] | undefined>): number {
@@ -135,14 +135,20 @@ export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any
   }
 
   if (filters.region) q = q.eq("region", filters.region);
-  if (filters.status) q = q.eq("status", filters.status);
-  else {
-    // Hide inbox-created leads from the student master by default. Leads are
-    // pre-participants (autocreated from first WhatsApp/LINE inbound) and
-    // don't belong in the roster until an admin links them to a real
-    // participant. Admins can still reach them via an explicit `?status=lead`
-    // filter on the URL.
-    q = q.not("status", "eq", "lead");
+  if (filters.identity === "all") {
+    // Explicit "everyone" — used by broadcast audience resolution.
+  } else if (filters.identity) {
+    q = q.eq("identity_confidence", filters.identity);
+  } else {
+    // Hide unverified rows from the student master by default. These are
+    // auto-created from a first inbound WhatsApp message and don't belong in
+    // the roster until an admin links them to a real participant. Reach them
+    // with an explicit `?identity=unverified` on the URL.
+    //
+    // NOTE: this is a ROSTER-DISPLAY default only. It must never be copied
+    // into outreach — broadcasts deliberately include unverified rows, since
+    // someone who has only ever WhatsApp'd us is still someone we can reach.
+    q = q.eq("identity_confidence", "verified");
   }
   if (filters.motivation) q = q.eq("motivation_tag", filters.motivation);
 

@@ -21,6 +21,7 @@ import {
   type Snippet,
   type SnippetContext,
 } from "@/lib/inbox/snippets-types";
+import { findUnresolvedTokens } from "@/lib/outbound-tokens";
 
 // Reply composer. Three modes:
 //   - text: default free-form textarea with optional attachments (WhatsApp)
@@ -745,6 +746,8 @@ function TextPanel({
           </ul>
         ) : null}
 
+        <UnresolvedVariableBanner body={value} />
+
         {errorBanner}
 
         <div className="mt-2 flex items-center justify-between gap-3">
@@ -1380,6 +1383,46 @@ function LanguageToggle({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// Warns while the admin is still typing that the message carries placeholders
+// which did not resolve.
+//
+// `resolveSnippetBody` leaves a token raw whenever the conversation has no
+// value for it — its own comment says unknown keys are "left as raw {token} so
+// admins notice". Nothing ever made them notice: `extractSnippetVariables`
+// exists for exactly this and had zero call sites. On a nameless, unenrolled
+// lead, {name}/{event_title}/{event_date} all resolve to nothing, and a snippet
+// went out reading "Hi {name}, thanks for reaching out about {event_title}".
+//
+// The send is blocked server-side by assertNoUnresolvedTokens regardless. This
+// is the earlier, kinder half: say it at typing time, so the first the admin
+// hears of it is not a rejected send.
+function UnresolvedVariableBanner({ body }: { body: string }) {
+  const tokens = useMemo(() => {
+    const found = findUnresolvedTokens(body);
+    return Array.from(new Set(found));
+  }, [body]);
+
+  if (tokens.length === 0) return null;
+
+  return (
+    <div
+      role="status"
+      className="mt-2 rounded-[var(--radius-md)] border border-[var(--gold)]/45 bg-[var(--gold-soft)]
+                 px-3 py-2 text-[12px] leading-[1.5] text-[var(--ink)] break-words"
+    >
+      <span className="font-medium">
+        {tokens.length === 1 ? "This placeholder has no value" : "These placeholders have no value"}
+        :{" "}
+      </span>
+      <span className="font-mono text-[11.5px]">{tokens.join("  ")}</span>
+      <div className="mt-0.5 text-[var(--ink-mute)]">
+        {tokens.length === 1 ? "It" : "They"} will send exactly as written. Replace with real
+        text — this thread has no value to fill {tokens.length === 1 ? "it" : "them"} from.
+      </div>
     </div>
   );
 }

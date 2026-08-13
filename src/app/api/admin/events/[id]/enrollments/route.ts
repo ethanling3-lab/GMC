@@ -139,7 +139,6 @@ export async function POST(req: Request, { params }: RouteCtx) {
       birth_date: body.participant.new.birth_date ?? null,
       occupation: body.participant.new.occupation ?? null,
       industry: body.participant.new.industry ?? null,
-      status: "info_verified",
       referrer_name: body.participant.new.referrer_name ?? null,
       referrer_contact: body.participant.new.referrer_contact ?? null,
       is_old_student: body.participant.new.is_old_student ?? false,

@@ -24,7 +24,6 @@ export type ParticipantInsertInput = {
   birth_date?: string | null;
   occupation?: string | null;
   industry?: string | null;
-  status?: "new" | "info_verified" | "cs_enriched" | "active" | "inactive";
   referrer_name?: string | null;
   referrer_contact?: string | null;
   is_old_student?: boolean;
@@ -55,7 +54,11 @@ function buildPayload(input: ParticipantInsertInput): Record<string, unknown> {
     birth_date: input.birth_date || null,
     occupation: input.occupation || null,
     industry: input.industry || null,
-    status: input.status ?? "new",
+    // Anyone arriving through this function came from a real registration
+    // form — a human typed their own name, email and phone — so they are
+    // verified by construction. Only src/lib/inbox/identity.ts creates
+    // unverified rows, and only from a bare inbound identifier.
+    identity_confidence: "verified",
   };
   if (input.referrer_name && input.referrer_name.trim()) {
     payload.referrer_name = input.referrer_name.trim();

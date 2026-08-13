@@ -129,8 +129,12 @@ export function BroadcastComposer({
 
   // Participant-master state
   const [region, setRegion] = useState<string>(pm ? (pm.region ?? "") : (adminRegion ?? ""));
-  const [masterStatuses, setMasterStatuses] = useState<string[]>(
-    pm?.status ?? ["active", "cs_enriched"],
+  // Replaces the old lifecycle multi-select, whose default of
+  // ["active","cs_enriched"] silently excluded most of the list from every
+  // broadcast. Archived is now the ONLY reachability exclusion, and it is off
+  // by default — i.e. the default audience is everyone.
+  const [includeArchived, setIncludeArchived] = useState<boolean>(
+    pm?.include_archived ?? false,
   );
   const [motivation, setMotivation] = useState<string>(pm?.motivation ?? "");
   const [programmeTier, setProgrammeTier] = useState<string>(pm?.programme_tier ?? "");
@@ -231,12 +235,11 @@ export function BroadcastComposer({
     return {
       mode: "participant_master",
       region: region === "" ? null : region,
-      status: masterStatuses.length > 0 ? (masterStatuses as ParticipantMasterFilter["status"]) : null,
+      include_archived: includeArchived,
       motivation: motivation === "" ? null : (motivation as ParticipantMasterFilter["motivation"]),
       programme_tier:
         programmeTier === "" ? null : (programmeTier as ParticipantMasterFilter["programme_tier"]),
       is_old_student: isOldStudent === "" ? null : isOldStudent === "true",
-      require_any_of_channels: channels,
     } satisfies ParticipantMasterFilter;
   }, [
     audienceMode,
@@ -245,7 +248,7 @@ export function BroadcastComposer({
     languageFilter,
     tagSlug,
     region,
-    masterStatuses,
+    includeArchived,
     motivation,
     programmeTier,
     isOldStudent,
@@ -614,33 +617,20 @@ export function BroadcastComposer({
             </div>
             <div>
               <div className="text-[11px] tracking-[0.18em] uppercase text-[var(--ink-faint)] mb-1.5">
-                Status · 状态
+                Archived · 已封存
               </div>
-              <div className="flex flex-wrap gap-2">
-                {["new", "info_verified", "cs_enriched", "active", "inactive"].map((s) => {
-                  const active = masterStatuses.includes(s);
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() =>
-                        setMasterStatuses((curr) =>
-                          curr.includes(s)
-                            ? curr.filter((x) => x !== s)
-                            : [...curr, s],
-                        )
-                      }
-                      className={`inline-flex items-center gap-1 px-2.5 h-8 rounded-[var(--radius-pill)] border text-[11px] tracking-[0.08em] uppercase transition-colors ${
-                        active
-                          ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
-                          : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink-soft)] hover:bg-[var(--paper-deep)]"
-                      }`}
-                    >
-                      {s}
-                    </button>
-                  );
-                })}
-              </div>
+              <button
+                type="button"
+                onClick={() => setIncludeArchived((v) => !v)}
+                aria-pressed={includeArchived}
+                className={`inline-flex items-center gap-1 px-2.5 h-8 rounded-[var(--radius-pill)] border text-[11px] tracking-[0.08em] uppercase transition-colors ${
+                  includeArchived
+                    ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                    : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--ink-soft)] hover:bg-[var(--paper-deep)]"
+                }`}
+              >
+                {includeArchived ? "Including archived" : "Excluding archived"}
+              </button>
             </div>
           </div>
         )}

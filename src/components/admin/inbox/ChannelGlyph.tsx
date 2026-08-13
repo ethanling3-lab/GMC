@@ -27,14 +27,6 @@ export function ChannelGlyph({
       </svg>
     );
   }
-  if (channel === "line") {
-    return (
-      <svg {...common}>
-        <rect x="2" y="3" width="12" height="9" rx="2.2" />
-        <path d="M5 6.5v3M5 7.5h2.5M10 6.5h-2v3h2M10 8h-1.5" />
-      </svg>
-    );
-  }
   if (channel === "email") {
     return (
       <svg {...common}>

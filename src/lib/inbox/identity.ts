@@ -63,9 +63,12 @@ export async function resolveIdentity(
     return { participant_id: softMatch, created: false, linked_existing: true };
   }
 
-  // 3. Auto-create a lead participant + identifier.
+  // 3. Auto-create an unverified participant + identifier.
   const leadRow: Record<string, unknown> = {
-    status: "lead",
+    // Was status:'lead' before migration 053. Same meaning, narrower column:
+    // nothing has confirmed this identifier belongs to a real distinct person,
+    // so the AI must not be handed personal-data tools for this conversation.
+    identity_confidence: "unverified",
     // Set phone at creation time for WhatsApp so later queries match naturally.
     phone: channel === "whatsapp" ? normalized : null,
     // A wa_id is already canonical, so the auto-created lead is immediately
@@ -143,11 +146,17 @@ async function softMatchExistingParticipant(
     //
     // `phone` stays in the OR so an inbound message still resolves on a
     // database where the 052 backfill hasn't run.
+    //
+    // There is deliberately NO status/lifecycle filter here. This used to
+    // carry `.neq("status","inactive")`, which meant an inactive participant
+    // who messaged us failed to match their own record and step 3 created a
+    // SECOND row for the same human — the exact duplicate-participant bug 052
+    // set out to kill, reintroduced through a different column. A person is
+    // reachable whatever we think of their engagement level.
     const { data, error } = await service
       .from("participants")
       .select("id")
       .or(`phone_e164.eq.${normalized},phone.eq.${normalized}`)
-      .neq("status", "inactive")
       .limit(1)
       .maybeSingle();
     // 42703 = phone_e164 doesn't exist yet (code deployed ahead of 052).
@@ -157,7 +166,6 @@ async function softMatchExistingParticipant(
         .from("participants")
         .select("id")
         .eq("phone", normalized)
-        .neq("status", "inactive")
         .limit(1)
         .maybeSingle();
       return (retry.data as { id: string } | null)?.id ?? null;
@@ -169,7 +177,6 @@ async function softMatchExistingParticipant(
       .from("participants")
       .select("id")
       .eq("email", normalized)
-      .neq("status", "inactive")
       .limit(1)
       .maybeSingle();
     return (data as { id: string } | null)?.id ?? null;

@@ -11,6 +11,7 @@
     "seed-admin": "node scripts/seed-admin.mjs",
     "seed-test-dummies": "tsx scripts/seed-test-dummies.ts",
     "check:phone": "tsx scripts/check-phone-normalizer.ts",
+    "check:tokens": "tsx scripts/check-outbound-tokens.ts",
     "check:templates": "tsx scripts/check-whatsapp-templates.ts",
     "create:templates": "tsx scripts/create-whatsapp-templates.ts",
     "backfill:phone": "tsx scripts/backfill-phone-e164.ts",

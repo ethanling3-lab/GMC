@@ -38,7 +38,17 @@ export function ConversationListView({
 }: Props) {
   if (compact) {
     return (
-      <div className="flex flex-col h-full">
+      // `w-full min-w-0` is load-bearing, not defensive styling.
+      //
+      // The parent is the fixed 320px `@list` aside in inbox/layout.tsx, which
+      // is `display:flex`. A flex item defaults to `min-width:auto`, so without
+      // these this div sized to its max-content width — measured at 1053px
+      // against a 320px column — and the aside's `overflow-hidden` silently
+      // chopped 733px off the right. Every `truncate` and `min-w-0` further
+      // down was correct and did nothing, because nothing above them bounded
+      // the width: names, timestamps and the identity chip were all rendered,
+      // just off-screen. Removing this reintroduces the clipping.
+      <div className="flex flex-col h-full w-full min-w-0">
         {/* Sticky toolbar: status tabs + active-filter strip only.
             Search lives INSIDE the scroll below (WhatsApp pattern). */}
         <div className="flex-none px-3 pt-2.5 pb-2 border-b border-[var(--paper-shadow)] bg-[var(--paper-warm)]">
@@ -198,10 +208,10 @@ function ActiveFilterStrip({
 }) {
   const chips: Array<{ label: string; href: string }> = [];
 
-  if (filters.lifecycle) {
+  if (filters.identity) {
     chips.push({
-      label: compact ? filters.lifecycle : `Lifecycle: ${filters.lifecycle}`,
-      href: makeHref(filters, { lifecycle: null }),
+      label: compact ? filters.identity : `Identity: ${filters.identity}`,
+      href: makeHref(filters, { identity: null }),
     });
   }
   if (filters.channel) {
@@ -278,7 +288,7 @@ function ActiveFilterStrip({
           scope: filters.scope,
           channel: filters.channel,
           status: filters.status,
-          lifecycle: filters.lifecycle,
+          identity: filters.identity,
           tag: filters.tag,
           q: filters.q,
         }}
@@ -289,13 +299,13 @@ function ActiveFilterStrip({
 
 function makeHref(
   filters: InboxListFilters,
-  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "lifecycle" | "tag" | "q">>,
+  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "identity" | "tag" | "q">>,
 ): string {
   const next = {
     scope: filters.scope,
     channel: filters.channel,
     status: filters.status,
-    lifecycle: filters.lifecycle,
+    identity: filters.identity,
     tag: filters.tag,
     q: filters.q,
     ...patch,
@@ -304,7 +314,7 @@ function makeHref(
   if (next.scope !== "mine") params.set("scope", next.scope);
   if (next.channel) params.set("channel", next.channel);
   if (next.status) params.set("status", next.status);
-  if (next.lifecycle) params.set("lifecycle", next.lifecycle);
+  if (next.identity) params.set("identity", next.identity);
   if (next.tag) params.set("tag", next.tag);
   if (next.q) params.set("q", next.q);
   const qs = params.toString();
@@ -321,8 +331,8 @@ function EmptyState({
   const reason =
     filters.q
       ? `No conversations match "${filters.q}".`
-      : filters.lifecycle
-        ? `No conversations from participants with status "${filters.lifecycle}".`
+      : filters.identity
+        ? `No conversations from participants with status "${filters.identity}".`
         : filters.channel
           ? `No ${filters.channel} conversations in this scope.`
           : filters.scope === "mine"

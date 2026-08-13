@@ -12,13 +12,11 @@ const REGIONS = [
   { code: "CN", label: "CN · Mainland China" },
 ];
 
-const STATUSES = [
-  { code: "", label: "Any status" },
-  { code: "new", label: "New" },
-  { code: "info_verified", label: "Info verified" },
-  { code: "cs_enriched", label: "CS enriched" },
-  { code: "active", label: "Active" },
-  { code: "inactive", label: "Inactive" },
+// participant_status was dropped in 053. What remains is the one distinction
+// that was ever acted on: has anyone confirmed this row is a real person?
+const IDENTITY = [
+  { code: "", label: "Verified only" },
+  { code: "unverified", label: "Unverified only" },
 ];
 
 const MOTIVATIONS = [
@@ -60,7 +58,7 @@ export function FiltersBar({
   const firstRun = useRef(true);
 
   const region = sp.get("region") ?? "";
-  const status = sp.get("status") ?? "";
+  const identity = sp.get("identity") ?? "";
   const motivation = sp.get("motivation") ?? "";
   const sort = sp.get("sort") ?? "recent";
   const archivedMode: ArchivedMode =
@@ -114,7 +112,7 @@ export function FiltersBar({
   const anyFilter =
     Boolean(q) ||
     Boolean(region) ||
-    Boolean(status) ||
+    Boolean(identity) ||
     Boolean(motivation) ||
     sort !== "recent" ||
     archivedMode !== "active";
@@ -174,10 +172,10 @@ export function FiltersBar({
           onChange={(v) => update({ region: v || null, page: null })}
         />
         <Select
-          label="Status"
-          value={status}
-          options={STATUSES}
-          onChange={(v) => update({ status: v || null, page: null })}
+          label="Identity"
+          value={identity}
+          options={IDENTITY}
+          onChange={(v) => update({ identity: v || null, page: null })}
         />
         <Select
           label="Motivation"

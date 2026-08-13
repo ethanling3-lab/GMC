@@ -12,11 +12,9 @@ export const runtime = "nodejs";
 
 const FiltersSchema = z.object({
   scope: z.enum(["mine", "unassigned", "all"]),
-  channel: z.enum(["whatsapp", "line", "email"]).nullable(),
+  channel: z.enum(["whatsapp", "email"]).nullable(),
   status: z.enum(["open", "pending", "snoozed", "closed"]).nullable(),
-  lifecycle: z
-    .enum(["lead", "new", "info_verified", "cs_enriched", "active", "inactive"])
-    .nullable(),
+  identity: z.enum(["unverified", "verified"]).nullable(),
   tag: z.string().nullable(),
   q: z.string(),
 });

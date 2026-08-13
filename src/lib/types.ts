@@ -7,12 +7,8 @@ export type AdminRole =
   | "finance"
   | "instructor";
 
-export type ParticipantStatus =
-  | "new"
-  | "info_verified"
-  | "cs_enriched"
-  | "active"
-  | "inactive";
+/** See migration 053 — replaced the `participant_status` lifecycle enum. */
+export type IdentityConfidence = "unverified" | "verified";
 
 export type MotivationTag =
   | "clean"
@@ -80,7 +76,7 @@ export interface Participant {
   assigned_region_lead_id: string | null;
   assigned_cs_id: string | null;
   cs_notes: string | null;
-  status: ParticipantStatus;
+  identity_confidence: IdentityConfidence;
   created_at: string;
   updated_at: string;
 }

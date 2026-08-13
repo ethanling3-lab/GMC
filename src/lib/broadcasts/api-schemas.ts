@@ -15,15 +15,6 @@ const LanguageFluencyZ = z.enum(["en", "cn", "both"]);
 
 const ChannelZ = z.enum(["whatsapp", "email"]);
 
-const ParticipantStatusZ = z.enum([
-  "new",
-  "info_verified",
-  "cs_enriched",
-  "active",
-  "inactive",
-  "lead",
-]);
-
 const MotivationZ = z.enum([
   "clean",
   "insurance",
@@ -48,11 +39,14 @@ const EventCohortFilterZ = z.object({
 const ParticipantMasterFilterZ = z.object({
   mode: z.literal("participant_master"),
   region: z.string().max(8).nullable(),
-  status: z.array(ParticipantStatusZ).nullable(),
+  // Default false. Stored broadcasts created before migration 053 carry a
+  // `status` array instead; z.object strips unknown keys, so they coerce to
+  // "everyone, not archived" — which is the wider audience, and the right
+  // way for this particular default to fail.
+  include_archived: z.boolean().default(false),
   motivation: MotivationZ.nullable(),
   programme_tier: ProgrammeTierZ.nullable(),
   is_old_student: z.boolean().nullable(),
-  require_any_of_channels: z.array(ChannelZ).nullable(),
 });
 
 export const AudienceFilterZ = z.discriminatedUnion("mode", [

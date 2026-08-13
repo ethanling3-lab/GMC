@@ -11,14 +11,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 26;
 
-const ParticipantStatusEnum = z.enum([
-  "new",
-  "info_verified",
-  "cs_enriched",
-  "active",
-  "inactive",
-]);
-
 const BulkBody = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("archive"),
@@ -31,11 +23,6 @@ const BulkBody = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("delete"),
     ids: z.array(z.string().uuid()).min(1).max(500),
-  }),
-  z.object({
-    action: z.literal("set_status"),
-    ids: z.array(z.string().uuid()).min(1).max(500),
-    status: ParticipantStatusEnum,
   }),
   z.object({
     action: z.literal("assign_cs"),
@@ -112,16 +99,6 @@ export async function POST(req: Request) {
       const { error } = await service
         .from("participants")
         .update({ archived_at: archivedAt })
-        .in("id", allowedIds);
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-      break;
-    }
-    case "set_status": {
-      const { error } = await service
-        .from("participants")
-        .update({ status: body.status })
         .in("id", allowedIds);
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });

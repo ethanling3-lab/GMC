@@ -10,18 +10,17 @@ import type {
 import { loadEventCohort, type EventCohortRow } from "./event-cohort-query";
 import {
   applyParticipantFilters,
-  applyRoleScope,
   type ParticipantFilters,
 } from "@/lib/participants-query";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 // Audience resolver — returns the (participant × channel) leaves the
-// fan-out will deliver to. Two modes; both end at the same Recipient
-// shape. Strict region gate: a regional_lead's master-tab filter is
-// auto-forced to admin.region; in event-cohort mode, we let them target
-// any event they can already see in /admin/events (the enrolment list is
-// what it is), but we surface an "X out of region" soft warning via
-// excluded_out_of_region.
+// fan-out will deliver to. Two modes; both end at the same Recipient shape.
+//
+// NO ROLE GATE. Any send-capable role resolves the full list in both modes.
+// `excluded_out_of_region` survives as a SOFT SIGNAL only — it is counted and
+// surfaced in the composer so a cross-region send is a visible choice, but it
+// removes nobody. See the note in resolveAudience for the reasoning.
 //
 // Addresses:
 //   - WhatsApp = contact_identifiers (channel='whatsapp', identifier=E.164)
@@ -68,27 +67,29 @@ export async function resolveAudience(
     return { recipients: [], total_matched: 0, excluded_no_address: 0, excluded_out_of_region: 0 };
   }
 
-  const effectiveFilter = applyRegionGate(admin, filter);
-
+  // OUTREACH IS NOT ROLE-SCOPED (decision, 2026-08-11).
+  //
+  // This used to force a regional_lead's audience to their own region and to
+  // narrow a customer_service audience to their assigned participants. Both
+  // gates are gone: any send-capable role may target the full list, because
+  // "who can I reach" and "whose record may I edit" are different questions
+  // and only the second one is a permission.
+  //
+  // The tradeoff is real and accepted — a regional lead can now message
+  // another region. The mitigation is visibility, not prohibition: the
+  // out-of-region count below is still computed and still surfaced in the
+  // composer, so a cross-region send is always a visible choice rather than
+  // an accident.
   const baseRows: BaseRow[] =
-    effectiveFilter.mode === "event_cohort"
-      ? (await loadEventCohort(service, effectiveFilter)).map(eventRowToBase)
-      : await loadParticipantMaster(service, admin, effectiveFilter);
+    filter.mode === "event_cohort"
+      ? (await loadEventCohort(service, filter)).map(eventRowToBase)
+      : await loadParticipantMaster(service, filter);
 
-  // Region gate for event-cohort: regional_lead sees the whole cohort but
-  // we count out-of-region for the soft warning.
   let excluded_out_of_region = 0;
-  let visibleRows = baseRows;
   if (admin.role === "regional_lead" && admin.region) {
-    if (effectiveFilter.mode === "event_cohort") {
-      // Soft-warn count, but keep all rows in the cohort.
-      excluded_out_of_region = baseRows.filter((r) => r.region && r.region !== admin.region).length;
-    } else {
-      // Master mode: strict — already filtered to admin.region above, but
-      // double-defense in case the filter coerce slipped.
-      visibleRows = baseRows.filter((r) => r.region === admin.region);
-    }
+    excluded_out_of_region = baseRows.filter((r) => r.region && r.region !== admin.region).length;
   }
+  const visibleRows = baseRows;
 
   // Resolve addresses. WhatsApp via contact_identifiers join; email from
   // the participant row we already have.
@@ -182,42 +183,35 @@ function eventRowToBase(r: EventCohortRow): BaseRow {
   };
 }
 
-function applyRegionGate(admin: AdminContext, filter: AudienceFilter): AudienceFilter {
-  if (filter.mode !== "participant_master") return filter;
-  if (admin.role !== "regional_lead" || !admin.region) return filter;
-  // Strict gate: force the lead's region regardless of what was sent.
-  return { ...filter, region: admin.region } as ParticipantMasterFilter;
-}
-
 async function loadParticipantMaster(
   service: SupabaseClient,
-  admin: AdminContext,
   filter: ParticipantMasterFilter,
 ): Promise<BaseRow[]> {
-  // Reuse participants-query.ts filters + role-scope. We translate the
-  // master filter shape into ParticipantFilters where it overlaps.
+  // Reuse participants-query.ts filters. We translate the master filter shape
+  // into ParticipantFilters where it overlaps.
+  //
+  // `identity: "all"` is REQUIRED here, not cosmetic. Leaving it unset would
+  // take applyParticipantFilters' roster default of verified-only, which would
+  // silently drop every WhatsApp-only contact from every broadcast — the exact
+  // behaviour the lifecycle enum had and the reason it was dropped.
   const pf: ParticipantFilters = {
     q: undefined,
     region: filter.region ?? undefined,
-    status: filter.status && filter.status.length === 1 ? filter.status[0] : undefined,
+    identity: "all",
     motivation: filter.motivation ?? undefined,
     sort: "recent",
-    archived: "active",
+    archived: filter.include_archived ? "all" : "active",
   };
 
   let query = service
     .from("participants")
     .select(
-      "id, name_cn, name_en, region_id, region, email, phone, language_fluency, status, is_old_student, archived_at, assigned_cs_id, motivation_tag, financial_score, influence_score",
+      "id, name_cn, name_en, region_id, region, email, phone, language_fluency, is_old_student, archived_at, assigned_cs_id, motivation_tag, financial_score, influence_score",
     )
     .limit(5000);
   query = applyParticipantFilters(query, pf);
-  query = applyRoleScope(query, admin.role, admin.id, admin.region);
-
-  // Multi-status filter (participants-query.ts only supports single).
-  if (filter.status && filter.status.length > 1) {
-    query = query.in("status", filter.status);
-  }
+  // NB: no applyRoleScope here — see the note in resolveAudience. Outreach
+  // reaches everyone; role scoping governs record editing, not reachability.
 
   // Master-tab-specific filters not covered by ParticipantFilters:
   // programme filter value is a programme SLUG — resolve to the programme FK.
@@ -235,12 +229,20 @@ async function loadParticipantMaster(
   }
   if (filter.is_old_student !== null) query = query.eq("is_old_student", filter.is_old_student);
 
-  // Email-required pre-filter (a cheap reducer before address resolution).
-  // We don't pre-filter on WhatsApp because the address lives in
-  // contact_identifiers, not participants.
-  if (filter.require_any_of_channels?.length === 1 && filter.require_any_of_channels[0] === "email") {
-    query = query.not("email", "is", null);
-  }
+  // NO channel pre-filter here, deliberately.
+  //
+  // This used to drop `email is null` rows when email was the only channel,
+  // as "a cheap reducer before address resolution". The saving was negligible
+  // and the cost was a dishonest preview: those rows never reached the
+  // address-resolution loop in resolveAudience, so they were missing from
+  // `total_matched` AND absent from `excluded_no_address`. A 436-person
+  // audience with 32 unreachable people reported "404 matched · 0 no address"
+  // — a silent exclusion that reads as complete coverage, which is the exact
+  // failure mode the lifecycle-filter removal was about.
+  //
+  // Reachability is now decided in ONE place (the address loop), so every
+  // person is either a recipient or a counted exclusion. Never re-add a
+  // channel filter to this query.
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -314,7 +316,7 @@ export function buildAudienceSummary(filter: AudienceFilter, eventTitle?: string
   }
   const pieces: string[] = [];
   if (filter.region) pieces.push(filter.region);
-  if (filter.status?.length) pieces.push(filter.status.join("+"));
+  if (filter.include_archived) pieces.push("incl. archived");
   if (filter.motivation) pieces.push(filter.motivation);
   if (filter.programme_tier) pieces.push(filter.programme_tier);
   if (filter.is_old_student === true) pieces.push("old students");

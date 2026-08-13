@@ -5,28 +5,21 @@ import type { AdminContext } from "@/lib/admin-guard";
 // Inbox list-query helper. URL-driven filters + role-scope + q-search, mirroring
 // the pattern from `src/lib/participants-query.ts` (per feedback_list_query_pattern).
 
-export type ParticipantLifecycle =
-  | "lead"
-  | "new"
-  | "info_verified"
-  | "cs_enriched"
-  | "active"
-  | "inactive";
+// Replaces the six-value participant lifecycle filter, dropped in 053.
+// "Unverified" is the one distinction the inbox actually worked with: it marks
+// a thread from a number nobody has linked to a real person yet.
+export type IdentityConfidence = "unverified" | "verified";
 
-export const PARTICIPANT_LIFECYCLE_VALUES: readonly ParticipantLifecycle[] = [
-  "lead",
-  "new",
-  "info_verified",
-  "cs_enriched",
-  "active",
-  "inactive",
+export const IDENTITY_CONFIDENCE_VALUES: readonly IdentityConfidence[] = [
+  "unverified",
+  "verified",
 ] as const;
 
 export type InboxListFilters = {
   scope: "mine" | "unassigned" | "all";
-  channel: "whatsapp" | "line" | "email" | null;
+  channel: "whatsapp" | "email" | null;
   status: "open" | "pending" | "snoozed" | "closed" | null;
-  lifecycle: ParticipantLifecycle | null;
+  identity: IdentityConfidence | null;
   tag: string | null;
   q: string;
   admin_id: string;
@@ -49,7 +42,7 @@ export type ConversationListRow = {
     name_en: string | null;
     name_cn: string | null;
     region: string | null;
-    status: string;
+    identity_confidence: string;
     email: string | null;
     phone: string | null;
     language_fluency: string | null;
@@ -71,7 +64,7 @@ export function parseFilters(
 
   const channelRaw = typeof sp.channel === "string" ? sp.channel : "";
   const channel =
-    channelRaw === "whatsapp" || channelRaw === "line" || channelRaw === "email"
+    channelRaw === "whatsapp" || channelRaw === "email"
       ? (channelRaw as InboxListFilters["channel"])
       : null;
 
@@ -84,11 +77,9 @@ export function parseFilters(
       ? (statusRaw as InboxListFilters["status"])
       : null;
 
-  const lifecycleRaw = typeof sp.lifecycle === "string" ? sp.lifecycle : "";
-  const lifecycle = (PARTICIPANT_LIFECYCLE_VALUES as readonly string[]).includes(
-    lifecycleRaw,
-  )
-    ? (lifecycleRaw as ParticipantLifecycle)
+  const identityRaw = typeof sp.identity === "string" ? sp.identity : "";
+  const identity = (IDENTITY_CONFIDENCE_VALUES as readonly string[]).includes(identityRaw)
+    ? (identityRaw as IdentityConfidence)
     : null;
 
   const tagRaw = (typeof sp.tag === "string" ? sp.tag : "").trim().slice(0, 40);
@@ -96,7 +87,7 @@ export function parseFilters(
 
   const q = (typeof sp.q === "string" ? sp.q : "").trim().slice(0, 120);
 
-  return { scope, channel, status, lifecycle, tag, q, admin_id: admin.id };
+  return { scope, channel, status, identity, tag, q, admin_id: admin.id };
 }
 
 export async function loadConversations(
@@ -125,35 +116,35 @@ export async function loadConversations(
     if (participantIdsForQ.length === 0) return [];
   }
 
-  // Lifecycle filter (sub-nav "Lifecycle" section) resolves the same way —
-  // grab participant IDs whose status matches, then intersect with q-results.
-  let participantIdsForLifecycle: string[] | null = null;
-  if (filters.lifecycle) {
+  // Identity filter (sub-nav) resolves the same way — grab participant IDs
+  // whose confidence matches, then intersect with q-results.
+  let participantIdsForIdentity: string[] | null = null;
+  if (filters.identity) {
     const { data: pRows } = await supabase
       .from("participants")
       .select("id")
-      .eq("status", filters.lifecycle)
+      .eq("identity_confidence", filters.identity)
       .limit(5000);
-    participantIdsForLifecycle = (pRows ?? []).map((r) => r.id as string);
-    if (participantIdsForLifecycle.length === 0) return [];
+    participantIdsForIdentity = (pRows ?? []).map((r) => r.id as string);
+    if (participantIdsForIdentity.length === 0) return [];
   }
 
-  // Intersect q + lifecycle ID lists if both were applied.
+  // Intersect q + identity ID lists if both were applied.
   let participantIds: string[] | null = participantIdsForQ;
-  if (participantIdsForLifecycle) {
+  if (participantIdsForIdentity) {
     if (participantIdsForQ) {
       const qSet = new Set(participantIdsForQ);
-      participantIds = participantIdsForLifecycle.filter((id) => qSet.has(id));
+      participantIds = participantIdsForIdentity.filter((id) => qSet.has(id));
       if (participantIds.length === 0) return [];
     } else {
-      participantIds = participantIdsForLifecycle;
+      participantIds = participantIdsForIdentity;
     }
   }
 
   let query = supabase
     .from("conversations")
     .select(
-      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, status, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
+      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
     )
     .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(200);
@@ -201,7 +192,7 @@ export async function loadStatusCounts(
 export async function loadChannelCounts(
   supabase: SupabaseClient,
   filters: Pick<InboxListFilters, "scope" | "admin_id">,
-): Promise<{ whatsapp: number; line: number }> {
+): Promise<{ whatsapp: number }> {
   // Channel counts respect the active scope so the sidebar reads consistently
   // with whatever scope tab is selected.
   const base = () => {
@@ -210,11 +201,8 @@ export async function loadChannelCounts(
     else if (filters.scope === "unassigned") q = q.is("assigned_to", null);
     return q;
   };
-  const [wa, line] = await Promise.all([
-    base().eq("channel", "whatsapp"),
-    base().eq("channel", "line"),
-  ]);
-  return { whatsapp: wa.count ?? 0, line: line.count ?? 0 };
+  const [wa] = await Promise.all([base().eq("channel", "whatsapp")]);
+  return { whatsapp: wa.count ?? 0 };
 }
 
 export async function loadConversationDetail(
@@ -228,7 +216,7 @@ export async function loadConversationDetail(
   const { data: conv, error: convErr } = await supabase
     .from("conversations")
     .select(
-      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, status, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
+      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
     )
     .eq("id", id)
     .maybeSingle();

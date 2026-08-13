@@ -411,7 +411,7 @@ async function insertParticipants(
       zu_zhang_dimensions: d.zu_zhang_dimensions,
       zu_zhang_core_traits: d.zu_zhang_core_traits,
       cs_notes: d.cs_notes,
-      status: "active",
+      identity_confidence: "verified",
     }));
     const { data, error } = await client
       .from("participants")

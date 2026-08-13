@@ -36,7 +36,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
   const supabase = await createSupabaseServerClient();
 
   const baseSelect =
-    "id, region_id, name_cn, name_en, region, email, status, financial_score, influence_score, student_qualification, motivation_tag, archived_at, created_at";
+    "id, region_id, name_cn, name_en, region, email, identity_confidence, financial_score, influence_score, student_qualification, motivation_tag, archived_at, created_at";
 
   // Filtered + scoped query
   let q = supabase.from("participants").select(baseSelect, { count: "exact" });
@@ -163,7 +163,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         rows={rows}
         adminRole={admin.role}
         hasFilters={Boolean(
-          filters.q || filters.region || filters.status || filters.motivation,
+          filters.q || filters.region || filters.identity || filters.motivation,
         )}
         customerService={customerService}
       />
