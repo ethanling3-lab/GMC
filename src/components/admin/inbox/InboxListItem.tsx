@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { MouseEvent } from "react";
 import type { ConversationListRow } from "@/lib/inbox/inbox-query";
+import { UnreadBadge } from "./UnreadBadge";
 import {
   CONVERSATION_STATUS_LABEL,
   CONVERSATION_STATUS_TONE,
@@ -28,10 +29,14 @@ import { useSelectionOptional } from "./selection/SelectionContext";
 export function InboxListItem({
   row,
   activePath,
+  filterQuery = "",
   compact = false,
 }: {
   row: ConversationListRow;
   activePath?: string;
+  /** Active filters as a query string, carried onto the thread link so the
+   *  list keeps its scope when a thread is opened. See filtersToQuery. */
+  filterQuery?: string;
   compact?: boolean;
 }) {
   const isActive = activePath === `/admin/inbox/${row.id}`;
@@ -53,6 +58,7 @@ export function InboxListItem({
       isSelected={isSelected}
       isFocused={isFocused}
       anySelected={anySelected}
+      filterQuery={filterQuery}
       onCheckboxClick={onCheckboxClick}
     />
   ) : (
@@ -62,6 +68,7 @@ export function InboxListItem({
       isSelected={isSelected}
       isFocused={isFocused}
       anySelected={anySelected}
+      filterQuery={filterQuery}
       onCheckboxClick={onCheckboxClick}
     />
   );
@@ -73,6 +80,7 @@ type RowProps = {
   isSelected: boolean;
   isFocused: boolean;
   anySelected: boolean;
+  filterQuery: string;
   onCheckboxClick: (e: MouseEvent<HTMLButtonElement>) => void;
 };
 
@@ -86,12 +94,16 @@ function CompactItem({
   isSelected,
   isFocused,
   anySelected,
+  filterQuery,
   onCheckboxClick,
 }: RowProps) {
   const p = row.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
   const isLead = p?.identity_confidence === "unverified";
+  // Opening a thread marks it read, so an active row never shows as unread —
+  // otherwise the badge lingers for the length of the router transition.
+  const unread = isActive ? 0 : row.unread_count;
 
   // Selection state takes visual priority over the active-thread tint so
   // bulk operations stay legible.
@@ -106,7 +118,7 @@ function CompactItem({
       {isFocused ? <FocusRing /> : null}
       {isSelected ? <SelectedEdge /> : null}
       <Link
-        href={`/admin/inbox/${row.id}`}
+        href={`/admin/inbox/${row.id}${filterQuery}`}
         aria-current={isActive ? "page" : undefined}
         className={[
           "relative flex items-center gap-3 px-3 py-3",
@@ -130,22 +142,38 @@ function CompactItem({
               className={[
                 "truncate leading-[1.25]",
                 hasRealName
-                  ? "font-display text-[13.5px] text-[var(--ink)] tracking-[-0.005em]"
-                  : "font-mono text-[12px] text-[var(--ink-soft)]",
+                  ? "font-display text-[13.5px] tracking-[-0.005em]"
+                  : "font-mono text-[12px]",
+                unread > 0
+                  ? "font-semibold text-[var(--ink)]"
+                  : hasRealName
+                    ? "text-[var(--ink)]"
+                    : "text-[var(--ink-soft)]",
               ].join(" ")}
             >
               {displayName}
             </span>
-            <span className="flex-none text-[10px] tracking-[0.02em] text-[var(--ink-faint)] tabular-nums">
+            <span
+              className={[
+                "flex-none text-[10px] tracking-[0.02em] tabular-nums",
+                unread > 0 ? "text-[var(--cinnabar-deep)]" : "text-[var(--ink-faint)]",
+              ].join(" ")}
+            >
               {timeAgo(row.last_message_at)}
             </span>
           </div>
           <div className="mt-0.5 flex items-center gap-1.5">
-            <span className="flex-1 min-w-0 truncate text-[11.5px] text-[var(--ink-mute)] leading-[1.4]">
+            <span
+              className={[
+                "flex-1 min-w-0 truncate text-[11.5px] leading-[1.4]",
+                unread > 0 ? "text-[var(--ink-soft)]" : "text-[var(--ink-mute)]",
+              ].join(" ")}
+            >
               {row.last_message_preview?.trim() || (
                 <span className="text-[var(--ink-faint)] italic">No messages yet</span>
               )}
             </span>
+            {unread > 0 ? <UnreadBadge count={unread} /> : null}
             {isLead ? (
               <span className="flex-none text-[8.5px] tracking-[0.18em] uppercase text-[var(--gold-deep,var(--ink-mute))] bg-[var(--gold-soft)] border border-[var(--gold)]/40 rounded-[var(--radius-pill)] px-1 py-px">
                 Unverified
@@ -168,6 +196,7 @@ function CardedItem({
   isSelected,
   isFocused,
   anySelected,
+  filterQuery,
   onCheckboxClick,
 }: RowProps) {
   const p = row.participant;
@@ -177,6 +206,7 @@ function CardedItem({
   const isLead = p?.identity_confidence === "unverified";
   const statusLabel = CONVERSATION_STATUS_LABEL[row.status]?.en ?? row.status;
   const statusTone = CONVERSATION_STATUS_TONE[row.status] ?? "neutral";
+  const unread = isActive ? 0 : row.unread_count;
   const assignedName =
     row.assigned_admin?.name_en ?? row.assigned_admin?.name_cn ?? null;
 
@@ -190,7 +220,7 @@ function CardedItem({
     <li data-inbox-row-id={row.id} className="group/row relative">
       {isFocused ? <FocusRing rounded /> : null}
       <Link
-        href={`/admin/inbox/${row.id}`}
+        href={`/admin/inbox/${row.id}${filterQuery}`}
         aria-current={isActive ? "page" : undefined}
         className={[
           "relative flex items-center gap-4 px-4 py-3.5 rounded-[var(--radius-md)]",
@@ -218,10 +248,11 @@ function CardedItem({
             <span
               className={`text-[13.5px] text-[var(--ink)] truncate leading-[1.3] ${
                 hasRealName ? "" : "font-mono text-[12.5px] text-[var(--ink-soft)]"
-              }`}
+              } ${unread > 0 ? "font-semibold" : ""}`}
             >
               {displayName}
             </span>
+            {unread > 0 ? <UnreadBadge count={unread} /> : null}
             {isLead ? (
               <span className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/40 bg-[var(--gold-soft)] text-[9px] tracking-[0.22em] uppercase text-[var(--ink)]">
                 Unverified

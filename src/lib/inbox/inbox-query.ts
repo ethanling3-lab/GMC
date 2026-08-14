@@ -36,6 +36,8 @@ export type ConversationListRow = {
   last_message_preview: string | null;
   participant_id: string;
   ai_enabled: boolean;
+  /** Inbound messages since this admin's last_read_at. 0 when fully read. */
+  unread_count: number;
   participant: {
     id: string;
     region_id: string | null;
@@ -163,7 +165,48 @@ export async function loadConversations(
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as ConversationListRow[];
+
+  const rows = (data ?? []) as unknown as ConversationListRow[];
+  return attachUnreadCounts(supabase, rows);
+}
+
+/**
+ * Merges per-admin unread counts onto conversation rows.
+ *
+ * `conversation_reads` and MarkReadOnMount have written this cursor since 014;
+ * nothing ever read it back ("Wave 2b will drive unread badges" — Wave 2b never
+ * shipped). This is that missing half.
+ *
+ * One RPC rather than a join because PostgREST cannot express "count child rows
+ * newer than a value from a second child table" in embedded-resource syntax.
+ * The RPC returns only conversations with unread > 0, so the payload tracks
+ * what is unread rather than how big the inbox is.
+ *
+ * A failure here degrades to zeroes instead of throwing: a broken badge must
+ * never take down the inbox itself. It is logged, not swallowed silently —
+ * that distinction is the whole point of this phase.
+ */
+async function attachUnreadCounts(
+  supabase: SupabaseClient,
+  rows: ConversationListRow[],
+): Promise<ConversationListRow[]> {
+  if (rows.length === 0) return rows;
+
+  const { data, error } = await supabase.rpc("unread_conversation_counts");
+  if (error) {
+    console.warn("[inbox] unread counts unavailable:", error.message);
+    return rows.map((r) => ({ ...r, unread_count: 0 }));
+  }
+
+  const byId = new Map<string, number>();
+  for (const row of (data ?? []) as Array<{
+    conversation_id: string;
+    unread_count: number;
+  }>) {
+    byId.set(row.conversation_id, row.unread_count);
+  }
+
+  return rows.map((r) => ({ ...r, unread_count: byId.get(r.id) ?? 0 }));
 }
 
 export async function loadStatusCounts(
@@ -258,7 +301,9 @@ export async function loadConversationDetail(
     }));
 
   return {
-    conversation: conv as unknown as ConversationListRow,
+    // unread_count is 0 by definition here: opening the thread is what marks
+    // it read (MarkReadOnMount). Nothing in the detail view renders a badge.
+    conversation: { ...(conv as unknown as ConversationListRow), unread_count: 0 },
     messages: (msgs ?? []) as unknown as ThreadMessageRow[],
     enrollments,
   };

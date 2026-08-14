@@ -41,6 +41,7 @@ export type AuditAction =
   | "inbox.ai_replied"
   | "inbox.ai_handoff"
   | "inbox.ai_enabled_changed"
+  | "ai.settings_changed"
   | "inbox.message_received"
   | "inbox.message_sent"
   | "inbox.template_sent"

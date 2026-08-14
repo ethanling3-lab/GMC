@@ -5,6 +5,7 @@ import { resolveIdentity } from "./identity";
 import { getAdapter, type ChannelKey } from "./channels";
 import type { ParsedInboundMessage, ParsedWebhookResult } from "./channels/adapter";
 import { runTier1Reply } from "./ai/tier1";
+import { notifyAdmins } from "@/lib/notifications/admin-alerts";
 
 // Channel-agnostic inbound pipeline. Call from each webhook route after
 // signature verification. Idempotent: the same webhook payload can be
@@ -202,6 +203,23 @@ async function processInboundMessage(
     },
   });
 
+  // 6b. Alert staff that something arrived.
+  //
+  // Fires for EVERY inbound, including one the AI is about to answer: an AI
+  // reply is not the same as a human having seen it, and the AI may hand off
+  // mid-thread. Deduped per conversation inside notifyAdmins so a burst of
+  // messages is one alert. Awaited but never throws — see admin-alerts.ts.
+  await notifyAdmins({
+    kind: "new_inbound",
+    conversationId,
+    messageId: messageInsert.data.id as string,
+    payload: {
+      channel,
+      preview,
+      auto_created_participant: identity.created,
+    },
+  });
+
   // 7. If AI is enabled on this conversation and the message is plain text
   //    (no attachments — Tier 1 doesn't handle media), fire the Tier 1
   //    responder. Runs inline — Meta's webhook timeout is generous enough
@@ -210,7 +228,7 @@ async function processInboundMessage(
   if (storedAttachments.length === 0 && msg.body_text && msg.body_text.trim()) {
     const { data: conv } = await service
       .from("conversations")
-      .select("ai_enabled, participant:participants(language_fluency)")
+      .select("ai_enabled, participant:participants(language_fluency, region)")
       .eq("id", conversationId)
       .maybeSingle();
     if (conv?.ai_enabled) {
@@ -222,6 +240,10 @@ async function processInboundMessage(
       ) as string | null;
       const participantLang: string | null =
         fluency === "cn" || fluency === "both" ? "zh" : fluency === "en" ? "en" : null;
+      // Region selects the per-region ai_settings row, if one exists, so a
+      // single region can be paused without stopping the whole system.
+      const participantRegion =
+        (conv as { participant?: { region?: string | null } | null }).participant?.region ?? null;
       try {
         await runTier1Reply({
           conversationId,
@@ -229,6 +251,7 @@ async function processInboundMessage(
           participantLanguage:
             participantLang === "zh" ? "zh" : participantLang === "en" ? "en" : null,
           inboundText: msg.body_text,
+          participantRegion,
         });
       } catch (err) {
         // Failure inside Tier 1 already handoffs the conversation; here we
@@ -390,11 +413,51 @@ async function applyStatusUpdate(
   if (s.status === "read") update.read_at = s.timestamp ?? new Date().toISOString();
   if (s.status === "failed") update.error_message = s.error ?? "unknown";
 
+  // A send that Meta accepts and then fails asynchronously is still a failed
+  // send. Only the synchronous path in send.ts raised the D10 alert, but the
+  // errors that matter most arrive here instead: the 24h re-engagement block,
+  // an invalid number, a paused template. Those flipped the row to `failed`,
+  // wrote the reason, and told nobody — the exact silence D10 set out to end,
+  // surviving in the path nobody looked at. Found in QA: a composer send was
+  // audit-logged `sent`, showed FAILED "Re-engagement message" in the thread,
+  // and produced no alert.
+  //
+  // Read the prior status only for failures (rare) — status webhooks fire
+  // sent/delivered/read for every message and an extra query on each is not
+  // worth paying. Meta retries webhooks, so alerting on an already-failed row
+  // would repeat the alert for one failure.
+  let wasAlreadyFailed = false;
+  if (s.status === "failed") {
+    const { data: prior } = await service
+      .from("messages")
+      .select("delivery_status")
+      .eq("channel", s.channel)
+      .eq("external_message_id", s.external_message_id)
+      .maybeSingle();
+    wasAlreadyFailed = prior?.delivery_status === "failed";
+  }
+
   const res = await service
     .from("messages")
     .update(update)
     .eq("channel", s.channel)
     .eq("external_message_id", s.external_message_id)
-    .select("id");
-  return (res.data ?? []).length > 0;
+    .select("id, conversation_id");
+
+  const rows = (res.data ?? []) as Array<{ id: string; conversation_id: string }>;
+
+  if (s.status === "failed" && !wasAlreadyFailed && rows.length > 0) {
+    await notifyAdmins({
+      kind: "send_failed",
+      conversationId: rows[0].conversation_id,
+      messageId: rows[0].id,
+      payload: {
+        channel: s.channel,
+        error: s.error ?? null,
+        async: true,
+      },
+    });
+  }
+
+  return rows.length > 0;
 }

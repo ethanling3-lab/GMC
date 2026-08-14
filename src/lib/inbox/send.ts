@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
 import { assertNoUnresolvedTokens } from "@/lib/outbound-tokens";
+import { notifyAdmins } from "@/lib/notifications/admin-alerts";
 import { getAdapter, type ChannelKey } from "./channels";
 import { findTemplate } from "./whatsapp-templates";
 import {
@@ -271,6 +272,27 @@ async function sendSingle(args: {
     bodyText,
     status: finalised.newStatus,
   });
+
+  // THE D10 FIX. Every Tier 1 reply failed with 401/190 for two months — the
+  // rows were stamped `failed` with the error text sitting right there, and
+  // nobody was told. A failed send is now an alert, not a database row waiting
+  // to be noticed by someone who happens to open the right thread.
+  //
+  // Not throttled: unlike a burst of inbound messages, each failure is its own
+  // fact, and a run of them is exactly the signal worth seeing.
+  if (finalised.newStatus === "failed") {
+    await notifyAdmins({
+      kind: "send_failed",
+      conversationId,
+      messageId: pending.id as string,
+      payload: {
+        channel,
+        error: result.error ?? null,
+        error_code: finalised.errorCode,
+        template_name: templateMeta?.name ?? null,
+      },
+    });
+  }
 
   return {
     messageId: pending.id as string,

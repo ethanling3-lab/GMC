@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useBreadcrumbLabels } from "./BreadcrumbContext";
+import { NotificationBell } from "./NotificationBell";
 
 const CRUMB_LABELS: Record<string, string> = {
   admin: "Workspace",
@@ -269,37 +270,8 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
         </span>
       </button>
 
-      {/* Notifications */}
-      <button
-        type="button"
-        aria-label="Notifications"
-        title="Notifications (coming in M7)"
-        className="relative inline-flex items-center justify-center w-8 h-8 rounded-full
-                   text-[var(--ink-mute)] hover:text-[var(--cinnabar)]
-                   hover:bg-[var(--cinnabar-wash)]
-                   focus-visible:shadow-[var(--shadow-focus)]
-                   transition-[background-color,color] duration-[var(--dur-fast)]"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 14 14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M3.5 10V7a3.5 3.5 0 1 1 7 0v3l1 1.3H2.5L3.5 10z" />
-          <path d="M5.7 11.8a1.3 1.3 0 0 0 2.6 0" />
-        </svg>
-        <span
-          className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[var(--cinnabar)]
-                     shadow-[0_0_0_2px_var(--paper-warm)]"
-          aria-hidden="true"
-        />
-      </button>
+      {/* Notifications — real, backed by admin_notifications (migration 054) */}
+      <NotificationBell />
 
       <Separator />
 

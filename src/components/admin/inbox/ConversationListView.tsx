@@ -82,6 +82,7 @@ export function ConversationListView({
                     key={row.id}
                     row={row}
                     activePath={activePath}
+                    filterQuery={filtersToQuery(filters)}
                     compact
                   />
                 ))}
@@ -116,7 +117,12 @@ export function ConversationListView({
         ) : (
           <ul className="flex flex-col gap-1.5">
             {rows.map((row) => (
-              <InboxListItem key={row.id} row={row} activePath={activePath} />
+              <InboxListItem
+                key={row.id}
+                row={row}
+                activePath={activePath}
+                filterQuery={filtersToQuery(filters)}
+              />
             ))}
           </ul>
         )}
@@ -297,9 +303,18 @@ function ActiveFilterStrip({
   );
 }
 
-function makeHref(
+/**
+ * The active filters as a query string, `""` when everything is at default.
+ *
+ * Split out of makeHref because two different base paths need it: the filter
+ * links (/admin/inbox) and the per-thread links (/admin/inbox/<id>). The thread
+ * links used to be built bare, so opening a thread from ?scope=all dropped the
+ * query and the list silently reverted to "Mine" — parseFilters defaults an
+ * absent scope to "mine", and the @list slot reads the URL on every navigation.
+ */
+export function filtersToQuery(
   filters: InboxListFilters,
-  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "identity" | "tag" | "q">>,
+  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "identity" | "tag" | "q">> = {},
 ): string {
   const next = {
     scope: filters.scope,
@@ -318,7 +333,14 @@ function makeHref(
   if (next.tag) params.set("tag", next.tag);
   if (next.q) params.set("q", next.q);
   const qs = params.toString();
-  return qs ? `/admin/inbox?${qs}` : "/admin/inbox";
+  return qs ? `?${qs}` : "";
+}
+
+function makeHref(
+  filters: InboxListFilters,
+  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "identity" | "tag" | "q">>,
+): string {
+  return `/admin/inbox${filtersToQuery(filters, patch)}`;
 }
 
 function EmptyState({

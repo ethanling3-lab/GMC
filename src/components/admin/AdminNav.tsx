@@ -11,6 +11,7 @@ type NavItem = {
 };
 
 type IconName =
+  | "ai"
   | "overview"
   | "participants"
   | "events"
@@ -25,6 +26,7 @@ const PRIMARY: NavItem[] = [
   { href: "/admin", label: "Overview", labelZh: "概览", icon: "overview" },
   { href: "/admin/inbox", label: "Inbox", labelZh: "收件箱", icon: "inbox" },
   { href: "/admin/broadcasts", label: "Broadcasts", labelZh: "群发", icon: "broadcasts" },
+  { href: "/admin/ai", label: "AI", labelZh: "AI 助手", icon: "ai" },
   { href: "/admin/participants", label: "Participants", labelZh: "学员", icon: "participants" },
   { href: "/admin/events", label: "Events", labelZh: "活动", icon: "events" },
   { href: "/admin/group-reports", label: "Group reports", labelZh: "小组报告", icon: "reports" },
@@ -83,6 +85,14 @@ function NavIcon({ name }: { name: IconName }) {
           <rect x="2.5" y="3.5" width="11" height="10" rx="1.4" />
           <path d="M2.5 6.5h11" />
           <path d="M5.5 2v3M10.5 2v3" />
+        </svg>
+      );
+    case "ai":
+      // A spark, not a robot — this is a control surface, not a mascot.
+      return (
+        <svg {...common}>
+          <path d="M8 2.2l1.5 3.6 3.6 1.5-3.6 1.5L8 12.4 6.5 8.8 2.9 7.3l3.6-1.5z" />
+          <path d="M12.6 11.4l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5z" />
         </svg>
       );
     case "inbox":

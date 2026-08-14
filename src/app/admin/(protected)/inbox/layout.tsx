@@ -1,5 +1,6 @@
 import { SelectionProvider } from "@/components/admin/inbox/selection/SelectionContext";
 import { InboxKeyboardHost } from "@/components/admin/inbox/selection/InboxKeyboardHost";
+import { RealtimeInboxProvider } from "@/components/admin/inbox/RealtimeInboxProvider";
 
 // Inbox layout — composes three parallel slots/children:
 //   [ sidebar 260px ] [ list 320px (xl+) ] [ children fills rest ]
@@ -30,6 +31,10 @@ export default function InboxLayout({
   return (
     <SelectionProvider>
       <InboxKeyboardHost />
+      {/* Mounted at layout level so the subscription survives soft-nav between
+          the inbox root and individual threads — remounting per page would
+          drop and re-establish the websocket on every thread open. */}
+      <RealtimeInboxProvider />
       <div
         className="mx-[calc(var(--admin-gutter-x)*-1)] my-[calc(var(--admin-gutter-y)*-1)]
                    flex h-[calc(100dvh-4rem)] min-h-0"

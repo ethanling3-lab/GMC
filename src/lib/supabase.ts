@@ -1,13 +1,14 @@
-import { createBrowserClient, createServerClient } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
-export function createSupabaseBrowserClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  );
-}
+// SERVER-SIDE CLIENTS ONLY. This module imports next/headers at module scope,
+// so importing it from a "use client" component breaks `next build` — and only
+// `next build`, not dev and not tsc.
+//
+// The browser client deliberately does NOT live here and is NOT re-exported
+// from here; a re-export would drag next/headers in just the same. It is in
+// src/lib/supabase-browser.ts. Do not add it back.
 
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();

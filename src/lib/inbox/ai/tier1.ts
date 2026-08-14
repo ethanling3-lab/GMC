@@ -2,6 +2,9 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
+import { notifyAdmins } from "@/lib/notifications/admin-alerts";
+import { assertTier1Allowed } from "@/lib/ai/limits";
+import { estimateRunCostCents } from "@/lib/ai/pricing";
 import { getAdapter, type ChannelKey } from "../channels";
 import { TIER1_TOOLS, runTier1Tool } from "./tools";
 
@@ -39,6 +42,8 @@ export type Tier1Input = {
   messageId: string; // the inbound message that triggered this run
   participantLanguage: "en" | "zh" | null;
   inboundText: string | null;
+  /** ISO country code — selects the region row in ai_settings, if any. */
+  participantRegion?: string | null;
 };
 
 export type Tier1Result = {
@@ -67,6 +72,26 @@ function buildUserTurn(input: Tier1Input, isFirstReply: boolean): string {
 }
 
 export async function runTier1Reply(input: Tier1Input): Promise<Tier1Result> {
+  // THE GATE. Kill switch, daily spend cap, per-conversation rate — checked
+  // before anything else, so a disabled AI costs a memoised read rather than an
+  // Opus call. Every refusal is logged to ai_runs with a machine-readable
+  // reason, so "why did the AI stop replying" is answerable from data.
+  const gate = await assertTier1Allowed({
+    conversationId: input.conversationId,
+    region: input.participantRegion ?? null,
+  });
+  if (!gate.allowed) {
+    await logAiRun({
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      task: "tier1_reply",
+      model: MODEL,
+      latencyMs: 0,
+      result: { status: "skipped", reason: gate.reason, detail: gate.detail },
+    });
+    return { status: "skipped", reason: gate.reason };
+  }
+
   const client = getClient();
   if (!client) {
     await logAiRun({
@@ -311,6 +336,50 @@ async function handoffConversation(
     entity_id: conversationId,
     metadata: { reason },
   });
+
+  // A handoff used to notify nobody. It set status='pending' and stopped —
+  // which is only a queue if somebody is looking at the queue. The AI deciding
+  // it cannot help is precisely the moment a human needs to know, so it now
+  // rings the bell and leaves a visible marker in the transcript.
+  await notifyAdmins({
+    kind: "ai_handoff",
+    conversationId,
+    payload: { reason },
+  });
+
+  await postSystemNote(
+    service,
+    conversationId,
+    `AI handed this conversation to a human — ${reason}`,
+  );
+}
+
+/**
+ * Writes an internal marker into the thread.
+ *
+ * `sender_type: 'system'` already exists in the message_sender_type enum and
+ * `direction: 'outbound'` with no external_message_id means nothing is sent to
+ * the participant — this is visible to staff only. Without it a handoff is
+ * invisible in the transcript, and the next person to open the thread cannot
+ * tell whether the AI stopped on purpose or simply broke.
+ */
+async function postSystemNote(
+  service: ReturnType<typeof createSupabaseServiceClient>,
+  conversationId: string,
+  text: string,
+): Promise<void> {
+  const { error } = await service.from("messages").insert({
+    conversation_id: conversationId,
+    direction: "outbound",
+    channel: "whatsapp",
+    sender_type: "system",
+    body_text: text,
+    delivery_status: "sent",
+    sent_at: new Date().toISOString(),
+  });
+  if (error) {
+    console.warn("[tier1] system note insert failed: %s", error.message);
+  }
 }
 
 type AiRunLog = {
@@ -328,6 +397,21 @@ type AiRunLog = {
 
 async function logAiRun(entry: AiRunLog): Promise<void> {
   const service = createSupabaseServiceClient();
+
+  // Cost is computed here, at write time, from the tokens this run actually
+  // used and the price of the model that actually ran. Stored rather than
+  // derived on read so a future price change never rewrites history — and so
+  // the daily cap is a cheap sum instead of a join against a pricing table.
+  //
+  // Null when the model has no entry in MODEL_PRICING. pricing.ts refuses to
+  // guess; the /admin/ai page surfaces unpriced runs so the gap is visible.
+  const costCents = estimateRunCostCents(entry.model, {
+    inputTokens: entry.tokensIn ?? 0,
+    outputTokens: entry.tokensOut ?? 0,
+    cacheReadTokens: entry.cacheReads ?? 0,
+    cacheCreationTokens: entry.cacheCreates ?? 0,
+  });
+
   await service.from("ai_runs").insert({
     conversation_id: entry.conversationId,
     message_id: entry.messageId,
@@ -338,6 +422,7 @@ async function logAiRun(entry: AiRunLog): Promise<void> {
     cache_read_tokens: entry.cacheReads ?? 0,
     cache_creation_tokens: entry.cacheCreates ?? 0,
     latency_ms: entry.latencyMs,
+    cost_cents: costCents,
     result: entry.result,
   });
 }

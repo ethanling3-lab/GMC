@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createBrowserClient } from "@supabase/ssr";
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 type Props = {
   redirectTo: string;
@@ -31,10 +31,7 @@ export function SetPasswordForm({ redirectTo, linkAfter }: Props) {
     }
     setSubmitting(true);
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      );
+      const supabase = createSupabaseBrowserClient();
       const { error: updErr } = await supabase.auth.updateUser({ password });
       if (updErr) {
         setError(

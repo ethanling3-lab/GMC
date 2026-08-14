@@ -176,7 +176,12 @@ export function InboxKeyboardHost() {
         const id = focusedRef.current;
         if (id) {
           e.preventDefault();
-          router.push(`/admin/inbox/${id}`);
+          // Carry the active filters onto the thread URL, same as clicking a
+          // row does — opening a thread from ?scope=all must not silently
+          // revert the list to "Mine". Read off location rather than
+          // useSearchParams() so this stays out of the render path and needs
+          // no Suspense boundary; we are already inside a keydown handler.
+          router.push(`/admin/inbox/${id}${window.location.search}`);
         }
         return;
       }
