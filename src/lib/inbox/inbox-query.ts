@@ -1,6 +1,13 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AdminContext } from "@/lib/admin-guard";
+import {
+  evaluateWindow,
+  describeWindow,
+  WINDOW_COLUMNS,
+  type ConversationWindowRow,
+  type WindowChannel,
+} from "./window";
 
 // Inbox list-query helper. URL-driven filters + role-scope + q-search, mirroring
 // the pattern from `src/lib/participants-query.ts` (per feedback_list_query_pattern).
@@ -255,11 +262,18 @@ export async function loadConversationDetail(
   conversation: ConversationListRow;
   messages: ThreadMessageRow[];
   enrollments: EnrollmentSummary[];
+  /**
+   * Staff-facing reason the free-form composer will refuse, or null when the
+   * 24h window is open. Computed here rather than in the page so the composer
+   * hint and the send.ts pre-flight cannot disagree — both call evaluateWindow.
+   * Returned as prose, not raw columns, so the client never has to re-derive it.
+   */
+  windowNotice: string | null;
 } | null> {
   const { data: conv, error: convErr } = await supabase
     .from("conversations")
     .select(
-      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
+      `id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, ${WINDOW_COLUMNS}, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)`,
     )
     .eq("id", id)
     .maybeSingle();
@@ -300,12 +314,18 @@ export async function loadConversationDetail(
       created_at: e.created_at,
     }));
 
+  const windowState = evaluateWindow(
+    (conv as { channel: string }).channel as WindowChannel,
+    conv as unknown as ConversationWindowRow,
+  );
+
   return {
     // unread_count is 0 by definition here: opening the thread is what marks
     // it read (MarkReadOnMount). Nothing in the detail view renders a badge.
     conversation: { ...(conv as unknown as ConversationListRow), unread_count: 0 },
     messages: (msgs ?? []) as unknown as ThreadMessageRow[],
     enrollments,
+    windowNotice: describeWindow(windowState),
   };
 }
 

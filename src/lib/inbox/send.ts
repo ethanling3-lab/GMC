@@ -2,6 +2,13 @@ import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
 import { assertNoUnresolvedTokens } from "@/lib/outbound-tokens";
+import {
+  evaluateWindow,
+  describeWindow,
+  WINDOW_COLUMNS,
+  type ConversationWindowRow,
+  type WindowChannel,
+} from "./window";
 import { notifyAdmins } from "@/lib/notifications/admin-alerts";
 import { getAdapter, type ChannelKey } from "./channels";
 import { findTemplate } from "./whatsapp-templates";
@@ -96,7 +103,7 @@ export async function sendOutboundMessage(
 
   const { data: conv, error: convErr } = await service
     .from("conversations")
-    .select("id, channel, external_thread_id")
+    .select(`id, channel, external_thread_id, ${WINDOW_COLUMNS}`)
     .eq("id", input.conversationId)
     .maybeSingle();
   if (convErr || !conv) {
@@ -121,6 +128,50 @@ export async function sendOutboundMessage(
     assertNoUnresolvedTokens(...Object.values(input.params));
   } else {
     assertNoUnresolvedTokens(input.bodyText);
+  }
+
+  // PRE-FLIGHT: the 24-hour service window.
+  //
+  // Templates are deliberately exempt — a template is the only thing that can
+  // re-open a shut window, so gating them would make the window unrecoverable.
+  //
+  // Before this check, a free-form send to a cold thread always cost a Graph
+  // call that could not succeed: Meta accepts it, then fails it asynchronously
+  // with 131047, and the admin learns from a FAILED bubble. `evaluateWindow` is
+  // the same predicate the composer uses, so the warning and the refusal can
+  // never disagree.
+  if (input.kind !== "template") {
+    const windowState = evaluateWindow(
+      channel as WindowChannel,
+      conv as unknown as ConversationWindowRow,
+    );
+    if (!windowState.open) {
+      const detail = describeWindow(windowState) ?? "The reply window is closed.";
+      // Refused BEFORE any row is written, so the transcript is not littered
+      // with attempts that never left the building. The composer restores the
+      // typed text and flips to template mode off `error_code`, so nothing the
+      // admin wrote is lost. messageId is empty precisely because no message
+      // exists — the alternative was inserting a row solely to have an id.
+      const refusal: SendOutboundResult = {
+        messageId: "",
+        delivery_status: "failed",
+        external_message_id: null,
+        mocked: false,
+        error: detail,
+        error_code:
+          windowState.reason === "marketing_backoff" ? "provider" : "outside_window",
+      };
+      if (input.kind === "media") {
+        return {
+          kind: "media",
+          total: input.attachments.length,
+          sent: 0,
+          failed: input.attachments.length,
+          results: [refusal],
+        };
+      }
+      return refusal;
+    }
   }
 
   if (input.kind === "media") {
@@ -280,6 +331,21 @@ async function sendSingle(args: {
   //
   // Not throttled: unlike a burst of inbound messages, each failure is its own
   // fact, and a run of them is exactly the signal worth seeing.
+  // Meta's verdict overrides our arithmetic. If it rejected this as a
+  // re-engagement message, the window is shut no matter what last_inbound_at
+  // says — a missed inbound webhook or clock skew would otherwise leave us
+  // retrying into a wall. mark_conversation_inbound clears this the moment a
+  // genuinely newer inbound arrives, so it cannot strand a live thread.
+  if (finalised.errorCode === "outside_window") {
+    const { error: markErr } = await service
+      .from("conversations")
+      .update({ window_verified_closed_at: new Date().toISOString() })
+      .eq("id", conversationId);
+    if (markErr) {
+      console.warn("[inbox.send] window_verified_closed_at update failed: %s", markErr.message);
+    }
+  }
+
   if (finalised.newStatus === "failed") {
     await notifyAdmins({
       kind: "send_failed",

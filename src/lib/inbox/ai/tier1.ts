@@ -7,6 +7,20 @@ import { assertTier1Allowed } from "@/lib/ai/limits";
 import { estimateRunCostCents } from "@/lib/ai/pricing";
 import { getAdapter, type ChannelKey } from "../channels";
 import { TIER1_TOOLS, runTier1Tool } from "./tools";
+import {
+  evaluateWindow,
+  WINDOW_COLUMNS,
+  type ConversationWindowRow,
+  type WindowChannel,
+} from "../window";
+
+/** Thrown when the AI is asked to reply into a closed service window. */
+export class WindowClosedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`window_closed:${reason}`);
+    this.name = "WindowClosedError";
+  }
+}
 
 // Tier 1 AI responder — narrow-scope WhatsApp chatbot that answers public
 // event questions and handoffs everything else. Runs a manual Claude tool-
@@ -273,6 +287,27 @@ export async function runTier1Reply(input: Tier1Input): Promise<Tier1Result> {
     );
     return { status: "error", reason: "max_iterations" };
   } catch (err) {
+    // A closed service window is NOT an AI failure, and must not go through
+    // failAndHandoff — that sets ai_enabled=false, which would silence the AI
+    // on this thread permanently because of a state that clears itself the
+    // moment the participant messages again. Log it as a skip, like the kill
+    // switch and the cost cap, and leave the thread exactly as it was.
+    if (err instanceof WindowClosedError) {
+      await logAiRun({
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        task: "tier1_reply",
+        model: MODEL,
+        latencyMs: Date.now() - startedAt,
+        tokensIn,
+        tokensOut,
+        cacheReads,
+        cacheCreates,
+        result: { status: "skipped", reason: "window_closed", detail: err.reason },
+      });
+      return { status: "skipped", reason: "window_closed" };
+    }
+
     const message = err instanceof Error ? err.message : String(err);
     await failAndHandoff(service, input, `exception:${message}`, startedAt, {
       tokensIn,
@@ -441,7 +476,7 @@ async function sendAiReply(
 ): Promise<void> {
   const { data: conv, error: convErr } = await service
     .from("conversations")
-    .select("id, channel, external_thread_id")
+    .select(`id, channel, external_thread_id, ${WINDOW_COLUMNS}`)
     .eq("id", conversationId)
     .maybeSingle();
   if (convErr || !conv) {
@@ -451,6 +486,26 @@ async function sendAiReply(
   }
   const channel = conv.channel as ChannelKey;
   const adapter = getAdapter(channel);
+
+  // The AI is a SECOND arrival path for outbound sends — it does not cross
+  // sendOutboundMessage, so the pre-flight there does not cover it. In normal
+  // operation the window is open by construction (an inbound just opened it),
+  // but that is an assumption about timing, not a guarantee: once ingest moves
+  // into the durable queue a replayed or dead-lettered message can be answered
+  // long after it arrived. Refusing here costs nothing when the window is open
+  // and avoids a doomed Graph call plus a FAILED bubble when it is not.
+  const windowState = evaluateWindow(
+    channel as WindowChannel,
+    conv as unknown as ConversationWindowRow,
+  );
+  if (!windowState.open) {
+    console.warn(
+      "[tier1] refusing to reply on conversation %s: window %s",
+      conversationId,
+      windowState.reason,
+    );
+    throw new WindowClosedError(windowState.reason);
+  }
 
   const { data: pending, error: pendingErr } = await service
     .from("messages")

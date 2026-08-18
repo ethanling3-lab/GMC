@@ -77,6 +77,7 @@ export function MessageComposer({
   defaultTemplateLanguage,
   snippetContext = {},
   snippetLanguage = "en",
+  windowNotice = null,
 }: {
   conversationId: string;
   channel: string;
@@ -90,6 +91,13 @@ export function MessageComposer({
   snippetContext?: SnippetContext;
   /** Which language body to use when inserting a snippet. */
   snippetLanguage?: "en" | "zh";
+  /**
+   * Why a free-form send will be refused, or null when the 24h window is open.
+   * Computed server-side by the same predicate send.ts uses, so the warning and
+   * the refusal can never disagree. Shown BEFORE typing — the whole point is
+   * that nobody writes 200 characters into a thread that cannot receive them.
+   */
+  windowNotice?: string | null;
 }) {
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -456,6 +464,16 @@ export function MessageComposer({
               />
             ) : mediaSummary ? (
               <PartialMediaBanner summary={mediaSummary} />
+            ) : windowNotice ? (
+              // Proactive, not reactive: a send error takes priority when one
+              // exists, but with no error we still warn that free-form will be
+              // refused. Reuses the same banner as the post-send failure so
+              // staff learn one affordance, not two.
+              <ErrorBanner
+                text={windowNotice}
+                code="outside_window"
+                onTemplates={canUseTemplates ? () => setMode("template") : undefined}
+              />
             ) : null
           }
         />

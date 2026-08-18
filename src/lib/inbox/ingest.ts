@@ -189,6 +189,26 @@ async function processInboundMessage(
     })
     .eq("id", conversationId);
 
+  // 6a. Open the 24-hour service window.
+  //
+  // Deliberately an RPC and not part of the update above: the window must move
+  // MONOTONICALLY. Meta retries webhooks for up to 7 days and the durable queue
+  // replays them on purpose, so writing this timestamp directly would let a
+  // stale replay re-open a window that is genuinely shut — after which we would
+  // send free-form into a closed thread and eat a 131047. mark_conversation_inbound
+  // keeps the later of the two and clears a stale verified-closed flag.
+  //
+  // Uses the provider's timestamp, not `now`, for the same reason.
+  const { error: windowErr } = await service.rpc("mark_conversation_inbound", {
+    p_conversation_id: conversationId,
+    p_at: msg.received_at ?? now,
+  });
+  if (windowErr) {
+    // Never fatal. A stale window makes us over-cautious (we offer a template
+    // when free-form would have worked); losing the message would be worse.
+    console.warn("[ingest] mark_conversation_inbound failed: %s", windowErr.message);
+  }
+
   await writeAuditLog({
     actor_id: null,
     action: "inbox.message_received",

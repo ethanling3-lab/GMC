@@ -170,6 +170,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
           <MessageComposer
             conversationId={conversation.id}
             channel={conversation.channel}
+            windowNotice={detail.windowNotice}
             disabled={conversation.status === "closed"}
             disabledReason={
               conversation.status === "closed"
