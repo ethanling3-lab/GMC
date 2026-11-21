@@ -32,14 +32,17 @@ export async function GET(_req: Request, { params }: RouteCtx) {
     (event.title_en as string | null) ??
     (event.title_cn as string | null) ??
     event.slug;
-  const startUrl = `/admin/events/${event.id}/check-in/scan`;
+  // The one-stop check-in page (scanner + progress); /scan redirects here.
+  const startUrl = `/admin/events/${event.id}/check-in`;
   const manifest = {
     id: `gmc-scan-${event.id}`,
     name: `GMC Check-in · ${title}`,
     short_name: "GMC Check-in",
     description: `Door scanner for ${title}`,
     start_url: startUrl,
-    scope: `/admin/events/${event.id}/check-in/`,
+    // No trailing slash: start_url is `/check-in` itself, which a
+    // `/check-in/` scope would exclude (browsers then ignore the scope).
+    scope: `/admin/events/${event.id}/check-in`,
     display: "standalone",
     orientation: "portrait",
     background_color: "#F5EFE3",

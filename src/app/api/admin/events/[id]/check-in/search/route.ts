@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
 import { searchEligibleForCheckIn } from "@/lib/check-in/check-in-query";
+import { todayInEventTz } from "@/lib/check-in/day";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // GET /api/admin/events/[id]/check-in/search?q=<query>
 //
-// Manual-search typeahead for the scanner page. Returns approved + paid
-// enrolments matching region_id / name_cn / name_en / phone (ILIKE), with
-// each row's current check-in status so the UI can either show a "Check
-// in" button or an "Already arrived" pill.
+// Manual-search typeahead for the scanner page. Returns paid + approved
+// (unpaid → `paid: false`) enrolments matching region_id / name_cn / name_en /
+// phone (ILIKE), with each row's check-in status for TODAY so the UI can show
+// a "Check in" button or an "Already arrived" pill.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -31,7 +32,7 @@ export async function GET(req: Request, { params }: RouteCtx) {
   const q = (url.searchParams.get("q") ?? "").trim();
 
   try {
-    const rows = await searchEligibleForCheckIn(eventId, q);
+    const rows = await searchEligibleForCheckIn(eventId, q, todayInEventTz());
     return NextResponse.json({ rows });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";

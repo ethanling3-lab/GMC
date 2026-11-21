@@ -7,256 +7,298 @@ import type {
   CheckInGroupRow,
   CheckInRecent,
   CheckInStats,
-  CheckInTimeBucket,
-  CheckInVelocity,
 } from "@/lib/check-in/types";
 import { UNGROUPED_GROUP_ID } from "@/lib/check-in/types";
-import { Sparkline } from "./Sparkline";
+import { EVENT_TZ, dayLabel, shortDate, type DayOption } from "@/lib/check-in/day";
+import type { CheckInSnapshot } from "@/lib/check-in/check-in-query";
 import { GroupCompletionCard } from "./GroupCompletionCard";
 import { AbsenteeRow } from "./AbsenteeRow";
+import { DeskScanner } from "./DeskScanner";
 import { groupNumber } from "@/lib/group-number";
 
-// Read-only check-in dashboard for the event organizer. The active
-// scanner + manual fallback lives on the sibling `/scan` route so door
-// staff can run it on a phone while the organizer keeps this view up on
-// a laptop. Both surfaces poll the same backend on a 5s tick, so
-// arrivals appear here within one poll cycle of the scan.
+// One-stop check-in page for ONE event day: the desk scanner (camera +
+// manual search) sits right under today's headcount, with the "who's still
+// missing, and in which group" view below it. Badges are pre-sorted into
+// group piles, so groups are listed in the order of the number on the pile.
+// Every desk can run this same page; it polls every 5s so desks see each
+// other's scans, and refreshes at once after its own.
 
 type Props = {
   eventId: string;
   eventSlug: string;
   eventTitle: string;
   eventTitleCn: string | null;
-  eventStartDate: string | null;
-  initialStats: CheckInStats;
-  initialRecent: CheckInRecent[];
-  initialVelocity: CheckInVelocity;
-  initialGroups: CheckInGroupRow[];
-  initialAbsent: CheckInAbsentRow[];
-  initialBuckets: CheckInTimeBucket[];
+  days: DayOption[];
+  day: string;
+  today: string;
+  initial: CheckInSnapshot;
 };
 
-const STATS_POLL_MS = 5000;
+const POLL_MS = 5000;
 
 export function CheckInClient({
   eventId,
   eventSlug,
   eventTitle,
   eventTitleCn,
-  eventStartDate,
-  initialStats,
-  initialRecent,
-  initialVelocity,
-  initialGroups,
-  initialAbsent,
-  initialBuckets,
+  days,
+  day,
+  today,
+  initial,
 }: Props) {
-  const [stats, setStats] = useState<CheckInStats>(initialStats);
-  const [recent, setRecent] = useState<CheckInRecent[]>(initialRecent);
-  const [velocity, setVelocity] = useState<CheckInVelocity>(initialVelocity);
-  const [groups, setGroups] = useState<CheckInGroupRow[]>(initialGroups);
-  const [absent, setAbsent] = useState<CheckInAbsentRow[]>(initialAbsent);
-  const [buckets, setBuckets] = useState<CheckInTimeBucket[]>(initialBuckets);
+  const [stats, setStats] = useState<CheckInStats>(initial.stats);
+  const [recent, setRecent] = useState<CheckInRecent[]>(initial.recent);
+  const [groups, setGroups] = useState<CheckInGroupRow[]>(initial.groups);
+  const [absent, setAbsent] = useState<CheckInAbsentRow[]>(initial.absent);
+  const [query, setQuery] = useState("");
+  const [groupFilter, setGroupFilter] = useState<string | null>(null);
 
-  const refreshStats = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/events/${eventId}/check-in`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/admin/events/${eventId}/check-in?view=day&day=${day}`,
+        { cache: "no-store" },
+      );
       if (!res.ok) return;
-      const json = (await res.json()) as {
-        stats: CheckInStats;
-        recent: CheckInRecent[];
-        velocity: CheckInVelocity;
-        groups: CheckInGroupRow[];
-        absent: CheckInAbsentRow[];
-        buckets: CheckInTimeBucket[];
-      };
+      const json = (await res.json()) as CheckInSnapshot;
       setStats(json.stats);
       setRecent(json.recent);
-      if (json.velocity) setVelocity(json.velocity);
-      if (json.groups) setGroups(json.groups);
-      if (json.absent) setAbsent(json.absent);
-      if (json.buckets) setBuckets(json.buckets);
+      setGroups(json.groups);
+      setAbsent(json.absent);
     } catch {
       // Silent — next poll retries.
     }
-  }, [eventId]);
+  }, [eventId, day]);
 
   useEffect(() => {
-    const t = window.setInterval(refreshStats, STATS_POLL_MS);
+    const t = window.setInterval(refresh, POLL_MS);
     return () => window.clearInterval(t);
-  }, [refreshStats]);
+  }, [refresh]);
 
-  const pct = useMemo(() => {
-    if (stats.total_eligible === 0) return 0;
-    return Math.round((stats.total_checked_in / stats.total_eligible) * 100);
-  }, [stats]);
+  const pct =
+    stats.total_eligible === 0
+      ? 0
+      : Math.round((stats.total_checked_in / stats.total_eligible) * 100);
+  const remaining = Math.max(0, stats.total_eligible - stats.total_checked_in);
+  const isToday = day === today;
+  const currentOption = days.find((d) => d.day === day) ?? { day, index: null };
+
+  const realGroups = groups.filter((g) => g.group_id !== UNGROUPED_GROUP_ID);
+  const groupsComplete = realGroups.filter(
+    (g) => g.expected_count > 0 && g.checked_in_count >= g.expected_count,
+  ).length;
+
+  const selectedGroup = groups.find((g) => g.group_id === groupFilter) ?? null;
+  const visibleAbsent = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return absent.filter((r) => {
+      if (selectedGroup) {
+        const same =
+          selectedGroup.group_id === UNGROUPED_GROUP_ID
+            ? r.group_no === null
+            : r.group_no === selectedGroup.group_no;
+        if (!same) return false;
+      }
+      if (!q) return true;
+      return [r.name_cn, r.name_en, r.region_id, r.phone]
+        .filter(Boolean)
+        .some((v) => v!.toLowerCase().includes(q));
+    });
+  }, [absent, query, selectedGroup]);
 
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
-              <span className="w-5 h-px bg-current" />
-              Check-in · 签到 · {eventSlug}
-            </div>
-            <h1 className="mt-2 font-display text-[30px] md:text-[36px] leading-[1.05] tracking-[-0.015em] text-[var(--ink)]">
-              {eventTitle}
-              {eventTitleCn ? (
-                <span className="ml-3 text-[var(--ink-mute)] text-[22px] md:text-[26px]">
-                  {eventTitleCn}
-                </span>
-              ) : null}
-            </h1>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
+            <span className="w-5 h-px bg-current" />
+            Check-in · 签到 · {eventSlug}
           </div>
-          <Link
-            href={`/admin/events/${eventId}/check-in/scan`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 inline-flex items-center gap-2 h-10 px-4 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[var(--paper)] text-[12px] tracking-[0.04em] font-medium hover:opacity-90 transition-opacity"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="2.5" y="2.5" width="4" height="4" rx="0.5" />
-              <rect x="9.5" y="2.5" width="4" height="4" rx="0.5" />
-              <rect x="2.5" y="9.5" width="4" height="4" rx="0.5" />
-              <path d="M9.5 9.5h2v2M13.5 9.5v.01M9.5 13.5h.01M11.5 13.5h2" />
-            </svg>
-            Open scanner · 打开扫码
-          </Link>
-        </div>
-
-        {/* Live counter + velocity cluster */}
-        <div className="mt-2 flex flex-wrap items-end gap-x-8 gap-y-3">
-          <div className="flex items-baseline gap-2">
-            <span className="font-display text-[44px] md:text-[56px] leading-none tracking-[-0.02em] text-[var(--ink)] tabular-nums">
-              {stats.total_checked_in}
-            </span>
-            <span className="text-[var(--ink-faint)] text-[15px] tabular-nums">
-              / {stats.total_eligible}
-            </span>
-            <span className="ml-2 inline-flex items-center h-[24px] px-2.5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[var(--paper)] text-[11px] tracking-[0.04em] font-medium tabular-nums">
-              {pct}%
-            </span>
-          </div>
-          <VelocityCluster velocity={velocity} />
-          <div className="text-[10.5px] tracking-[0.22em] uppercase text-[var(--ink-faint)] ml-auto">
-            Face {stats.by_method.face_match} · Manual {stats.by_method.manual}
-            {stats.by_method.qr > 0 ? ` · QR ${stats.by_method.qr}` : null}
-          </div>
+          <h1 className="mt-2 font-display text-[30px] md:text-[36px] leading-[1.05] tracking-[-0.015em] text-[var(--ink)]">
+            {eventTitle}
+            {eventTitleCn ? (
+              <span className="ml-3 text-[var(--ink-mute)] text-[22px] md:text-[26px]">
+                {eventTitleCn}
+              </span>
+            ) : null}
+          </h1>
         </div>
       </div>
 
-      {/* Dashboard row 1: sparkline + per-group grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-6">
-        <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">
-          <div className="px-5 pt-4 pb-1 flex items-end justify-between gap-3">
-            <div className="text-[10.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
-              Arrival curve · 到场趋势
-            </div>
-            {eventStartDate ? (
-              <div className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)] tabular-nums">
-                Doors {formatEventStartTime(eventStartDate)}
-              </div>
-            ) : null}
-          </div>
-          <div className="px-5 pb-4 pt-2">
-            <Sparkline buckets={buckets} hint="Last 2h · 5-min buckets" />
-          </div>
-        </section>
+      {/* Day switcher */}
+      {days.length > 1 ? (
+        <nav aria-label="Event day" className="-mx-4 px-4 flex gap-2 overflow-x-auto pb-1 sm:mx-0 sm:px-0 sm:flex-wrap sm:overflow-visible">
+          {days.map((d) => {
+            const active = d.day === day;
+            return (
+              <Link
+                key={d.day}
+                href={`?day=${d.day}`}
+                scroll={false}
+                aria-current={active ? "page" : undefined}
+                className={`shrink-0 inline-flex items-center gap-2 h-9 px-3.5 rounded-[var(--radius-pill)] border text-[12.5px] whitespace-nowrap focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] active:translate-y-px transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)] ${
+                  active
+                    ? "bg-[var(--cinnabar)] border-[var(--cinnabar)] text-[var(--paper)]"
+                    : "bg-[var(--paper)] border-[var(--paper-shadow)] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)]"
+                }`}
+                style={{ color: active ? "var(--paper)" : undefined }}
+              >
+                <span className="font-medium">{dayLabel(d)}</span>
+                {d.index !== null ? (
+                  <span className={active ? "opacity-80" : "text-[var(--ink-faint)]"}>
+                    {shortDate(d.day)}
+                  </span>
+                ) : null}
+                {d.day === today ? (
+                  <span className={active ? "opacity-80" : "text-[var(--cinnabar)]"}>· today</span>
+                ) : null}
+              </Link>
+            );
+          })}
+        </nav>
+      ) : null}
 
-        <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden flex flex-col min-h-0">
-          <div className="px-5 pt-4 pb-2 flex items-baseline justify-between gap-3">
-            <div className="text-[10.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
-              Groups · 小组进度
-            </div>
-            <div className="text-[10.5px] tracking-[0.12em] uppercase text-[var(--ink-faint)] tabular-nums">
-              {groupsSettledCount(groups)} / {realGroups(groups).length} settled
-            </div>
+      {/* Headcount */}
+      <section className="flex flex-wrap items-end gap-x-10 gap-y-4">
+        <div>
+          <div className="text-[12px] text-[var(--ink-mute)]">
+            Arrived {isToday ? "today" : `· ${dayLabel(currentOption)}`} · 已到场
           </div>
-          <div className="px-4 pb-4 pt-1 overflow-y-auto max-h-[440px]">
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="font-display text-[56px] md:text-[64px] leading-none tracking-[-0.03em] text-[var(--ink)] tabular-nums">
+              {stats.total_checked_in}
+            </span>
+            <span className="text-[18px] text-[var(--ink-faint)] tabular-nums">
+              / {stats.total_eligible}
+            </span>
+            <span className="ml-2 inline-flex items-center h-[24px] px-2.5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[var(--paper)] text-[11.5px] font-medium tabular-nums">
+              {pct}%
+            </span>
+          </div>
+        </div>
+        <Figure label="Not here yet · 未到" value={remaining} />
+        <Figure
+          label="Groups complete · 小组到齐"
+          value={`${groupsComplete} / ${realGroups.length}`}
+        />
+        {stats.unpaid_overrides > 0 ? (
+          <Figure label="Let in unpaid · 未付款放行" value={stats.unpaid_overrides} tone="warn" />
+        ) : null}
+      </section>
+
+      {/* Desk: camera + manual search. Only scans for today. */}
+      <DeskScanner
+        eventId={eventId}
+        active={isToday}
+        todayHref={`?day=${today}`}
+        onCheckedIn={refresh}
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-6 items-start">
+        {/* Groups */}
+        <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">
+          <PanelHead
+            title="Groups · 小组"
+            meta="Tap a group to see who's missing"
+          />
+          <div className="px-4 pb-4 max-h-[560px] overflow-y-auto">
             {groups.length === 0 ? (
-              <div className="py-8 text-center text-[12px] text-[var(--ink-faint)]">
-                No groups yet · 未分组
-              </div>
+              <Empty>No groups yet · 未分组</Empty>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {groups.map((g) => (
-                  <GroupCompletionCard key={g.group_id} row={g} />
-                ))}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-2">
+                {groups.map((g) => {
+                  const selected = g.group_id === groupFilter;
+                  return (
+                    <button
+                      key={g.group_id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setGroupFilter(selected ? null : g.group_id)}
+                      className={`text-left rounded-[12px] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] active:translate-y-px transition-[transform,box-shadow] duration-[var(--dur-fast)] ${
+                        selected ? "shadow-[0_0_0_2px_var(--cinnabar)]" : "hover:shadow-[0_0_0_1px_var(--cinnabar)]"
+                      }`}
+                    >
+                      <GroupCompletionCard row={g} />
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
         </section>
+
+        {/* Not yet here */}
+        <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">
+          <PanelHead
+            title="Not here yet · 未到场"
+            meta={`${visibleAbsent.length} of ${absent.length}`}
+          />
+          <div className="px-5 pb-3 flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name, region ID or phone"
+              aria-label="Search people not here yet"
+              className="flex-1 min-w-[200px] h-10 px-3.5 rounded-[10px] bg-[var(--paper)] border border-[var(--paper-shadow)] text-[13.5px] text-[var(--ink)] placeholder:text-[var(--ink-faint)] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)]"
+            />
+            {selectedGroup ? (
+              <button
+                type="button"
+                onClick={() => setGroupFilter(null)}
+                className="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-[var(--radius-pill)] bg-[var(--cinnabar-wash)] border border-[var(--cinnabar)]/30 text-[12.5px] text-[var(--cinnabar-deep)] hover:bg-[var(--cinnabar)]/15 active:translate-y-px focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[background-color,transform] duration-[var(--dur-fast)]"
+              >
+                {selectedGroup.group_id === UNGROUPED_GROUP_ID
+                  ? "Ungrouped"
+                  : groupNumber(selectedGroup).en}
+                <span aria-hidden="true">×</span>
+                <span className="sr-only">Clear group filter</span>
+              </button>
+            ) : null}
+          </div>
+          {absent.length === 0 ? (
+            <Empty>Everyone&apos;s here · 全员到齐</Empty>
+          ) : visibleAbsent.length === 0 ? (
+            <Empty>No one matches · 无匹配</Empty>
+          ) : (
+            <ul className="divide-y divide-[var(--paper-deep)]/70 max-h-[520px] overflow-y-auto border-t border-[var(--paper-deep)]/70">
+              {visibleAbsent.map((row) => (
+                <AbsenteeRow key={row.enrollment_id} row={row} />
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
 
-      {/* Dashboard row 2: absentee chase list */}
+      {/* Recent */}
       <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">
-        <div className="px-5 pt-4 pb-2 flex items-baseline justify-between gap-3">
-          <div className="text-[10.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
-            Not yet here · 未到场
-          </div>
-          <div className="text-[10.5px] tracking-[0.12em] uppercase text-[var(--ink-faint)] tabular-nums">
-            {absent.length} {absent.length === 50 ? "shown · top 50" : "remaining"}
-          </div>
-        </div>
-        {absent.length === 0 ? (
-          <div className="px-5 py-10 text-center text-[12.5px] text-[var(--ink-faint)]">
-            Everyone's in · 全员到齐 🎉
-          </div>
-        ) : (
-          <ul className="divide-y divide-[var(--paper-deep)]/70 max-h-[520px] overflow-y-auto">
-            {absent.map((row) => (
-              <AbsenteeRow key={row.enrollment_id} row={row} />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* Recent log */}
-      <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">
-        <div className="px-5 pt-4 pb-2 text-[10.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
-          Recent · 最新签到
-        </div>
+        <PanelHead title="Latest arrivals · 最新签到" meta={recent.length ? "Last 20" : ""} />
         {recent.length === 0 ? (
-          <div className="px-5 py-8 text-center text-[12px] text-[var(--ink-faint)]">
-            No check-ins yet · 还没有签到
-          </div>
+          <Empty>No check-ins {isToday ? "today" : "on this day"} yet · 还没有签到</Empty>
         ) : (
-          <ul className="divide-y divide-[var(--paper-deep)]/70">
+          <ul className="divide-y divide-[var(--paper-deep)]/70 border-t border-[var(--paper-deep)]/70">
             {recent.map((r) => (
               <li
                 key={r.enrollment_id + r.checked_in_at}
-                className="px-5 py-2.5 flex items-center gap-3 text-[12.5px] hover:bg-[var(--paper)]/40 transition-colors"
+                className="px-5 py-2.5 flex items-center gap-3 text-[13px]"
               >
-                <span
-                  className="inline-flex items-center justify-center h-[22px] min-w-[44px] px-2 rounded-[var(--radius-pill)] bg-[var(--paper-deep)] text-[10.5px] tracking-[0.04em] font-medium text-[var(--ink-mute)] tabular-nums"
-                  title="Region ID"
-                >
+                <span className="inline-flex items-center justify-center h-[22px] min-w-[52px] px-2 rounded-[var(--radius-pill)] bg-[var(--paper-deep)] text-[11px] font-medium text-[var(--ink-mute)] tabular-nums">
                   {r.region_id ?? "—"}
                 </span>
                 <span className="font-medium text-[var(--ink)] flex-1 min-w-0 truncate">
                   {r.name_cn ?? r.name_en ?? "(unnamed)"}
                 </span>
-                {r.group_no !== null ? (
-                  <span className="text-[var(--ink-soft)] text-[11px] tracking-[0.08em] uppercase tabular-nums">
-                    {groupNumber(r).en}
+                {r.unpaid_override ? (
+                  <span className="inline-flex items-center h-[20px] px-2 rounded-full bg-[var(--gold,#C99B47)]/20 text-[11px] text-[var(--ink-soft)]">
+                    Unpaid · 未付款
                   </span>
                 ) : null}
-                <span className="text-[var(--ink-faint)] text-[10.5px] tracking-[0.06em] tabular-nums">
-                  {formatTime(r.checked_in_at)}
+                <span className="text-[12px] text-[var(--ink-soft)] tabular-nums">
+                  {groupNumber(r).no !== null ? groupNumber(r).en : "No group"}
                 </span>
-                <span
-                  className={
-                    "inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] text-[9.5px] tracking-[0.08em] uppercase tabular-nums " +
-                    (r.method === "qr"
-                      ? "bg-[var(--cinnabar)]/12 text-[var(--cinnabar)]"
-                      : "bg-[var(--paper-deep)] text-[var(--ink-mute)]")
-                  }
-                >
-                  {r.method}
+                <span className="w-[44px] text-right text-[12px] text-[var(--ink-faint)] tabular-nums">
+                  {formatTime(r.checked_in_at)}
                 </span>
               </li>
             ))}
@@ -267,87 +309,55 @@ export function CheckInClient({
   );
 }
 
-// -- Helpers ----------------------------------------------------------------
-
-// The roster carries a synthetic "Ungrouped" bucket so unseated attendees
-// stay visible in the grid. It isn't a group, so the settled ratio counts
-// real groups only — otherwise the denominator reads one higher than the
-// group count shown everywhere else.
-function realGroups(groups: CheckInGroupRow[]): CheckInGroupRow[] {
-  return groups.filter((g) => g.group_id !== UNGROUPED_GROUP_ID);
-}
-
-function groupsSettledCount(groups: CheckInGroupRow[]): number {
-  let n = 0;
-  for (const g of realGroups(groups)) {
-    if (g.expected_count > 0 && g.checked_in_count >= g.expected_count) n += 1;
-  }
-  return n;
-}
-
-function formatEventStartTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  } catch {
-    return "—";
-  }
-}
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  } catch {
-    return "—";
-  }
-}
-
-function VelocityCluster({ velocity }: { velocity: CheckInVelocity }) {
-  const etaLabel = velocity.eta_iso
-    ? new Date(velocity.eta_iso).toLocaleTimeString(undefined, {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      })
-    : null;
+function Figure({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  tone?: "warn";
+}) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
-          15 min
-        </span>
-        <span className="font-display text-[18px] text-[var(--ink)] tabular-nums leading-none">
-          {velocity.last_15min}
-        </span>
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
-          60 min
-        </span>
-        <span className="font-display text-[18px] text-[var(--ink)] tabular-nums leading-none">
-          {velocity.last_60min}
-        </span>
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
-          ETA
-        </span>
-        <span
-          className={
-            "font-display text-[18px] tabular-nums leading-none " +
-            (etaLabel ? "text-[var(--ink)]" : "text-[var(--ink-faint)]")
-          }
-        >
-          {etaLabel ?? "—"}
-        </span>
+    <div>
+      <div className="text-[12px] text-[var(--ink-mute)]">{label}</div>
+      <div
+        className={`mt-1 font-display text-[30px] leading-none tracking-[-0.02em] tabular-nums ${
+          tone === "warn" ? "text-[var(--gold-deep,#A87A2A)]" : "text-[var(--ink)]"
+        }`}
+      >
+        {value}
       </div>
     </div>
   );
+}
+
+function PanelHead({ title, meta }: { title: string; meta: string }) {
+  return (
+    <div className="px-5 pt-4 pb-3 flex items-baseline justify-between gap-3">
+      <h2 className="text-[13px] font-medium text-[var(--ink)]">{title}</h2>
+      {meta ? <div className="text-[12px] text-[var(--ink-faint)] tabular-nums">{meta}</div> : null}
+    </div>
+  );
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-5 py-10 text-center text-[13px] text-[var(--ink-faint)]">{children}</div>
+  );
+}
+
+// Pinned to the event's zone: this renders on the server (UTC on Netlify) and
+// again in the browser, and the two must agree or React flags a mismatch.
+function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: EVENT_TZ,
+    });
+  } catch {
+    return "—";
+  }
 }

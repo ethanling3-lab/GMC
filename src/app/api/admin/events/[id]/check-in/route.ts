@@ -2,26 +2,24 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
 import { performCheckIn, undoCheckIn } from "@/lib/check-in/check-in-write";
-import {
-  loadStats,
-  loadRecent,
-  loadVelocity,
-  loadGroupRoster,
-  loadAbsentees,
-  loadArrivalBuckets,
-} from "@/lib/check-in/check-in-query";
+import { loadDaySnapshot, loadStats } from "@/lib/check-in/check-in-query";
+import { isIsoDay, todayInEventTz } from "@/lib/check-in/day";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // POST /api/admin/events/[id]/check-in
 //
-// Records a check-in. Body shape is one of:
+// Records a check-in for TODAY (event-local, from the server clock — the
+// device's own date is never trusted). Body shape is one of:
 //   { qr_token: "<nonce>.<sig>", notes?: string }    — camera scan
-//   { enrollment_id: "<uuid>",     notes?: string }    — manual fallback
+//   { enrollment_id: "<uuid>",     notes?: string }    — manual / face / override
+// plus `allow_unpaid: true` when the desk confirmed checking in an
+// approved-but-unpaid attendee after the 402 `unpaid` response.
 //
-// 200 success body matches CheckInResult from check-in-write.ts.
-// 4xx for the various business-rule errors (not_found, wrong_event, etc).
+// 200 success body matches CheckInResult from check-in-write.ts. Errors carry
+// the person (when known) so the desk can still show who it was:
+//   402 unpaid · 409 already_checked_in · 404 not_found · 400 the rest.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -34,6 +32,7 @@ const Body = z
     // for back-compat with the existing QR + manual paths, which derive
     // method from which body field is set.
     method: z.enum(["qr", "manual", "face_match"]).optional(),
+    allow_unpaid: z.boolean().optional(),
   })
   .refine(
     (v) => Boolean(v.qr_token) !== Boolean(v.enrollment_id),
@@ -72,8 +71,10 @@ export async function POST(req: Request, { params }: RouteCtx) {
       actorId: admin.id,
       method:
         body.method ?? (body.qr_token ? "qr" : "manual"),
+      checkInDate: todayInEventTz(),
       qrToken: body.qr_token ?? null,
       enrollmentId: body.enrollment_id ?? null,
+      allowUnpaid: body.allow_unpaid === true,
       notes: body.notes ?? null,
     });
 
@@ -83,8 +84,10 @@ export async function POST(req: Request, { params }: RouteCtx) {
           ? 404
           : result.error === "already_checked_in"
             ? 409
-            : 400;
-      return NextResponse.json({ error: result.error }, { status });
+            : result.error === "unpaid"
+              ? 402
+              : 400;
+      return NextResponse.json(result, { status });
     }
 
     return NextResponse.json(result);
@@ -138,33 +141,23 @@ export async function DELETE(req: Request, { params }: RouteCtx) {
 }
 
 // GET /api/admin/events/[id]/check-in
-// Returns the live stats + recent log so the scanner page can poll while
-// the camera is active. Lightweight (~2 queries).
+//   (no params)          → { stats } for today — the scanner stations' poll
+//   ?view=day&day=YYYY-MM-DD → full dashboard snapshot for that day
 export async function GET(req: Request, { params }: RouteCtx) {
   const admin = await requireAdmin();
   if (!ALLOWED_ROLES.has(admin.role)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const { id: eventId } = await params;
+  const url = new URL(req.url);
+  const dayParam = url.searchParams.get("day");
+  const day = isIsoDay(dayParam) ? dayParam : todayInEventTz();
 
   try {
-    const [stats, recent, velocity, groups, absent, buckets] =
-      await Promise.all([
-        loadStats(eventId),
-        loadRecent(eventId, 20),
-        loadVelocity(eventId),
-        loadGroupRoster(eventId),
-        loadAbsentees(eventId, 50),
-        loadArrivalBuckets(eventId, 120, 5),
-      ]);
-    return NextResponse.json({
-      stats,
-      recent,
-      velocity,
-      groups,
-      absent,
-      buckets,
-    });
+    if (url.searchParams.get("view") === "day") {
+      return NextResponse.json(await loadDaySnapshot(eventId, day));
+    }
+    return NextResponse.json({ stats: await loadStats(eventId, day) });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     console.error("[check-in GET]", msg);

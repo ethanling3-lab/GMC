@@ -67,8 +67,8 @@ export type EventFull = {
   seating_mode: "tables" | "cushions";
   group_size_min: number;
   group_size_max: number;
-  // M7.1d — per-event check-in method. Drives which scanner UI the
-  // /admin/events/[id]/check-in/scan page renders at the door.
+  // Legacy per-event check-in method. No longer read — check-in is QR-only
+  // since 2026-11-21 — but still round-tripped so saves don't drop it.
   check_in_method: "qr" | "face" | "both";
   created_at: string;
   updated_at: string;
@@ -373,7 +373,10 @@ export function EventEditor({
       {/* Header card */}
       <div className="rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] p-6">
         <div className="flex items-start justify-between gap-6 flex-wrap">
-          <div className="flex-1 min-w-0">
+          {/* A real minimum width: with min-w-0 the pill row (9 links) took
+              every pixel and crushed the title to a word per line. Now the
+              pills wrap onto their own line instead. */}
+          <div className="flex-1 min-w-[min(100%,320px)]">
             <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
               <span className="w-5 h-px bg-current" />
               Event · 活动
@@ -916,58 +919,6 @@ export function EventEditor({
               Min must be ≤ max.
             </p>
           ) : null}
-        </div>
-
-        {/* M7.1d — Per-event check-in method picker. Drives which scanner UI
-            the /scan route renders at the door. */}
-        <div className="mt-2 pt-5 border-t border-dashed border-[var(--paper-shadow)]">
-          <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
-            <span className="w-4 h-px bg-current" />
-            Check-in method · 签到方式
-          </div>
-          <p className="mt-2 text-[12px] leading-[1.6] text-[var(--ink-soft)] max-w-[62ch]">
-            How the door scanner identifies attendees. <strong>Face</strong> uses the
-            participant&apos;s photo + face-api.js. <strong>QR</strong> reads the QR
-            code embedded in the post-payment email. <strong>Both</strong> runs both
-            detectors in parallel — whichever fires first wins.{" "}
-            <span className="text-[var(--ink-mute)]">
-              Face mode requires participants to opt in during registration + have a
-              photo on file. Staff can capture photos at the door if missing.
-            </span>
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {(["face", "qr", "both"] as const).map((mode) => {
-              const checked = draft.check_in_method === mode;
-              return (
-                <label
-                  key={mode}
-                  className={`inline-flex items-center gap-2 h-9 px-3 rounded-[var(--radius-pill)] border text-[12px] tracking-[0.04em] cursor-pointer transition-[background-color,border-color,color] duration-[var(--dur-fast)]
-                              ${
-                                checked
-                                  ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
-                                  : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/30"
-                              }
-                              ${!canEdit ? "cursor-not-allowed opacity-70" : ""}`}
-                >
-                  <input
-                    type="radio"
-                    name="check-in-method"
-                    checked={checked}
-                    onChange={() =>
-                      canEdit && update("check_in_method", mode)
-                    }
-                    disabled={!canEdit}
-                    className="accent-[var(--cinnabar)]"
-                  />
-                  {mode === "face"
-                    ? "Face · 人脸"
-                    : mode === "qr"
-                      ? "QR · 二维码"
-                      : "Both · 双模"}
-                </label>
-              );
-            })}
-          </div>
         </div>
       </Section>
 

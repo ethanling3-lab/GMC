@@ -2,6 +2,32 @@
 
 export type CheckInMethod = "qr" | "manual" | "face_match";
 
+// The expected list is PAID attendees — the same rule the badge PDF and the
+// QR-bearing emails use. status and payment_status can diverge (payment
+// reconciled first, or vice versa), so either counts; a later cancel/reject
+// wins over an old payment.
+export function isPaidEnrollment(e: { status: string; payment_status: string }): boolean {
+  if (e.status === "cancelled" || e.status === "rejected") return false;
+  return e.status === "paid" || e.payment_status === "paid";
+}
+
+// PostgREST filter for the same rule, for `.or(...)` + `.not(...)` queries.
+export const PAID_OR_FILTER = "status.eq.paid,payment_status.eq.paid";
+export const NOT_CANCELLED_FILTER = "(cancelled,rejected)";
+
+/** Who a scan resolved to — enough for the desk to hand over the right badge. */
+export type CheckInPerson = {
+  participant: {
+    id: string;
+    region_id: string | null;
+    name_cn: string | null;
+    name_en: string | null;
+  };
+  group_no: number | null;
+  table_no: number | null;
+  seat_no: number | null;
+};
+
 export type CheckInRow = {
   id: string;
   event_id: string;
@@ -31,8 +57,13 @@ export type CheckInRosterEntry = {
 };
 
 export type CheckInStats = {
+  /** The day these numbers are for (YYYY-MM-DD, event-local). */
+  day: string;
+  /** Paid attendees, plus anyone checked in on an unpaid override that day. */
   total_eligible: number;
   total_checked_in: number;
+  /** Of total_checked_in: approved-but-unpaid people let in by the desk. */
+  unpaid_overrides: number;
   by_method: { qr: number; manual: number; face_match: number };
 };
 
@@ -46,19 +77,10 @@ export type CheckInRecent = {
   table_no: number | null;
   checked_in_at: string;
   method: CheckInMethod;
+  unpaid_override: boolean;
 };
 
 // --- M7.1b richer dashboard --------------------------------------------------
-
-export type CheckInVelocity = {
-  // Counts in the most recent rolling windows.
-  last_15min: number;
-  last_60min: number;
-  // Projected finish ISO timestamp if rate_per_min > 0 and there are
-  // remaining eligible attendees. null when the door is full or no one
-  // has scanned recently.
-  eta_iso: string | null;
-};
 
 // Sentinel id for the synthetic "Ungrouped" bucket the roster appends so
 // paid attendees without a seat assignment stay visible. It is not an
@@ -85,11 +107,4 @@ export type CheckInAbsentRow = {
   phone: string | null;
   group_no: number | null;
   table_no: number | null;
-};
-
-export type CheckInTimeBucket = {
-  // Start of the 5-minute (configurable) bucket in ISO. Continuous — zero-
-  // count buckets are emitted so the sparkline has a smooth X axis.
-  bucket_start: string;
-  count: number;
 };
