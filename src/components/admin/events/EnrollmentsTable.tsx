@@ -1214,6 +1214,15 @@ export function EnrollmentsTable({
                       <td className="pr-1 py-3.5 text-right align-top">
                         <RowActions
                           status={r.status}
+                          badgeHref={
+                            // Badges carry the check-in QR, so paid only —
+                            // same rule as the badge generator.
+                            (r.status === "paid" || r.payment_status === "paid") &&
+                            r.status !== "cancelled" &&
+                            r.status !== "rejected"
+                              ? `/admin/events/${eventId}/badges?enrollment=${r.id}`
+                              : null
+                          }
                           resending={resendBusyId === r.id}
                           onAction={(a) => {
                             if (a === "reject") {
@@ -1568,10 +1577,12 @@ type MenuAction = EnrollmentAction | "resend";
 
 function RowActions({
   status,
+  badgeHref,
   resending,
   onAction,
 }: {
   status: EnrollmentStatus;
+  badgeHref: string | null;
   resending: boolean;
   onAction: (a: MenuAction) => void | Promise<void>;
 }) {
@@ -1657,6 +1668,22 @@ function RowActions({
                   </svg>
                 ) : null}
               </button>
+              <div className="my-1.5 mx-2 h-px bg-[var(--paper-shadow)]/70" aria-hidden="true" />
+            </>
+          ) : null}
+          {badgeHref ? (
+            <>
+              <a
+                href={badgeHref}
+                role="menuitem"
+                className="w-full text-left px-3 py-2 rounded-[var(--radius-sm)] text-[12.5px]
+                           text-[var(--ink)] hover:bg-[var(--paper-deep)] focus-visible:bg-[var(--paper-deep)] focus-visible:outline-none
+                           transition-[background-color,color] duration-[var(--dur-fast)]
+                           inline-flex items-center justify-between gap-2"
+              >
+                <span>Reprint badge</span>
+                <span className="text-[11px] text-[var(--ink-mute)]">名牌</span>
+              </a>
               <div className="my-1.5 mx-2 h-px bg-[var(--paper-shadow)]/70" aria-hidden="true" />
             </>
           ) : null}

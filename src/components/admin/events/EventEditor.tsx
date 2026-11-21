@@ -525,6 +525,26 @@ export function EventEditor({
               </span>
             </Link>
 
+            {/* Badges link — 名牌 design + bulk PDF for printing */}
+            <Link
+              href={`/admin/events/${event.id}/badges`}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12.5px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="4" y="3" width="8" height="11.5" rx="1" />
+                <path d="M6.5 3V1.5h3V3M6 7h4M6.5 9.5h3" />
+              </svg>
+              Badges
+              <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
+                名牌
+              </span>
+            </Link>
+
             {/* Floor plan link — M6.4 Visio-style layout editor */}
             <Link
               href={`/admin/events/${event.id}/layout`}

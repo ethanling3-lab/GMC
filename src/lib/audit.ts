@@ -116,6 +116,8 @@ export type AuditAction =
   | "participant.language_fluency_changed"
   | "participant.conflict_pairs_changed"
   | "profile_deck.exported"
+  | "badges.background_uploaded"
+  | "badges.exported"
   | "check_in.qr"
   | "check_in.manual"
   | "check_in.face_match"
