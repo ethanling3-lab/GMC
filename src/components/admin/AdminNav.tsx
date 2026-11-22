@@ -8,6 +8,7 @@ type NavItem = {
   labelZh: string;
   icon: IconName;
   soon?: boolean;
+  superAdminOnly?: boolean;
 };
 
 type IconName =
@@ -20,6 +21,7 @@ type IconName =
   | "finance"
   | "programmes"
   | "reports"
+  | "staff"
   | "transfer";
 
 const PRIMARY: NavItem[] = [
@@ -32,6 +34,7 @@ const PRIMARY: NavItem[] = [
   { href: "/admin/group-reports", label: "Group reports", labelZh: "小组报告", icon: "reports" },
   { href: "/admin/programmes", label: "Programmes", labelZh: "课程", icon: "programmes" },
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance" },
+  { href: "/admin/staff", label: "Staff", labelZh: "员工", icon: "staff", superAdminOnly: true },
 ];
 
 // Active detection compares each nav href against the active route segment.
@@ -121,6 +124,14 @@ function NavIcon({ name }: { name: IconName }) {
           <path d="M8 2.5L14 5l-6 2.5L2 5z" />
           <path d="M4.5 6.2v3.4c0 1 1.6 1.9 3.5 1.9s3.5-.9 3.5-1.9V6.2" />
           <path d="M14 5v3.5" />
+        </svg>
+      );
+    case "staff":
+      return (
+        <svg {...common}>
+          <rect x="2.5" y="3" width="11" height="10.5" rx="1.5" />
+          <circle cx="8" cy="7" r="1.8" />
+          <path d="M5 12c.4-1.3 1.6-2 3-2s2.6.7 3 2M6.5 3V1.8h3V3" />
         </svg>
       );
     case "transfer":
@@ -234,9 +245,11 @@ function Item({
 export function AdminNav({
   segment,
   collapsed = false,
+  role,
 }: {
   segment: string | null;
   collapsed?: boolean;
+  role: string;
 }) {
   return (
     <nav
@@ -256,7 +269,7 @@ export function AdminNav({
           />
         )}
         <ul className="space-y-0.5">
-          {PRIMARY.map((item) => (
+          {PRIMARY.filter((item) => !item.superAdminOnly || role === "super_admin").map((item) => (
             <li key={item.href}>
               <Item
                 item={item}

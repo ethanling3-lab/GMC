@@ -189,7 +189,7 @@ export function Sidebar({
       </div>
 
       {/* Nav fills */}
-      <AdminNav segment={segment} collapsed={collapsed} />
+      <AdminNav segment={segment} collapsed={collapsed} role={admin.role} />
 
       {/* Profile card */}
       <div className="px-3 pb-4">

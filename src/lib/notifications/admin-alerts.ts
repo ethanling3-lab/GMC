@@ -116,6 +116,7 @@ async function resolveRecipients(
   const { data: admins } = await service
     .from("admins")
     .select("id")
+    .is("deactivated_at", null)
     .in("role", ["customer_service", "regional_lead", "super_admin"]);
   return ((admins ?? []) as Array<{ id: string }>).map((a) => a.id);
 }

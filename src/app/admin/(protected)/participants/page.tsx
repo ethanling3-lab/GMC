@@ -58,6 +58,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
   const { data: csData } = await supabase
     .from("admins")
     .select("id, name_en, name_cn, role")
+    .is("deactivated_at", null)
     .in("role", ["customer_service", "super_admin"])
     .order("name_en", { ascending: true, nullsFirst: false });
   const customerService = (csData ?? []) as {

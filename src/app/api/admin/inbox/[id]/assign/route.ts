@@ -61,6 +61,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
         .from("admins")
         .select("id")
         .eq("id", targetAdminId)
+        .is("deactivated_at", null)
         .maybeSingle();
       if (targetErr) {
         return NextResponse.json({ error: targetErr.message }, { status: 500 });

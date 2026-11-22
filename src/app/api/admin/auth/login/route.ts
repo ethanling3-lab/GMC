@@ -23,11 +23,11 @@ export async function POST(req: Request) {
 
   const { data: admin } = await supabase
     .from("admins")
-    .select("id, role")
+    .select("id, role, deactivated_at")
     .eq("id", data.user.id)
     .maybeSingle();
 
-  if (!admin) {
+  if (!admin || admin.deactivated_at) {
     await supabase.auth.signOut();
     return NextResponse.json({ error: "not_admin" }, { status: 403 });
   }

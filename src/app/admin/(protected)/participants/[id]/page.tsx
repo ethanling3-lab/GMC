@@ -205,10 +205,12 @@ export default async function ParticipantDetailPage({ params }: Props) {
     supabase
       .from("admins")
       .select("id, name_en, name_cn, role, region")
+      .is("deactivated_at", null)
       .in("role", ["regional_lead", "super_admin"]),
     supabase
       .from("admins")
       .select("id, name_en, name_cn, role, region")
+      .is("deactivated_at", null)
       .in("role", ["customer_service", "super_admin"]),
   ]);
 

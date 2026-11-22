@@ -23,11 +23,11 @@ export async function requireAdmin(): Promise<AdminContext> {
 
   const { data: admin, error } = await supabase
     .from("admins")
-    .select("id, name_cn, name_en, role, region")
+    .select("id, name_cn, name_en, role, region, deactivated_at")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (error || !admin) {
+  if (error || !admin || admin.deactivated_at) {
     await supabase.auth.signOut();
     redirect("/admin/login?reason=not_admin");
   }

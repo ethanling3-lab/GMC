@@ -14,6 +14,7 @@ const CRUMB_LABELS: Record<string, string> = {
   travel: "Travel",
   finance: "Finance",
   logistics: "Logistics",
+  staff: "Staff",
   imports: "Imports",
   notifications: "Notifications",
   enrollments: "Enrolments",
