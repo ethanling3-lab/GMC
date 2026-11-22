@@ -26,6 +26,12 @@
   schedule = "*/5 * * * *"
   timeout = 60
 
+# Hourly WhatsApp payment follow-up. Does nothing unless turned on in
+# /admin/whatsapp. Same CRON_SECRET gate.
+[functions."cron-whatsapp-followups"]
+  schedule = "@hourly"
+  timeout = 60
+
 # M7.6 — broadcast fan-out runs as a background function (15-min ceiling)
 # so a 500-recipient blast finishes well past the 26s system-handler
 # timeout. Invoked fire-and-forget by /api/admin/broadcasts/:id/send

@@ -134,6 +134,7 @@ export type AuditAction =
   | "participant.facial_recognition_consent_changed"
   | "whatsapp.settings_changed"
   | "whatsapp.welcome_sent"
+  | "whatsapp.followup_sent"
   | "participant.marketing_status_changed"
   | "broadcast.created"
   | "broadcast.updated"

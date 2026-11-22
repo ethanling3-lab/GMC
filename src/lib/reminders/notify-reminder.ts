@@ -3,16 +3,18 @@ import { createSupabaseServiceClient } from "../supabase";
 import { sendEmail } from "../email";
 import { participantEmailLocale } from "../i18n";
 import { buildCheckInUrl } from "../check-in/qr-token";
+import { findTemplate } from "../inbox/whatsapp-templates";
+import { normalizePhone } from "../whatsapp/phone";
+import { sendWhatsAppTemplate } from "../whatsapp";
 
 // M7.2 reminder dispatcher. Sends a single bilingual email to a paid
 // participant ahead of their event, embedding the same /checkin/<token>
 // CTA we put in the payment-received receipt. The notifications table is
 // the idempotency log — see hasReminderBeenSent() below.
 //
-// WhatsApp is deliberately omitted at v1: outside Meta's 24-hour customer-
-// service window, the only legal outbound is a pre-approved template, and
-// `gmc_event_reminder_48h` isn't approved yet. The cron-run orchestrator
-// will start sending WA once the template lands; for now email-only.
+// WhatsApp: outside Meta's 24-hour window only an approved template may be
+// sent, so the 48h WhatsApp reminder starts by itself once
+// `gmc_event_reminder_48h` is approved on Meta, and does nothing until then.
 
 type Locale = "zh" | "en";
 
@@ -183,7 +185,56 @@ export async function sendEventReminder(
   return { ok: true, sent: true };
 }
 
-type SendEmailResult = Awaited<ReturnType<typeof sendEmail>>;
+const WA_REMINDER_TEMPLATE = "gmc_event_reminder_48h";
+
+/** The 48-hour WhatsApp reminder. False when nothing was attempted. */
+export async function sendWhatsAppReminder(
+  input: ReminderInput & { participant: ReminderInput["participant"] & { region?: string | null } },
+): Promise<boolean> {
+  const { enrollment, participant, event, window } = input;
+  if (window !== "48h" || !enrollment.qr_token) return false;
+
+  // Not approved yet: leave no log row, so it can send once it is.
+  const def = await findTemplate(WA_REMINDER_TEMPLATE).catch(() => undefined);
+  const locale = pickLocale(participant);
+  const language = locale === "zh" ? "zh_CN" : "en_US";
+  if (!def || def.params.length !== 5 || !def.languages.includes(language)) return false;
+
+  const phone = normalizePhone(participant.phone, participant.region);
+  if (!phone.ok) return false;
+
+  const venue = [event.venue, event.city].filter(Boolean).join(", ") || "—";
+  const result = await sendWhatsAppTemplate({
+    to: phone.e164,
+    template: WA_REMINDER_TEMPLATE,
+    languageCode: def.meta_language_by_language?.[language] ?? language,
+    components: [
+      {
+        type: "body",
+        parameters: [
+          participantName(participant),
+          eventTitle(event, locale),
+          formatEventDate(event.start_date, locale),
+          venue,
+          buildCheckInUrl(enrollment.qr_token),
+        ].map((text) => ({ type: "text" as const, text })),
+      },
+    ],
+  });
+
+  await logReminder({
+    enrollment_id: enrollment.id,
+    event_id: event.id,
+    participant_id: participant.id,
+    channel: "whatsapp",
+    template: templateNameForReminder(window, "whatsapp"),
+    to: phone.e164,
+    result,
+  });
+  return true;
+}
+
+type SendEmailResult = { mocked?: boolean; id?: string; error?: string };
 
 async function logReminder(params: {
   enrollment_id: string;

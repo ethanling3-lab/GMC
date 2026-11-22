@@ -8,7 +8,7 @@ import {
   type ConversationWindowRow,
   type WindowChannel,
 } from "@/lib/inbox/window";
-import type { WhatsAppAutomations } from "./automations-types";
+import type { WhatsAppAutomations, WhatsAppFaq } from "./automations-types";
 
 // Automatic WhatsApp messages admins configure on /admin/whatsapp.
 
@@ -17,11 +17,22 @@ export async function loadWhatsAppAutomations(
 ): Promise<WhatsAppAutomations | null> {
   const { data, error } = await service
     .from("whatsapp_automations")
-    .select("welcome_enabled, welcome_en, welcome_zh")
+    .select(
+      "welcome_enabled, welcome_en, welcome_zh, faqs_enabled, followup_enabled, followup_after_days, followup_enabled_at",
+    )
     .eq("id", true)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as WhatsAppAutomations | null) ?? null;
+}
+
+export async function loadWhatsAppFaqs(service: SupabaseClient): Promise<WhatsAppFaq[]> {
+  const { data, error } = await service
+    .from("whatsapp_faqs")
+    .select("id, question, answer_en, answer_zh")
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as WhatsAppFaq[];
 }
 
 /**

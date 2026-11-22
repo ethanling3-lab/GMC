@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
-import { loadWhatsAppAutomations } from "@/lib/whatsapp/automations";
+import { loadWhatsAppAutomations, loadWhatsAppFaqs } from "@/lib/whatsapp/automations";
 import { WhatsAppSetup } from "@/components/admin/whatsapp/WhatsAppSetup";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
@@ -17,7 +17,11 @@ export default async function WhatsAppSetupPage() {
   const admin = await requireAdmin();
   if (!VIEW_ROLES.has(admin.role)) redirect("/admin");
 
-  const settings = await loadWhatsAppAutomations(createSupabaseServiceClient());
+  const service = createSupabaseServiceClient();
+  const [settings, faqs] = await Promise.all([
+    loadWhatsAppAutomations(service),
+    loadWhatsAppFaqs(service),
+  ]);
   if (!settings) throw new Error("whatsapp_automations has no settings row");
 
   return (
@@ -35,6 +39,7 @@ export default async function WhatsAppSetupPage() {
       </p>
       <WhatsAppSetup
         settings={settings}
+        faqs={faqs}
         canEdit={admin.role === "super_admin" || admin.role === "regional_lead"}
       />
     </div>

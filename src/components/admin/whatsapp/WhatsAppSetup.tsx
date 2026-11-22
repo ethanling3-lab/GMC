@@ -3,47 +3,22 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WELCOME_MAX_CHARS, type WhatsAppAutomations } from "@/lib/whatsapp/automations-types";
-
-const rowShell =
-  "rounded-[14px] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)]";
-
-const setupBtn =
-  "shrink-0 inline-flex items-center justify-center h-10 min-w-[116px] px-5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[13px] font-medium text-[var(--paper-warm)] whitespace-nowrap hover:bg-[var(--cinnabar-deep)] active:translate-y-px focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] disabled:opacity-50 transition-[background-color,transform] duration-[var(--dur-fast)]";
-
-function Row({
-  title,
-  detail,
-  children,
-}: {
-  title: string;
-  detail: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 px-5 py-4">
-      <div className="min-w-[200px] flex-1">
-        <h2 className="text-[15.5px] font-medium leading-snug text-[var(--ink)]">{title}</h2>
-        <p className="mt-0.5 text-[12.5px] leading-[1.55] text-[var(--ink-mute)]">{detail}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function ComingSoon() {
-  return (
-    <span className="shrink-0 inline-flex items-center justify-center h-10 min-w-[116px] px-5 rounded-[var(--radius-pill)] bg-[var(--paper-deep)] text-[13px] text-[var(--ink-mute)] whitespace-nowrap">
-      Coming soon · 即将推出
-    </span>
-  );
-}
+import {
+  WELCOME_MAX_CHARS,
+  type WhatsAppAutomations,
+  type WhatsAppFaq,
+} from "@/lib/whatsapp/automations-types";
+import { FaqCard } from "./FaqCard";
+import { FollowUpCard } from "./FollowUpCard";
+import { Row, rowShell, setupBtn } from "./setup-ui";
 
 export function WhatsAppSetup({
   settings,
+  faqs,
   canEdit,
 }: {
   settings: WhatsAppAutomations;
+  faqs: WhatsAppFaq[];
   canEdit: boolean;
 }) {
   return (
@@ -51,30 +26,16 @@ export function WhatsAppSetup({
       <div className={rowShell}>
         <Row
           title="Send a message broadcast · 群发消息"
-          detail="Official notices to event participants. Hold marketing until subscribers are added."
+          detail="Official notices to event participants, and marketing to people who subscribed."
         >
           <Link href="/admin/broadcasts" className={setupBtn} style={{ color: "var(--paper-warm)" }}>
             Set up · 设置
           </Link>
         </Row>
       </div>
-      <div className={rowShell}>
-        <Row
-          title="Automate your FAQs · 自动回答常见问题"
-          detail="Add your answers once, and the AI uses them to reply."
-        >
-          <ComingSoon />
-        </Row>
-      </div>
+      <FaqCard initialEnabled={settings.faqs_enabled} initialFaqs={faqs} canEdit={canEdit} />
       <WelcomeCard settings={settings} canEdit={canEdit} />
-      <div className={rowShell}>
-        <Row
-          title="Set follow-up message · 跟进消息"
-          detail="Remind people automatically after a set time."
-        >
-          <ComingSoon />
-        </Row>
-      </div>
+      <FollowUpCard settings={settings} canEdit={canEdit} />
     </div>
   );
 }

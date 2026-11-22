@@ -4,6 +4,7 @@ import { ensureQrToken } from "../check-in/qr-token";
 import {
   hasReminderBeenSent,
   sendEventReminder,
+  sendWhatsAppReminder,
   type ReminderWindow,
 } from "./notify-reminder";
 
@@ -41,6 +42,7 @@ type EnrolmentRow = {
     name_cn: string | null;
     email: string | null;
     phone: string | null;
+    region: string | null;
     language_fluency: string | null;
   } | null;
   event: {
@@ -127,7 +129,7 @@ async function runForWindow(
     .from("enrollments")
     .select(
       "id, event_id, participant_id, status, payment_status, qr_token, " +
-        "participant:participants!inner(id, name_en, name_cn, email, phone, language_fluency), " +
+        "participant:participants!inner(id, name_en, name_cn, email, phone, region, language_fluency), " +
         "event:events!inner(id, slug, title_en, title_cn, start_date, venue, city)",
     )
     .in("event_id", eventIds)
@@ -142,10 +144,6 @@ async function runForWindow(
     summary.scanned += 1;
 
     if (!row.participant || !row.event) continue;
-    if (!row.participant.email) {
-      summary.skipped_no_email += 1;
-      continue;
-    }
 
     // Ensure the participant has a qr_token. Lazy mint covers any paid row
     // whose token was never persisted (legacy + paid-via-webhook race).
@@ -156,6 +154,30 @@ async function runForWindow(
         summary.skipped_no_token += 1;
         continue;
       }
+    }
+
+    // WhatsApp runs on its own record, so someone with no email still gets it.
+    if (window === "48h" && !(await hasReminderBeenSent(row.id, window, "whatsapp"))) {
+      try {
+        await sendWhatsAppReminder({
+          enrollment: {
+            id: row.id,
+            event_id: row.event_id,
+            participant_id: row.participant_id,
+            qr_token: qrToken,
+          },
+          participant: row.participant,
+          event: row.event,
+          window,
+        });
+      } catch (err) {
+        console.warn(`[reminders] WhatsApp failed for enrolment ${row.id}: ${err}`);
+      }
+    }
+
+    if (!row.participant.email) {
+      summary.skipped_no_email += 1;
+      continue;
     }
 
     const already = await hasReminderBeenSent(row.id, window, "email");
