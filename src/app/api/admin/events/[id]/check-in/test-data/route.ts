@@ -9,9 +9,9 @@ export const runtime = "nodejs";
 
 // DELETE /api/admin/events/[id]/check-in/test-data
 //
-// Removes every check-in and out-of-class record made while the event was in
-// test mode (is_test), so a rehearsal leaves nothing behind. Real records are
-// never touched.
+// Removes every record made while the event was in test mode (is_test): check-ins
+// and any rows left in the retired out-of-class log. Real records are never
+// touched.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 

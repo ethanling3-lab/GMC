@@ -3,22 +3,16 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
-import { closeOpenExits } from "@/lib/check-in/check-in-write";
 import { canRunEvent, resolveDeskContext } from "@/lib/check-in/gate";
-import { CHECK_IN_MODES, isClass } from "@/lib/check-in/mode";
+import { CHECK_IN_MODES } from "@/lib/check-in/mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // PATCH /api/admin/events/[id]/check-in/mode  { mode }
 //
-// The organizer moves the event between Morning registration → Morning
-// class → Official break → Afternoon registration → Afternoon class. Every
-// desk picks the new mode up on its next poll.
-//
-// Leaving a class mode closes everyone still out as "didn't scan back"
-// (closed_reason = session_ended) — the class is over, so the trip ends here.
-// Leftover open exits from an earlier day are closed on any switch.
+// The organizer moves the event between Morning and Afternoon registration.
+// Every desk picks the new mode up on its next poll.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -52,19 +46,15 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       .eq("id", eventId);
     if (error) throw new Error(error.message);
 
-    // Close exits after the switch, so a desk scan racing the switch can't
-    // open a new one behind the sweep (its POST now gets mode_changed).
-    const closed = mode !== ctx.mode || !isClass(mode) ? await closeOpenExits(eventId, admin.id) : 0;
-
     await writeAuditLog({
       actor_id: admin.id,
       action: "check_in.mode_changed",
       entity: "events",
       entity_id: eventId,
-      metadata: { from: ctx.mode, to: mode, closed_exits: closed },
+      metadata: { from: ctx.mode, to: mode },
     });
 
-    return NextResponse.json({ ok: true, mode, closed_exits: closed });
+    return NextResponse.json({ ok: true, mode });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     console.error("[check-in mode PATCH]", msg);

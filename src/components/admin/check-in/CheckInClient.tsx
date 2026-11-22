@@ -4,13 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { UNGROUPED_GROUP_ID } from "@/lib/check-in/types";
 import { EVENT_TZ, dayLabel, shortDate, type DayOption } from "@/lib/check-in/day";
-import { SESSIONS, SESSION_LABEL, type Session } from "@/lib/check-in/mode";
+import { SESSIONS, SESSION_LABEL, sessionOf, type Session } from "@/lib/check-in/mode";
 import type { CheckInSnapshot } from "@/lib/check-in/check-in-query";
 import { GroupCompletionCard } from "./GroupCompletionCard";
 import { AbsenteeRow } from "./AbsenteeRow";
 import { DeskScanner } from "./DeskScanner";
 import { ModeBar } from "./ModeBar";
-import { OutOfClassPanel } from "./OutOfClassPanel";
 import { CheckInSettings } from "./CheckInSettings";
 import { groupNumber } from "@/lib/group-number";
 import { useCenterSelected } from "@/lib/check-in/use-center-selected";
@@ -18,7 +17,7 @@ import { useCenterSelected } from "@/lib/check-in/use-center-selected";
 // One-stop check-in page for ONE event day: the organizer's mode bar, the
 // headcount for both registrations, the desk scanner (camera + manual
 // search), then "who's still missing, and in which group" for the session
-// being viewed, and the out-of-class log. Badges are pre-sorted into group
+// being viewed. Badges are pre-sorted into group
 // piles, so groups are listed in the order of the number on the pile.
 // Every desk runs this same page; it polls every 5s so desks see each
 // other's scans and the organizer's mode switches, and refreshes at once
@@ -60,7 +59,7 @@ export function CheckInClient({
   const dayRowRef = useCenterSelected<HTMLElement>('[aria-current="page"]', day);
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
-  const { stats, recent, groups, absent, desk, bySession, outNow, exitTotals } = snap;
+  const { stats, recent, groups, absent, desk, bySession } = snap;
   const today = desk.today;
 
   const refresh = useCallback(
@@ -76,16 +75,11 @@ export function CheckInClient({
         shownModeRef.current = json.desk.mode;
         setSnap(json);
         // Organizer moved into the other session on the live day → follow.
-        const live = json.desk.mode.startsWith("pm")
-          ? "pm"
-          : json.desk.mode.startsWith("am")
-            ? "am"
-            : null;
+        const live = sessionOf(json.desk.mode);
         if (
           modeMoved &&
           day === json.desk.today &&
           !pickedSessionRef.current &&
-          live &&
           live !== json.session
         ) {
           setViewSession(live);
@@ -122,9 +116,6 @@ export function CheckInClient({
   const remaining = Math.max(0, stats.total_eligible - stats.total_checked_in);
   const isToday = day === today;
   const sessionL = SESSION_LABEL[stats.session ?? viewSession];
-  const longOut = outNow.filter(
-    (o) => Date.now() - Date.parse(o.out_at) > desk.longAbsenceMinutes * 60_000,
-  ).length;
 
   const realGroups = groups.filter((g) => g.group_id !== UNGROUPED_GROUP_ID);
   const groupsComplete = realGroups.filter(
@@ -227,7 +218,6 @@ export function CheckInClient({
           eventId={eventId}
           mode={desk.mode}
           canRun={canRun}
-          outNowCount={outNow.length}
           onChanged={refreshNow}
         />
       ) : null}
@@ -258,13 +248,6 @@ export function CheckInClient({
           />
         ))}
         <Figure label="Not here yet · 未到" value={remaining} />
-        {isToday ? (
-          <Figure
-            label={longOut > 0 ? `Out now · ${longOut} over ${desk.longAbsenceMinutes} min` : "Out now · 目前在外"}
-            value={outNow.length}
-            tone={longOut > 0 ? "alert" : undefined}
-          />
-        ) : null}
         <Figure
           label="Groups complete · 小组到齐"
           value={`${groupsComplete} / ${realGroups.length}`}
@@ -286,16 +269,15 @@ export function CheckInClient({
 
       {canRun ? (
         <CheckInSettings
-          key={`${desk.testMode}-${desk.longAbsenceMinutes}`}
           eventId={eventId}
           testMode={desk.testMode}
-          longAbsenceMinutes={desk.longAbsenceMinutes}
           onChanged={refreshNow}
         />
       ) : null}
 
       {/* Which registration the panels below are about */}
-      <div role="tablist" aria-label="Session" className="inline-flex self-start p-1 rounded-[var(--radius-pill)] bg-[var(--paper-deep)]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div role="tablist" aria-label="Session" className="inline-flex p-1 rounded-[var(--radius-pill)] bg-[var(--paper-deep)]">
         {SESSIONS.map((s) => {
           const active = s === viewSession;
           return (
@@ -318,6 +300,17 @@ export function CheckInClient({
             </button>
           );
         })}
+      </div>
+        <a
+          href={`/api/admin/events/${eventId}/check-in/export.xlsx?day=${day}`}
+          className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[var(--radius-pill)] bg-[var(--paper)] border border-[var(--paper-shadow)] text-[12.5px] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)] active:translate-y-px focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[border-color,color,transform] duration-[var(--dur-fast)]"
+          style={{ color: "var(--ink-soft)" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
+          </svg>
+          Export Excel · 导出
+        </a>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-6 items-start">
@@ -396,14 +389,6 @@ export function CheckInClient({
         </section>
       </div>
 
-      <OutOfClassPanel
-        outNow={outNow}
-        totals={exitTotals}
-        longAbsenceMinutes={desk.longAbsenceMinutes}
-        isToday={isToday}
-        exportHref={`/api/admin/events/${eventId}/check-in/export.xlsx?day=${day}`}
-      />
-
       {/* Recent */}
       <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">
         <PanelHead title="Latest arrivals · 最新签到" meta={recent.length ? "Last 20" : ""} />
@@ -449,18 +434,14 @@ function Figure({
 }: {
   label: string;
   value: number | string;
-  tone?: "warn" | "alert";
+  tone?: "warn";
 }) {
   return (
     <div>
       <div className="text-[12px] text-[var(--ink-mute)]">{label}</div>
       <div
         className={`mt-1 font-display text-[30px] leading-none tracking-[-0.02em] tabular-nums ${
-          tone === "warn"
-            ? "text-[var(--gold-deep,#A87A2A)]"
-            : tone === "alert"
-              ? "text-[#B91C1C]"
-              : "text-[var(--ink)]"
+          tone === "warn" ? "text-[var(--gold-deep,#A87A2A)]" : "text-[var(--ink)]"
         }`}
       >
         {value}

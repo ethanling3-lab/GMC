@@ -113,7 +113,7 @@ export type CheckInAbsentRow = {
   table_no: number | null;
 };
 
-// --- Sessions + out of class (Phase 3) -----------------------------------------
+// --- Sessions -----------------------------------------------------------------
 
 /** Arrived / expected for each registration of the day — the headcount row. */
 export type SessionCounts = Record<Session, { arrived: number; expected: number }>;
@@ -126,38 +126,5 @@ export type DeskState = {
   testMode: boolean;
   /** Today isn't an event date and test mode is off: desks can't scan. */
   locked: boolean;
-  longAbsenceMinutes: number;
   modeSetAt: string | null;
-};
-
-/** Someone out of class right now. */
-export type OutNowRow = {
-  exit_id: string;
-  enrollment_id: string;
-  region_id: string | null;
-  name_cn: string | null;
-  name_en: string | null;
-  group_no: number | null;
-  table_no: number | null;
-  session: Session;
-  out_at: string;
-  not_checked_in: boolean;
-};
-
-/** One person's out-of-class record for a day. Open trips count up to now. */
-export type ExitTotalRow = {
-  enrollment_id: string;
-  region_id: string | null;
-  name_cn: string | null;
-  name_en: string | null;
-  group_no: number | null;
-  table_no: number | null;
-  trips: number;
-  total_minutes: number;
-  longest_minutes: number;
-  /** Trips closed because the class ended before they scanned back. */
-  no_return: number;
-  /** Trips longer than the event's long-absence threshold. */
-  long_trips: number;
-  still_out: boolean;
 };

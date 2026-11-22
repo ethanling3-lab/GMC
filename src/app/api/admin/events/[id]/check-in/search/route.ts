@@ -12,8 +12,7 @@ export const runtime = "nodejs";
 // Manual-search typeahead for the scanner page. Returns paid + approved
 // (unpaid → `paid: false`) enrolments matching region_id / name_cn / name_en /
 // phone (ILIKE), with each row's check-in status for TODAY's `session`
-// (am | pm, default am) and whether they're out of class right now, so the
-// desk can show Check in / ✓ or Out / Back.
+// (am | pm, default am), so the desk can show Check in or ✓.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 

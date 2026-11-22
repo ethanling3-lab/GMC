@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
-import { performCheckIn, performClassScan, undoCheckIn } from "@/lib/check-in/check-in-write";
+import { performCheckIn, undoCheckIn } from "@/lib/check-in/check-in-write";
 import { loadDaySnapshot, loadStats } from "@/lib/check-in/check-in-query";
 import { isIsoDay, todayInEventTz } from "@/lib/check-in/day";
 import { resolveDeskContext } from "@/lib/check-in/gate";
-import { CHECK_IN_MODES, isClass, isSession } from "@/lib/check-in/mode";
+import { CHECK_IN_MODES, isSession } from "@/lib/check-in/mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,14 +22,8 @@ export const runtime = "nodejs";
 //                   with the live mode, and the desk asks for a rescan.
 //   allow_unpaid  — the desk confirmed an approved-but-unpaid attendee after
 //                   the 402 `unpaid` response.
-//   intent        — class modes, manual list only: "out" or "back".
-//   force_check_in — registration of a specific session from the
-//                   out-of-class "Check in now" button: { session }.
 //
-// What it does follows the event's live mode (gate.ts):
-//   registration → check-in for that session (CheckInResult)
-//   class        → out / back toggle (ClassScanResult, `kind: "class"`)
-//   break        → 409 `break`, nothing recorded
+// The check-in lands on the session the organizer has live (gate.ts).
 // Outside the event dates with test mode off → 403 `locked`.
 //
 // Check-in errors carry the person (when known) so the desk can still show
@@ -48,10 +42,6 @@ const Body = z
     method: z.enum(["qr", "manual", "face_match"]).optional(),
     allow_unpaid: z.boolean().optional(),
     mode: z.enum(CHECK_IN_MODES).optional(),
-    intent: z.enum(["out", "back"]).optional(),
-    // "Check in now" from an out-of-class card: register this session
-    // regardless of the class mode the desk is in.
-    check_in_session: z.enum(["am", "pm"]).optional(),
   })
   .refine(
     (v) => Boolean(v.qr_token) !== Boolean(v.enrollment_id),
@@ -95,39 +85,11 @@ export async function POST(req: Request, { params }: RouteCtx) {
         { status: 403 },
       );
     }
-    const modeChanged = body.mode !== undefined && body.mode !== ctx.mode;
-
-    // Out-of-class "Check in now": a registration for an explicit session,
-    // allowed while that session's class is running.
-    const forceSession = isSession(body.check_in_session) ? body.check_in_session : null;
-
-    if (!forceSession) {
-      if (modeChanged) {
-        return NextResponse.json(
-          { ok: false, error: "mode_changed", mode: ctx.mode },
-          { status: 409 },
-        );
-      }
-      if (ctx.mode === "break" || ctx.session === null) {
-        return NextResponse.json({ ok: false, error: "break" }, { status: 409 });
-      }
-      if (isClass(ctx.mode)) {
-        const result = await performClassScan({
-          eventId,
-          actorId: admin.id,
-          day: ctx.day,
-          session: ctx.session,
-          isTest: ctx.testMode,
-          qrToken: body.qr_token ?? null,
-          enrollmentId: body.enrollment_id ?? null,
-          intent: body.intent,
-        });
-        if (!result.ok) {
-          const status = result.error === "not_found" ? 404 : 400;
-          return NextResponse.json({ kind: "class", ...result }, { status });
-        }
-        return NextResponse.json({ kind: "class", ...result });
-      }
+    if (body.mode !== undefined && body.mode !== ctx.mode) {
+      return NextResponse.json(
+        { ok: false, error: "mode_changed", mode: ctx.mode },
+        { status: 409 },
+      );
     }
 
     const result = await performCheckIn({
@@ -136,7 +98,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
       method:
         body.method ?? (body.qr_token ? "qr" : "manual"),
       checkInDate: ctx.day,
-      session: forceSession ?? ctx.session!,
+      session: ctx.session,
       isTest: ctx.testMode,
       qrToken: body.qr_token ?? null,
       enrollmentId: body.enrollment_id ?? null,

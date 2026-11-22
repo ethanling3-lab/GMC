@@ -4,8 +4,8 @@ import { groupNumber } from "@/lib/group-number";
 import type { CheckInPerson } from "@/lib/check-in/types";
 import { EVENT_TZ } from "@/lib/check-in/day";
 
-// Result cards shown over the camera at a check-in desk: registration
-// (checked in / already / unpaid) and, during class, out / back.
+// Result cards shown over the camera at a check-in desk: checked in, already
+// checked in, unpaid.
 //
 // The badges are printed in advance and sorted into piles by group, so after
 // a scan the desk's only job is "find this name in that pile". The group
@@ -64,13 +64,9 @@ function NameBlock({ person }: { person: DeskPerson }) {
   );
 }
 
-function Icon({ kind }: { kind: "ok" | "warn" | "error" | "out" }) {
+function Icon({ kind }: { kind: "ok" | "warn" | "error" }) {
   const bg =
-    kind === "ok"
-      ? "var(--cinnabar)"
-      : kind === "warn" || kind === "out"
-        ? "var(--gold-deep, #A87A2A)"
-        : "#B91C1C";
+    kind === "ok" ? "var(--cinnabar)" : kind === "warn" ? "var(--gold-deep, #A87A2A)" : "#B91C1C";
   return (
     <div
       className="flex items-center justify-center w-11 h-11 rounded-full mx-auto mb-3"
@@ -80,12 +76,6 @@ function Icon({ kind }: { kind: "ok" | "warn" | "error" | "out" }) {
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
         {kind === "ok" ? (
           <polyline points="5 12 10 17 19 8" />
-        ) : kind === "out" ? (
-          <>
-            <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
-            <polyline points="9 8 5 12 9 16" />
-            <line x1="5" y1="12" x2="15" y2="12" />
-          </>
         ) : (
           <>
             <line x1="12" y1="7.5" x2="12" y2="13" />
@@ -211,94 +201,13 @@ export function CheckInErrorCard({
   );
 }
 
-// --- Out of class ------------------------------------------------------------
-
-export type ClassAction = "out" | "back" | "already_out" | "already_back";
-
-/**
- * Out / back result. "Out" is the one to notice (they're leaving), so it
- * carries the warm colour; "back" is a quiet confirmation with the minutes.
- * Not checked in for this session → warning + one-tap check-in.
- */
-export function ClassScanCard({
-  person,
-  action,
-  outAt,
-  minutes,
-  notCheckedIn,
-  checkingIn,
-  onCheckInNow,
-  onDismiss,
-}: {
-  person: DeskPerson;
-  action: ClassAction;
-  outAt: string | null;
-  minutes: number | null;
-  notCheckedIn: boolean;
-  checkingIn: boolean;
-  onCheckInNow: () => void;
-  onDismiss: () => void;
-}) {
-  const out = action === "out" || action === "already_out";
-  const headline =
-    action === "out"
-      ? `Out · 外出${outAt ? ` ${formatTime(outAt)}` : ""}`
-      : action === "already_out"
-        ? `Already out · 已外出${outAt ? ` since ${formatTime(outAt)}` : ""}`
-        : action === "back"
-          ? `Back · 回来${minutes !== null ? ` · out ${minutes} min` : ""}`
-          : "Already back · 已回来";
-  return (
-    <div
-      role="status"
-      className={`${cardShell} ${out ? "border-[#A87A2A]" : "border-[var(--paper-deep)]"}`}
-    >
-      <Icon kind={out ? "out" : "ok"} />
-      <div
-        className={`text-[15px] font-medium mb-2 tabular-nums ${
-          out ? "text-[var(--gold-deep,#A87A2A)]" : "text-[var(--cinnabar)]"
-        }`}
-      >
-        {headline}
-      </div>
-      <NameBlock person={person} />
-      <GroupBlock person={person} />
-      {notCheckedIn ? (
-        <div className="mt-4 rounded-[14px] border border-[#A87A2A] bg-[#A87A2A]/10 px-4 py-3 text-left">
-          <div className="text-[13px] font-medium text-[var(--ink)]">
-            Not checked in this session · 本时段未签到
-          </div>
-          <div className="mt-0.5 text-[12px] leading-[1.5] text-[var(--ink-soft)]">
-            Their exit is logged anyway. Check them in if they were in class.
-          </div>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={onCheckInNow}
-              disabled={checkingIn}
-              className="inline-flex items-center justify-center h-10 px-4 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[13px] font-medium text-[var(--paper)] hover:bg-[var(--cinnabar-deep)] active:translate-y-px disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[background-color,transform] duration-[var(--dur-fast)]"
-            >
-              {checkingIn ? "Checking in…" : "Check in now · 立即签到"}
-            </button>
-            <button type="button" onClick={onDismiss} className={`${secondaryBtn} h-10`}>
-              Skip · 跳过
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 /** Bilingual message for a check-in API error code. */
 export function checkInErrorMessage(code: string): string {
   switch (code) {
     case "locked":
       return "Check-in is only open on the event dates · 活动日期才开放签到";
-    case "break":
-      return "Official break — nothing is logged · 官方休息，不登记";
     case "mode_changed":
-      return "The organizer just switched mode. Scan again · 模式已切换，请重新扫码";
+      return "The organizer just switched registration. Scan again · 签到时段已切换，请重新扫码";
     case "wrong_event":
       return "This QR is for a different event · 此二维码不属于本场活动";
     case "not_eligible":

@@ -12,22 +12,14 @@ import {
 } from "@/lib/check-in/audio-cues";
 import { groupNumber } from "@/lib/group-number";
 import { EVENT_TZ } from "@/lib/check-in/day";
-import {
-  MODE_LABEL,
-  SESSION_LABEL,
-  isClass,
-  sessionOf,
-  type Session,
-} from "@/lib/check-in/mode";
+import { SESSION_LABEL, sessionOf, type Session } from "@/lib/check-in/mode";
 import type { DeskState } from "@/lib/check-in/types";
 import {
   CheckInAlreadyCard,
   CheckInErrorCard,
   CheckInSuccessCard,
   CheckInUnpaidCard,
-  ClassScanCard,
   checkInErrorMessage,
-  type ClassAction,
   type DeskPerson,
 } from "./CheckInResultCards";
 
@@ -41,11 +33,10 @@ import {
 // is showing another day, the panel steps aside rather than let anyone
 // think they're checking people in for that day.
 //
-// What a scan does follows the organizer's live mode (desk.mode):
-// registration checks people in for that session, class logs them out and
-// back, an official break records nothing. Every POST carries the mode this
-// desk is showing; if the organizer switched in between, the server refuses
-// (mode_changed) and the desk refreshes and asks for a rescan.
+// A scan checks the person in for the registration the organizer has on
+// (desk.mode). Every POST carries the mode this desk is showing; if the
+// organizer switched in between, the server refuses (mode_changed) and the
+// desk refreshes and asks for a rescan.
 
 type Props = {
   eventId: string;
@@ -57,7 +48,7 @@ type Props = {
   active: boolean;
   /** Link to today's view, for the "switch to Today" note. */
   todayHref: string;
-  /** A check-in, exit or undo happened — refresh the dashboard. */
+  /** A check-in or undo happened — refresh the dashboard. */
   onCheckedIn: () => void;
 };
 
@@ -71,19 +62,7 @@ type FeedbackState =
       person: DeskPerson;
       enrollmentId: string;
       method: "qr" | "manual";
-      /** Set when this came from an out-of-class "Check in now". */
-      checkInSession: Session | null;
       posting: boolean;
-    }
-  | {
-      kind: "class";
-      person: DeskPerson;
-      action: ClassAction;
-      enrollmentId: string;
-      outAt: string | null;
-      minutes: number | null;
-      notCheckedIn: boolean;
-      checkingIn: boolean;
     }
   | { kind: "error"; message: string };
 
@@ -99,7 +78,6 @@ type ManualSearchRow = {
   paid: boolean;
   checked_in_at: string | null;
   check_in_id: string | null;
-  out_since: string | null;
 };
 
 const CAMERA_PREF_KEY = "gmc-desk-camera";
@@ -117,7 +95,6 @@ export function DeskScanner({
 }: Props) {
   const mode = desk.mode;
   const session = sessionOf(mode);
-  const classMode = isClass(mode);
   const [feedback, setFeedback] = useState<FeedbackState>({ kind: "idle" });
   // Off until someone presses "Start scanning", so opening the page on a
   // laptop doesn't trigger a camera prompt. A desk device remembers it was
@@ -175,7 +152,7 @@ export function DeskScanner({
       setSearching(true);
       try {
         const res = await fetch(
-          `/api/admin/events/${eventId}/check-in/search?q=${encodeURIComponent(manualQ)}&session=${session ?? "am"}`,
+          `/api/admin/events/${eventId}/check-in/search?q=${encodeURIComponent(manualQ)}&session=${session}`,
           { cache: "no-store" },
         );
         if (!res.ok) {
@@ -219,18 +196,13 @@ export function DeskScanner({
     status: number,
     json: unknown,
     method: "qr" | "manual",
-    checkInSession: Session | null = null,
   ) => {
     const r = json as {
       ok?: boolean;
-      kind?: "class";
       error?: string;
       enrollment_id?: string;
       checked_in_at?: string;
       check_in?: { unpaid_override?: boolean };
-      action?: ClassAction;
-      exit?: { out_at: string; minutes: number | null };
-      not_checked_in?: boolean;
     } & DeskPerson;
     const person: DeskPerson = {
       participant: r.participant,
@@ -238,26 +210,6 @@ export function DeskScanner({
       table_no: r.table_no,
       seat_no: r.seat_no,
     };
-    if (status === 200 && r.ok === true && r.kind === "class" && r.action && r.enrollment_id) {
-      setFeedback({
-        kind: "class",
-        person,
-        action: r.action,
-        enrollmentId: r.enrollment_id,
-        outAt: r.exit?.out_at ?? null,
-        minutes: r.exit?.minutes ?? null,
-        notCheckedIn: r.not_checked_in === true && r.action === "out",
-        checkingIn: false,
-      });
-      if (r.action === "already_out" || r.action === "already_back" || r.not_checked_in) {
-        playWarn();
-      } else {
-        playSuccess();
-      }
-      onCheckedIn();
-      setSearchNonce((n) => n + 1);
-      return;
-    }
     if (status === 200 && r.ok === true) {
       setFeedback({
         kind: "success",
@@ -282,7 +234,6 @@ export function DeskScanner({
         person,
         enrollmentId: r.enrollment_id,
         method,
-        checkInSession,
         posting: false,
       });
       playWarn();
@@ -290,9 +241,9 @@ export function DeskScanner({
     }
     setFeedback({ kind: "error", message: checkInErrorMessage(err) });
     playError();
-    // Locked / break / mode_changed mean this desk's view of the mode is
+    // Locked / mode_changed mean this desk's view of the mode is
     // stale — pull the live state now rather than on the next tick.
-    if (err === "mode_changed" || err === "break" || err === "locked") onCheckedIn();
+    if (err === "mode_changed" || err === "locked") onCheckedIn();
   };
 
   // Success / already-checked-in clear themselves; an unpaid prompt or an
@@ -304,11 +255,7 @@ export function DeskScanner({
     cooldownRef.current = window.setTimeout(() => {
       lastTokenRef.current = null;
       setFeedback((f) =>
-        f.kind === "success" ||
-        f.kind === "already" ||
-        (f.kind === "class" && !f.notCheckedIn)
-          ? { kind: "idle" }
-          : f,
+        f.kind === "success" || f.kind === "already" ? { kind: "idle" } : f,
       );
     }, COOLDOWN_MS);
   };
@@ -330,43 +277,10 @@ export function DeskScanner({
           enrollment_id: pending.enrollmentId,
           method: pending.method,
           allow_unpaid: true,
-          ...(pending.checkInSession
-            ? { check_in_session: pending.checkInSession }
-            : { mode }),
+          mode,
         }),
       });
-      handleCheckInResponse(
-        res.status,
-        await res.json(),
-        pending.method,
-        pending.checkInSession,
-      );
-    } catch (err) {
-      setFeedback({
-        kind: "error",
-        message: err instanceof Error ? err.message : "Network error",
-      });
-    } finally {
-      scheduleClear();
-    }
-  };
-
-  // "Check in now" on an out-of-class card: register them for this session.
-  const checkInNow = async () => {
-    if (feedback.kind !== "class" || feedback.checkingIn || !session) return;
-    const pending = feedback;
-    setFeedback({ ...pending, checkingIn: true });
-    try {
-      const res = await fetch(`/api/admin/events/${eventId}/check-in`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enrollment_id: pending.enrollmentId,
-          method: "manual",
-          check_in_session: session,
-        }),
-      });
-      handleCheckInResponse(res.status, await res.json(), "manual", session);
+      handleCheckInResponse(res.status, await res.json(), pending.method);
     } catch (err) {
       setFeedback({
         kind: "error",
@@ -406,12 +320,11 @@ export function DeskScanner({
   );
 
   const performManualCheckIn = useCallback(
-    async (row: ManualSearchRow, intent?: "out" | "back") => {
+    async (row: ManualSearchRow) => {
       if (postingId) return;
       // Picking an unpaid row from the list IS the override decision, but
       // make it a deliberate one.
       if (
-        !intent &&
         !row.paid &&
         !window.confirm(
           `${row.name_cn ?? row.name_en ?? "This person"} hasn't paid · 未付款.\nCheck in anyway? · 仍然签到？`,
@@ -428,7 +341,7 @@ export function DeskScanner({
             enrollment_id: row.enrollment_id,
             method: "manual",
             mode,
-            ...(intent ? { intent } : row.paid ? {} : { allow_unpaid: true }),
+            ...(row.paid ? {} : { allow_unpaid: true }),
           }),
         });
         const json = (await res.json()) as unknown;
@@ -484,18 +397,6 @@ export function DeskScanner({
     );
   }
 
-  if (active && mode === "break") {
-    return (
-      <Notice>
-        <strong className="font-medium text-[var(--ink)]">
-          {MODE_LABEL.break.en} · {MODE_LABEL.break.cn}
-        </strong>{" "}
-        — nothing is logged while the break is on · 休息期间不登记. Scanning resumes when the
-        organizer switches to class or registration.
-      </Notice>
-    );
-  }
-
   if (!active) {
     return (
       <section className="rounded-[var(--radius-card)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)] px-5 py-4 text-[13px] text-[var(--ink-soft)]">
@@ -521,12 +422,8 @@ export function DeskScanner({
       {/* Camera card */}
       <section className="w-full max-w-[440px] mx-auto md:mx-0 bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] overflow-hidden shadow-[var(--shadow-paper)]">
         <div className="flex items-center justify-between px-5 pt-4">
-          <div
-            className={`text-[10.5px] tracking-[0.22em] uppercase ${
-              classMode ? "text-[var(--gold-deep,#A87A2A)]" : "text-[var(--cinnabar)]"
-            }`}
-          >
-            {classMode ? "Scan out / back · 外出扫码" : "Scan badge QR · 扫胸牌二维码"}
+          <div className="text-[10.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
+            Scan badge QR · 扫胸牌二维码
           </div>
           {cameraOn ? (
             <button
@@ -542,9 +439,8 @@ export function DeskScanner({
           {cameraOn ? (
             <Scanner
               onScan={(detected) => {
-                // Hold the camera while the desk decides something.
+                // Hold the camera while the desk decides on an unpaid override.
                 if (feedback.kind === "unpaid") return;
-                if (feedback.kind === "class" && feedback.notCheckedIn) return;
                 if (detected && detected.length > 0) {
                   void performScan(detected[0].rawValue);
                 }
@@ -594,17 +490,6 @@ export function DeskScanner({
                   person={feedback.person}
                   checkedInAt={feedback.checkedInAt}
                   sessionLabel={sessionLabel(session)}
-                  onDismiss={dismissFeedback}
-                />
-              ) : feedback.kind === "class" ? (
-                <ClassScanCard
-                  person={feedback.person}
-                  action={feedback.action}
-                  outAt={feedback.outAt}
-                  minutes={feedback.minutes}
-                  notCheckedIn={feedback.notCheckedIn}
-                  checkingIn={feedback.checkingIn}
-                  onCheckInNow={() => void checkInNow()}
                   onDismiss={dismissFeedback}
                 />
               ) : feedback.kind === "unpaid" ? (
@@ -661,11 +546,8 @@ export function DeskScanner({
               <ManualRow
                 key={row.enrollment_id}
                 row={row}
-                classMode={classMode}
                 posting={postingId === row.enrollment_id}
                 onCheckIn={() => void performManualCheckIn(row)}
-                onOut={() => void performManualCheckIn(row, "out")}
-                onBack={() => void performManualCheckIn(row, "back")}
                 onUndo={() =>
                   row.check_in_id ? void performUndo(row.check_in_id) : null
                 }
@@ -689,70 +571,23 @@ function Notice({ children }: { children: React.ReactNode }) {
   );
 }
 
-function sessionLabel(session: Session | null): string {
-  const l = SESSION_LABEL[session ?? "am"];
+function sessionLabel(session: Session): string {
+  const l = SESSION_LABEL[session];
   return `${l.en} · ${l.cn}`;
 }
 
 function ManualRow({
   row,
-  classMode,
   posting,
   onCheckIn,
-  onOut,
-  onBack,
   onUndo,
 }: {
   row: ManualSearchRow;
-  classMode: boolean;
   posting: boolean;
   onCheckIn: () => void;
-  onOut: () => void;
-  onBack: () => void;
   onUndo: () => void;
 }) {
   const isCheckedIn = row.checked_in_at !== null;
-  if (classMode) {
-    return (
-      <li className="px-5 py-2.5 flex items-center gap-3 hover:bg-[var(--paper)]/40 transition-colors">
-        <span
-          className="inline-flex items-center justify-center h-[22px] min-w-[44px] px-2 rounded-[var(--radius-pill)] bg-[var(--paper-deep)] text-[10.5px] tracking-[0.04em] font-medium text-[var(--ink-mute)] tabular-nums"
-          title="Region ID"
-        >
-          {row.region_id ?? "—"}
-        </span>
-        <div className="flex-1 min-w-0 leading-tight">
-          <div className="text-[13px] font-medium text-[var(--ink)] truncate">
-            {row.name_cn ?? row.name_en ?? "(unnamed)"}
-          </div>
-          <div className="text-[10.5px] text-[var(--ink-faint)] tabular-nums truncate">
-            {row.group_no !== null ? `${groupNumber(row).en} · ` : ""}
-            {isCheckedIn ? `In ${formatTime(row.checked_in_at!)}` : "Not checked in · 未签到"}
-          </div>
-        </div>
-        {row.out_since ? (
-          <button
-            type="button"
-            onClick={onBack}
-            disabled={posting}
-            title={`Out since ${formatTime(row.out_since)}`}
-            className="inline-flex items-center h-[28px] px-3 rounded-[var(--radius-pill)] bg-[#A87A2A] text-[var(--paper)] text-[11px] tracking-[0.06em] hover:opacity-90 active:translate-y-px disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[opacity,transform]"
-          >
-            {posting ? "…" : `Back · 回来 (out ${formatTime(row.out_since)})`}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onOut}
-            disabled={posting}
-            className="inline-flex items-center h-[28px] px-3 rounded-[var(--radius-pill)] border border-[#A87A2A] text-[var(--gold-deep,#A87A2A)] text-[11px] tracking-[0.06em] hover:bg-[#A87A2A]/15 active:translate-y-px disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[background-color,transform]"
-          >
-            {posting ? "…" : "Out · 外出"}
-          </button>
-        )}
-      </li>
-    );
-  }
   return (
     <li className="px-5 py-2.5 flex items-center gap-3 hover:bg-[var(--paper)]/40 transition-colors">
       <span
