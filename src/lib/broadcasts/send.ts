@@ -5,9 +5,10 @@ import { sendEmail } from "@/lib/email";
 import { participantEmailLocale } from "@/lib/i18n";
 import { isOutsideWindowError } from "@/lib/inbox/whatsapp-templates-types";
 import { writeAuditLog } from "@/lib/audit";
+import { createUnsubscribeToken } from "@/lib/tokens";
 import { findOrCreateConversationForBroadcast } from "./conversation-resolve";
 import { interpolate, interpolateTemplateParams, type InterpolationContext } from "./interpolate";
-import type { BroadcastErrorCode } from "./types";
+import type { BroadcastErrorCode, BroadcastPurpose } from "./types";
 
 // Per-recipient send for the background fan-out loop.
 //
@@ -38,6 +39,7 @@ export type SendOutcome = {
 
 export type BroadcastForSend = {
   id: string;
+  purpose: BroadcastPurpose;
   created_by: string;
   whatsapp_template_name: string | null;
   whatsapp_template_language: string | null;
@@ -204,6 +206,23 @@ async function sendEmailMirrored(
   const subject = interpolate(subjectTplResolved, ctx);
   const html = interpolate(bodyTplResolved, ctx);
 
+  // Marketing email never leaves without a working way to opt out.
+  let unsubscribeUrl: string | null = null;
+  if (broadcast.purpose === "marketing") {
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+    if (!siteUrl) {
+      return {
+        status: "failed",
+        error_code: "provider",
+        error_message: "Site address not configured, so no unsubscribe link could be added",
+        external_message_id: null,
+        conversation_id: null,
+        message_id: null,
+      };
+    }
+    unsubscribeUrl = `${siteUrl}/unsubscribe/${createUnsubscribeToken(recipient.participant_id)}`;
+  }
+
   const conversationId = await findOrCreateConversationForBroadcast(service, {
     participantId: recipient.participant_id,
     channel: "email",
@@ -240,7 +259,18 @@ async function sendEmailMirrored(
   const sendResult = await sendEmail({
     to: recipient.target_address!,
     subject,
-    html,
+    html: unsubscribeUrl
+      ? `${html}<p style="margin-top:32px;font-size:12px;color:#6b7280">You're receiving this because you subscribed to GMC updates. 您收到此邮件是因为您订阅了 GMC 资讯。<br><a href="${unsubscribeUrl}" style="color:#6b7280">Unsubscribe · 退订</a></p>`
+      : html,
+    ...(unsubscribeUrl
+      ? {
+          textFooter: `Unsubscribe · 退订: ${unsubscribeUrl}`,
+          headers: {
+            "List-Unsubscribe": `<${unsubscribeUrl.replace("/unsubscribe/", "/api/unsubscribe/")}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
+        }
+      : {}),
   });
 
   const success = !sendResult.error;

@@ -6,6 +6,9 @@ type SendParams = {
   subject: string;
   html: string;
   text?: string;
+  /** Added to the plain-text version, for links the tag stripper would lose. */
+  textFooter?: string;
+  headers?: Record<string, string>;
 };
 
 // SMTP is optional during M1. If creds aren't present, we log and return "mocked".
@@ -19,7 +22,7 @@ export function isEmailConfigured(): boolean {
   );
 }
 
-export async function sendEmail({ to, subject, html, text }: SendParams): Promise<{ mocked: boolean; id?: string; error?: string }> {
+export async function sendEmail({ to, subject, html, text, textFooter, headers }: SendParams): Promise<{ mocked: boolean; id?: string; error?: string }> {
   if (!isEmailConfigured()) {
     console.log(`[email:mock] to=${maskEmail(to)} subject="${subject}"`);
     return { mocked: true };
@@ -41,7 +44,8 @@ export async function sendEmail({ to, subject, html, text }: SendParams): Promis
       to,
       subject,
       html,
-      text: text ?? htmlToText(html),
+      text: `${text ?? htmlToText(html)}${textFooter ? `\n\n${textFooter}` : ""}`,
+      headers,
     });
 
     return { mocked: false, id: info.messageId };

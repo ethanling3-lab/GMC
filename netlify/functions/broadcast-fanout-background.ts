@@ -280,6 +280,7 @@ async function processRow(
     supabase,
     {
       id: broadcast.id,
+      purpose: broadcastPurpose(broadcast.audience_filter),
       created_by: broadcast.created_by,
       whatsapp_template_name: broadcast.whatsapp_template_name,
       whatsapp_template_language: broadcast.whatsapp_template_language,

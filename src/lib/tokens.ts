@@ -82,6 +82,23 @@ export function verifyPrefillToken(
   return { participantId };
 }
 
+// Marketing unsubscribe link. Deliberately has no expiry: an old email's link
+// must keep working. It can only ever turn marketing off.
+export function createUnsubscribeToken(participantId: string): string {
+  return `${participantId}.${b64url(hmac(`marketing_unsubscribe|${participantId}`))}`;
+}
+
+export function verifyUnsubscribeToken(token: string): { participantId: string } | null {
+  const [participantId, sig, extra] = token.split(".");
+  if (!participantId || !sig || extra !== undefined) return null;
+  if (!/^[0-9a-f-]{36}$/i.test(participantId)) return null;
+  const expected = b64url(hmac(`marketing_unsubscribe|${participantId}`));
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  return { participantId };
+}
+
 // Stateless payment-access token — binds enrollment_id + expiry in the HMAC,
 // so approvals can mint a `/pay/<token>` URL without persisting anything.
 // Default TTL is 30 days to cover typical payment windows; callers control it.

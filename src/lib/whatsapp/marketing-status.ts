@@ -10,7 +10,8 @@ export type MarketingSource =
   | "whatsapp_keyword"
   | "meta_opt_out"
   | "admin"
-  | "merge";
+  | "merge"
+  | "email_link";
 
 export const MARKETING_STATUS_LABEL: Record<MarketingStatus, { en: string; cn: string }> = {
   not_asked: { en: "Not asked", cn: "未询问" },
