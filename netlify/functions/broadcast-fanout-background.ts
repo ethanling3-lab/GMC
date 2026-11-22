@@ -16,7 +16,11 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sendBroadcastRecipient } from "../../src/lib/broadcasts/send";
 import type { InterpolationContext } from "../../src/lib/broadcasts/interpolate";
-import type { AudienceFilter } from "../../src/lib/broadcasts/types";
+import {
+  broadcastPurpose,
+  computeBroadcastFinalStatus,
+  type AudienceFilter,
+} from "../../src/lib/broadcasts/types";
 
 type NetlifyEvent = {
   body?: string | null;
@@ -133,7 +137,7 @@ export async function handler(event: NetlifyEvent): Promise<{ statusCode: number
 
     if (processedAny) {
       const stats = await loadRecipientStats(supabase, broadcastId);
-      const finalStatus = computeFinalStatus(stats);
+      const finalStatus = computeBroadcastFinalStatus(stats);
       await supabase
         .from("broadcasts")
         .update({
@@ -218,6 +222,24 @@ async function processRow(
         status: "failed",
         error_code: "provider",
         error_message: "participant not found at send time",
+        attempted_at: new Date().toISOString(),
+      })
+      .eq("id", row.id);
+    return;
+  }
+
+  // Last check before sending: someone may have replied STOP after this
+  // broadcast was queued, or between a failure and its retry.
+  if (
+    broadcastPurpose(broadcast.audience_filter) === "marketing" &&
+    participant.marketing_status !== "subscribed"
+  ) {
+    await supabase
+      .from("broadcast_recipients")
+      .update({
+        status: "skipped",
+        error_code: "not_subscribed",
+        error_message: "Not subscribed to marketing",
         attempted_at: new Date().toISOString(),
       })
       .eq("id", row.id);
@@ -328,6 +350,7 @@ type ParticipantContextRow = {
   name_en: string | null;
   region_id: string | null;
   language_fluency: "en" | "cn" | "both" | null;
+  marketing_status: string | null;
 };
 
 type EnrollmentContextRow = {
@@ -382,7 +405,7 @@ async function loadParticipantContexts(
   if (ids.length === 0) return out;
   const { data, error } = await supabase
     .from("participants")
-    .select("id, name_cn, name_en, region_id, language_fluency")
+    .select("id, name_cn, name_en, region_id, language_fluency, marketing_status")
     .in("id", ids);
   if (error) throw new Error(`participant context load failed: ${error.message}`);
   for (const r of (data ?? []) as ParticipantContextRow[]) {
@@ -431,15 +454,4 @@ async function loadRecipientStats(
     failed: failed.count ?? 0,
     skipped: skipped.count ?? 0,
   };
-}
-
-function computeFinalStatus(stats: {
-  total: number;
-  sent: number;
-  failed: number;
-  skipped: number;
-}): "sent" | "partial" | "failed" {
-  if (stats.failed === 0) return "sent";
-  if (stats.sent === 0 && stats.skipped === 0) return "failed";
-  return "partial";
 }

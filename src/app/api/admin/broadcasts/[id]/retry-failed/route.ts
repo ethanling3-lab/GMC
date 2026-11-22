@@ -4,6 +4,8 @@ import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
 import { requeueFailedRecipients } from "@/lib/broadcasts/materialize";
 import { kickBroadcastFanout } from "@/lib/broadcasts/kick-fanout";
+import { broadcastSendProblem } from "@/lib/broadcasts/purpose-guard";
+import type { AudienceFilter, BroadcastChannel } from "@/lib/broadcasts/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,7 +27,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   const service = createSupabaseServiceClient();
   const { data: existing } = await service
     .from("broadcasts")
-    .select("id, status")
+    .select("id, status, audience_filter, channels, whatsapp_template_name")
     .eq("id", id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -36,6 +38,17 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       { error: "wrong_status", detail: `Cannot retry broadcast in status ${status}` },
       { status: 409 },
     );
+  }
+
+  const problem = await broadcastSendProblem(
+    existing as unknown as {
+      audience_filter: AudienceFilter;
+      channels: BroadcastChannel[];
+      whatsapp_template_name: string | null;
+    },
+  );
+  if (problem) {
+    return NextResponse.json({ error: "not_allowed", detail: problem }, { status: 422 });
   }
 
   const { requeued } = await requeueFailedRecipients(service, id);

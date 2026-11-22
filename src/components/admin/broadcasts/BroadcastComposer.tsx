@@ -4,18 +4,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   INTERPOLATION_TOKENS,
+  broadcastPurpose,
+  templateFitsPurpose,
   type AudienceFilter,
   type BroadcastChannel,
+  type BroadcastPurpose,
   type EventCohortFilter,
   type EnrollmentStatusForBroadcast,
   type ParticipantMasterFilter,
 } from "@/lib/broadcasts/types";
 
 // Composer for /admin/broadcasts/new — single-page vertical wizard:
-//   1. Name + channels
-//   2. Audience (event-cohort or participant-master tab)
-//   3. Content (WhatsApp template + bilingual email, conditional on channels)
-//   4. Send (now / schedule)
+//   1. Official notice or Marketing (decides who can receive it + templates)
+//   2. Name + channels
+//   3. Audience (event-cohort or participant-master tab)
+//   4. Content (WhatsApp template + bilingual email, conditional on channels)
+//   5. Send (now / schedule)
 //
 // On Save draft / Send now / Schedule the composer POSTs to the API to
 // create the broadcast row, then either redirects to detail or kicks
@@ -111,6 +115,10 @@ export function BroadcastComposer({
       ? existing.audience_filter
       : null;
 
+  // New broadcasts start unchosen, so nobody sends a type by default.
+  const [purpose, setPurpose] = useState<BroadcastPurpose | null>(
+    existing ? broadcastPurpose(existing.audience_filter) : null,
+  );
   const [name, setName] = useState(existing?.name ?? "");
   const [channels, setChannels] = useState<BroadcastChannel[]>(existing?.channels ?? ["whatsapp"]);
   const [audienceMode, setAudienceMode] = useState<"event_cohort" | "participant_master">(
@@ -144,6 +152,7 @@ export function BroadcastComposer({
 
   // WhatsApp content
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateSummary | null>(null);
   const [templateLanguage, setTemplateLanguage] = useState<"en_US" | "zh_CN">(
     existing?.whatsapp_template_language ?? "zh_CN",
@@ -177,6 +186,7 @@ export function BroadcastComposer({
     matched: number;
     reachable: number;
     excluded_no_address: number;
+    excluded_not_subscribed: number;
     excluded_out_of_region: number;
     preview: Array<{
       participant_id: string;
@@ -200,8 +210,9 @@ export function BroadcastComposer({
         const body = (await res.json()) as { templates?: TemplateSummary[] };
         if (!cancelled) setTemplates(body.templates ?? []);
       } catch {
-        // silently leave empty — the picker shows "Loading…" indefinitely;
-        // user can refresh
+        // Leave empty: the picker says none are available.
+      } finally {
+        if (!cancelled) setTemplatesLoaded(true);
       }
     })();
     return () => {
@@ -217,15 +228,33 @@ export function BroadcastComposer({
     if (!existing?.whatsapp_template_name || templates.length === 0) return;
     const match = templates.find((t) => t.name === existing.whatsapp_template_name);
     if (match) {
-      setSelectedTemplate(match);
+      // A saved template of the wrong type must be picked again.
+      if (templateFitsPurpose(match.category, broadcastPurpose(existing.audience_filter))) {
+        setSelectedTemplate(match);
+      }
       templateSeededRef.current = true;
     }
   }, [templates, existing]);
+
+  const purposeTemplates = useMemo(
+    () => (purpose ? templates.filter((t) => templateFitsPurpose(t.category, purpose)) : []),
+    [templates, purpose],
+  );
+
+  function choosePurpose(next: BroadcastPurpose) {
+    setPurpose(next);
+    if (next === "official") setAudienceMode("event_cohort");
+    if (selectedTemplate && !templateFitsPurpose(selectedTemplate.category, next)) {
+      setSelectedTemplate(null);
+      setTemplateParams({});
+    }
+  }
 
   const filter: AudienceFilter = useMemo(() => {
     if (audienceMode === "event_cohort") {
       return {
         mode: "event_cohort",
+        purpose: purpose ?? "marketing",
         event_id: eventId,
         enrollment_statuses: enrollmentStatuses,
         language: languageFilter === "" ? null : languageFilter,
@@ -234,6 +263,7 @@ export function BroadcastComposer({
     }
     return {
       mode: "participant_master",
+      purpose: purpose ?? "marketing",
       region: region === "" ? null : region,
       include_archived: includeArchived,
       motivation: motivation === "" ? null : (motivation as ParticipantMasterFilter["motivation"]),
@@ -242,6 +272,7 @@ export function BroadcastComposer({
       is_old_student: isOldStudent === "" ? null : isOldStudent === "true",
     } satisfies ParticipantMasterFilter;
   }, [
+    purpose,
     audienceMode,
     eventId,
     enrollmentStatuses,
@@ -258,7 +289,7 @@ export function BroadcastComposer({
   // Debounced audience preview fetch.
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
-    if (audienceMode === "event_cohort" && !eventId) {
+    if (!purpose || (audienceMode === "event_cohort" && !eventId)) {
       setPreview(null);
       return;
     }
@@ -294,7 +325,7 @@ export function BroadcastComposer({
     return () => {
       if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
     };
-  }, [audienceMode, eventId, filter, channels]);
+  }, [purpose, audienceMode, eventId, filter, channels]);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -304,6 +335,7 @@ export function BroadcastComposer({
     setSubmitError(null);
     try {
       // Validation
+      if (!purpose) throw new Error("Choose Official notice or Marketing");
       if (!name.trim()) throw new Error("Name is required");
       if (channels.length === 0) throw new Error("Pick at least one channel");
       if (audienceMode === "event_cohort" && !eventId) {
@@ -393,8 +425,14 @@ export function BroadcastComposer({
 
   return (
     <div className="space-y-6">
-      {/* Step 1 — Name + channels */}
-      <SectionCard step="01" titleEn="Name & channels" titleCn="名称与渠道">
+      <SectionCard step="01" titleEn="What are you sending?" titleCn="发送类型">
+        <PurposeChoice value={purpose} onChange={choosePurpose} />
+      </SectionCard>
+
+      {purpose ? (
+      <>
+      {/* Step 2 — Name + channels */}
+      <SectionCard step="02" titleEn="Name & channels" titleCn="名称与渠道">
         <div className="space-y-4">
           <label className="block">
             <span className="block text-[11px] tracking-[0.18em] uppercase text-[var(--ink-faint)] mb-1.5">
@@ -440,10 +478,13 @@ export function BroadcastComposer({
         </div>
       </SectionCard>
 
-      {/* Step 2 — Audience */}
-      <SectionCard step="02" titleEn="Audience" titleCn="受众">
+      {/* Step 3 — Audience */}
+      <SectionCard step="03" titleEn="Audience" titleCn="受众">
         <div className="flex gap-1 mb-4">
-          {(["event_cohort", "participant_master"] as const).map((m) => {
+          {(purpose === "official"
+            ? (["event_cohort"] as const)
+            : (["event_cohort", "participant_master"] as const)
+          ).map((m) => {
             const active = audienceMode === m;
             return (
               <button
@@ -642,16 +683,18 @@ export function BroadcastComposer({
         />
       </SectionCard>
 
-      {/* Step 3 — Content */}
+      {/* Step 4 — Content */}
       {(channels.includes("whatsapp") || channels.includes("email")) ? (
-        <SectionCard step="03" titleEn="Content" titleCn="内容">
+        <SectionCard step="04" titleEn="Content" titleCn="内容">
           {channels.includes("whatsapp") ? (
             <div className="mb-6">
               <div className="text-[11px] tracking-[0.18em] uppercase text-[var(--cinnabar)] mb-3">
                 WhatsApp · 模板
               </div>
               <WhatsAppTemplateBlock
-                templates={templates}
+                templates={purposeTemplates}
+                loaded={templatesLoaded}
+                purpose={purpose}
                 selected={selectedTemplate}
                 language={templateLanguage}
                 params={templateParams}
@@ -695,8 +738,8 @@ export function BroadcastComposer({
         </SectionCard>
       ) : null}
 
-      {/* Step 4 — Send */}
-      <SectionCard step="04" titleEn="Send" titleCn="发送">
+      {/* Step 5 — Send */}
+      <SectionCard step="05" titleEn="Send" titleCn="发送">
         <div className="flex gap-2 mb-4">
           {(["now", "schedule"] as const).map((m) => {
             const active = sendMode === m;
@@ -737,10 +780,10 @@ export function BroadcastComposer({
           {preview ? (
             <>
               <span className="text-[var(--ink)] font-medium">{preview.reachable}</span>{" "}
-              reachable
+              will receive
               {preview.matched !== preview.reachable ? (
                 <span className="ml-1 text-[var(--ink-faint)]">
-                  · {preview.matched - preview.reachable} excluded
+                  · {preview.matched - preview.reachable} skipped
                 </span>
               ) : null}
             </>
@@ -764,7 +807,7 @@ export function BroadcastComposer({
             <button
               type="button"
               onClick={() => submit("send")}
-              disabled={submitting}
+              disabled={submitting || !preview || preview.reachable === 0}
               className="inline-flex items-center gap-2 px-4 h-10 rounded-[var(--radius-md)] bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12.5px] tracking-[0.06em] uppercase hover:bg-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
               style={{ color: "var(--paper-warm)" }}
             >
@@ -774,7 +817,7 @@ export function BroadcastComposer({
             <button
               type="button"
               onClick={() => submit("schedule")}
-              disabled={submitting}
+              disabled={submitting || !preview || preview.reachable === 0}
               className="inline-flex items-center gap-2 px-4 h-10 rounded-[var(--radius-md)] bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[12.5px] tracking-[0.06em] uppercase hover:bg-[var(--cinnabar-deep)] disabled:opacity-50 transition-colors"
               style={{ color: "var(--paper-warm)" }}
             >
@@ -783,6 +826,8 @@ export function BroadcastComposer({
           )}
         </div>
       </div>
+      </>
+      ) : null}
     </div>
   );
 }
@@ -790,6 +835,70 @@ export function BroadcastComposer({
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+const PURPOSE_OPTIONS: Array<{
+  value: BroadcastPurpose;
+  title: string;
+  who: string;
+  use: string;
+}> = [
+  {
+    value: "official",
+    title: "Official notice · 官方通知",
+    who: "Goes to the participants of one event. 发送给某一活动的学员。",
+    use: "Venue, timing and class information. No promotions. 场地、时间、课程信息，不含推广。",
+  },
+  {
+    value: "marketing",
+    title: "Marketing · 推广",
+    who: "Goes only to people who subscribed. 只发送给已订阅的人。",
+    use: "New classes, offers and news. 新课程、优惠和资讯。",
+  },
+];
+
+function PurposeChoice({
+  value,
+  onChange,
+}: {
+  value: BroadcastPurpose | null;
+  onChange: (next: BroadcastPurpose) => void;
+}) {
+  return (
+    <div role="radiogroup" aria-label="Broadcast type" className="grid gap-3 md:grid-cols-2">
+      {PURPOSE_OPTIONS.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(o.value)}
+            className={`text-left p-4 rounded-[var(--radius-md)] border active:translate-y-px focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[background-color,border-color,transform] ${
+              active
+                ? "border-[var(--cinnabar)] bg-[var(--cinnabar-wash)]"
+                : "border-[var(--paper-shadow)] bg-[var(--paper-warm)] hover:bg-[var(--paper-deep)]"
+            }`}
+          >
+            <span className="flex items-center gap-2.5 text-[15px] font-medium text-[var(--ink)]">
+              <span
+                aria-hidden="true"
+                className={`grid place-items-center w-[18px] h-[18px] shrink-0 rounded-full border-2 ${
+                  active ? "border-[var(--cinnabar)]" : "border-[var(--ink-faint)]"
+                }`}
+              >
+                {active ? <span className="w-2 h-2 rounded-full bg-[var(--cinnabar)]" /> : null}
+              </span>
+              {o.title}
+            </span>
+            <span className="mt-1.5 block text-[12.5px] leading-[1.55] text-[var(--ink-soft)]">{o.who}</span>
+            <span className="mt-1 block text-[12.5px] leading-[1.55] text-[var(--ink-mute)]">{o.use}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function SectionCard({
   step,
@@ -827,6 +936,7 @@ function AudienceLivePreview({
     matched: number;
     reachable: number;
     excluded_no_address: number;
+    excluded_not_subscribed: number;
     excluded_out_of_region: number;
     preview: Array<{
       participant_id: string;
@@ -861,9 +971,14 @@ function AudienceLivePreview({
               <span className="font-display text-[18px] text-[var(--ink)] mr-1.5">
                 {preview.reachable}
               </span>
-              reachable
+              will receive · 将收到
+              {preview.excluded_not_subscribed > 0 ? (
+                <span className="ml-2 font-medium text-[#A87A2A]">
+                  · {preview.excluded_not_subscribed} skipped (not subscribed · 未订阅)
+                </span>
+              ) : null}
               <span className="ml-2 text-[var(--ink-faint)]">
-                · {preview.matched} matched · {preview.excluded_no_address} no address
+                · {preview.excluded_no_address} no address · 无联络方式
               </span>
               {preview.excluded_out_of_region > 0 ? (
                 <span className="ml-2 text-[var(--gold)]">
@@ -913,6 +1028,8 @@ function AudienceLivePreview({
 
 function WhatsAppTemplateBlock({
   templates,
+  loaded,
+  purpose,
   selected,
   language,
   params,
@@ -921,6 +1038,8 @@ function WhatsAppTemplateBlock({
   onParamChange,
 }: {
   templates: TemplateSummary[];
+  loaded: boolean;
+  purpose: BroadcastPurpose;
   selected: TemplateSummary | null;
   language: "en_US" | "zh_CN";
   params: Record<string, string>;
@@ -931,7 +1050,13 @@ function WhatsAppTemplateBlock({
   return (
     <div className="space-y-4">
       {templates.length === 0 ? (
-        <p className="text-[12px] text-[var(--ink-mute)]">Loading approved templates…</p>
+        <p className="text-[12.5px] leading-[1.55] text-[var(--ink-soft)]">
+          {!loaded
+            ? "Loading approved templates…"
+            : purpose === "official"
+              ? "No approved utility templates yet. Add one in WhatsApp Manager, then reload this page. 暂无可用的通知模板。"
+              : "No approved marketing templates yet. Add one in WhatsApp Manager, then reload this page. 暂无可用的推广模板。"}
+        </p>
       ) : (
         <div>
           <div className="text-[11px] tracking-[0.18em] uppercase text-[var(--ink-faint)] mb-1.5">

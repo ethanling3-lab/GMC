@@ -4,6 +4,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
 import { materialiseRecipients } from "@/lib/broadcasts/materialize";
 import { kickBroadcastFanout } from "@/lib/broadcasts/kick-fanout";
+import { broadcastSendProblem } from "@/lib/broadcasts/purpose-guard";
 import type { AudienceFilter, BroadcastChannel } from "@/lib/broadcasts/types";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   const service = createSupabaseServiceClient();
   const { data: broadcast, error } = await service
     .from("broadcasts")
-    .select("id, status, audience_mode, audience_filter, channels, name")
+    .select("id, status, audience_mode, audience_filter, channels, name, whatsapp_template_name")
     .eq("id", id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -45,6 +46,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     audience_filter: AudienceFilter;
     channels: BroadcastChannel[];
     name: string;
+    whatsapp_template_name: string | null;
   };
 
   if (row.status !== "draft" && row.status !== "scheduled" && row.status !== "partial") {
@@ -52,6 +54,11 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       { error: "wrong_status", detail: `Cannot send broadcast in status ${row.status}` },
       { status: 409 },
     );
+  }
+
+  const problem = await broadcastSendProblem(row);
+  if (problem) {
+    return NextResponse.json({ error: "not_allowed", detail: problem }, { status: 422 });
   }
 
   const { queued, total_pending } = await materialiseRecipients(service, admin, {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { materialiseRecipients } from "@/lib/broadcasts/materialize";
 import { kickBroadcastFanout } from "@/lib/broadcasts/kick-fanout";
+import { broadcastSendProblem } from "@/lib/broadcasts/purpose-guard";
 import { writeAuditLog } from "@/lib/audit";
 import type { AudienceFilter, BroadcastChannel } from "@/lib/broadcasts/types";
 
@@ -47,7 +48,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: due, error } = await service
       .from("broadcasts")
       .select(
-        "id, name, audience_mode, audience_filter, channels, created_by, scheduled_for",
+        "id, name, audience_mode, audience_filter, channels, created_by, scheduled_for, whatsapp_template_name",
       )
       .eq("status", "scheduled")
       .lte("scheduled_for", nowIso)
@@ -63,12 +64,24 @@ async function handle(req: Request): Promise<Response> {
       channels: BroadcastChannel[];
       created_by: string;
       scheduled_for: string;
+      whatsapp_template_name: string | null;
     }>;
 
     const fired: Array<{ id: string; queued: number; total_pending: number; kick_status: number | null }> = [];
     const skipped: Array<{ id: string; reason: string }> = [];
 
     for (const row of rows) {
+      // A template can be re-categorised by Meta after scheduling.
+      const problem = await broadcastSendProblem(row);
+      if (problem) {
+        await service
+          .from("broadcasts")
+          .update({ status: "failed", completed_at: new Date().toISOString() })
+          .eq("id", row.id);
+        skipped.push({ id: row.id, reason: problem });
+        continue;
+      }
+
       // Use the creator as the actor — they own the campaign. (We
       // could spoof a super-admin role here for audience resolution,
       // but reusing the creator preserves regional-lead gating which

@@ -36,6 +36,35 @@ export const BROADCAST_CHANNEL_VALUES: readonly BroadcastChannel[] = [
 
 export type BroadcastAudienceMode = "event_cohort" | "participant_master";
 
+// What kind of message this is. Saved inside audience_filter.
+//   official  — a notice to one event's participants; utility templates only.
+//   marketing — promotion; only people who subscribed; marketing templates only.
+export type BroadcastPurpose = "official" | "marketing";
+
+/** Anything not explicitly official is held to the stricter marketing rules. */
+export function broadcastPurpose(filter: { purpose?: unknown }): BroadcastPurpose {
+  return filter.purpose === "official" ? "official" : "marketing";
+}
+
+export function templateFitsPurpose(category: string, purpose: BroadcastPurpose): boolean {
+  return category === (purpose === "official" ? "utility" : "marketing");
+}
+
+export const BROADCAST_PURPOSE_LABEL: Record<BroadcastPurpose, { en: string; cn: string }> = {
+  official: { en: "Official notice", cn: "官方通知" },
+  marketing: { en: "Marketing", cn: "推广" },
+};
+
+export function computeBroadcastFinalStatus(stats: {
+  sent: number;
+  failed: number;
+  skipped: number;
+}): "sent" | "partial" | "failed" {
+  if (stats.failed === 0) return "sent";
+  if (stats.sent === 0 && stats.skipped === 0) return "failed";
+  return "partial";
+}
+
 export type BroadcastRecipientStatus =
   | "pending"
   | "sent"
@@ -61,6 +90,7 @@ export type BroadcastErrorCode =
   | "no_address"
   | "outside_window"
   | "opted_out"
+  | "not_subscribed"
   | "frequency_capped"
   | "provider"
   | "cancelled"
@@ -72,6 +102,7 @@ export type BroadcastErrorCode =
 
 export type EventCohortFilter = {
   mode: "event_cohort";
+  purpose?: BroadcastPurpose;
   event_id: string;
   // Empty array = "all statuses". Composer defaults to ['approved', 'paid'].
   enrollment_statuses: EnrollmentStatusForBroadcast[];
@@ -92,6 +123,7 @@ export type BroadcastLanguageFluency = "en" | "cn" | "both";
 
 export type ParticipantMasterFilter = {
   mode: "participant_master";
+  purpose?: BroadcastPurpose;
   region: string | null; // ISO country code; optional, no longer role-forced
   // Archived people are excluded unless you explicitly ask for them. This is
   // the ONLY reachability exclusion left on this filter — the participant
@@ -246,6 +278,7 @@ export const BROADCAST_ERROR_CODE_LABEL: Record<BroadcastErrorCode, { en: string
   no_address: { en: "No address", cn: "无联络方式" },
   outside_window: { en: "Outside 24h window", cn: "超出 24h 时窗" },
   opted_out: { en: "Opted out", cn: "已退订" },
+  not_subscribed: { en: "Not subscribed", cn: "未订阅" },
   frequency_capped: { en: "Meta frequency cap", cn: "Meta 频率限制" },
   provider: { en: "Provider error", cn: "供应商错误" },
   cancelled: { en: "Cancelled", cn: "已取消" },

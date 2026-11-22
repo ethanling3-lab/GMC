@@ -1,11 +1,11 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AdminContext } from "@/lib/admin-guard";
-import type {
-  AudienceFilter,
-  BroadcastChannel,
-  EventCohortFilter,
-  ParticipantMasterFilter,
+import {
+  broadcastPurpose,
+  type AudienceFilter,
+  type BroadcastChannel,
+  type ParticipantMasterFilter,
 } from "./types";
 import { loadEventCohort, type EventCohortRow } from "./event-cohort-query";
 import {
@@ -49,6 +49,7 @@ export type AudienceResolution = {
   recipients: AudienceRecipient[];
   total_matched: number;
   excluded_no_address: number;
+  excluded_not_subscribed: number;
   excluded_out_of_region: number;
 };
 
@@ -64,7 +65,13 @@ export async function resolveAudience(
   channels: BroadcastChannel[],
 ): Promise<AudienceResolution> {
   if (channels.length === 0) {
-    return { recipients: [], total_matched: 0, excluded_no_address: 0, excluded_out_of_region: 0 };
+    return {
+      recipients: [],
+      total_matched: 0,
+      excluded_no_address: 0,
+      excluded_not_subscribed: 0,
+      excluded_out_of_region: 0,
+    };
   }
 
   // OUTREACH IS NOT ROLE-SCOPED (decision, 2026-08-11).
@@ -89,7 +96,17 @@ export async function resolveAudience(
   if (admin.role === "regional_lead" && admin.region) {
     excluded_out_of_region = baseRows.filter((r) => r.region && r.region !== admin.region).length;
   }
-  const visibleRows = baseRows;
+
+  // Marketing only ever reaches people who said yes. "Not asked" is not a yes.
+  let visibleRows = baseRows;
+  if (broadcastPurpose(filter) === "marketing") {
+    const subscribed = await loadSubscribedIds(
+      service,
+      baseRows.map((r) => r.participant_id),
+    );
+    visibleRows = baseRows.filter((r) => subscribed.has(r.participant_id));
+  }
+  const excluded_not_subscribed = baseRows.length - visibleRows.length;
 
   // Resolve addresses. WhatsApp via contact_identifiers join; email from
   // the participant row we already have.
@@ -137,8 +154,9 @@ export async function resolveAudience(
 
   return {
     recipients,
-    total_matched: visibleRows.length,
+    total_matched: baseRows.length,
     excluded_no_address,
+    excluded_not_subscribed,
     excluded_out_of_region,
   };
 }
@@ -269,6 +287,24 @@ async function loadParticipantMaster(
   }));
 }
 
+async function loadSubscribedIds(
+  service: SupabaseClient,
+  participantIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  const CHUNK = 200; // 500 ids made the request URL too long and fetch failed
+  for (let i = 0; i < participantIds.length; i += CHUNK) {
+    const { data, error } = await service
+      .from("participants")
+      .select("id")
+      .eq("marketing_status", "subscribed")
+      .in("id", participantIds.slice(i, i + CHUNK));
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as Array<{ id: string }>) out.add(row.id);
+  }
+  return out;
+}
+
 async function loadWhatsAppAddresses(
   service: SupabaseClient,
   participantIds: string[],
@@ -276,7 +312,7 @@ async function loadWhatsAppAddresses(
   if (participantIds.length === 0) return new Map();
   // Chunk to keep the IN clause under PostgREST's URL limit.
   const out = new Map<string, string>();
-  const CHUNK = 500;
+  const CHUNK = 200; // 500 ids made the request URL too long and fetch failed
   for (let i = 0; i < participantIds.length; i += CHUNK) {
     const slice = participantIds.slice(i, i + CHUNK);
     const { data, error } = await service

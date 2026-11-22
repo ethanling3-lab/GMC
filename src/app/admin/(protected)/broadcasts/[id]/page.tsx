@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { buildAudienceSummary } from "@/lib/broadcasts/audience";
+import { BROADCAST_PURPOSE_LABEL, broadcastPurpose } from "@/lib/broadcasts/types";
 import {
   BROADCAST_RECIPIENT_STATUS_LABEL,
   BROADCAST_ERROR_CODE_LABEL,
@@ -150,6 +151,10 @@ export default async function BroadcastDetailPage({ params, searchParams }: Page
           </h1>
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <BroadcastStatusPill status={b.status} />
+            <span className="text-[12px] font-medium text-[var(--ink-soft)]">
+              {BROADCAST_PURPOSE_LABEL[broadcastPurpose(b.audience_filter)].en} ·{" "}
+              {BROADCAST_PURPOSE_LABEL[broadcastPurpose(b.audience_filter)].cn}
+            </span>
             <div className="flex gap-1">
               {b.channels.map((c) => (
                 <BroadcastChannelPill key={c} channel={c} />

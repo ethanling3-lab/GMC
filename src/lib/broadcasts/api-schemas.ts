@@ -28,8 +28,12 @@ const MotivationZ = z.enum([
 // (abundance / glorious_family / …) so existing stored broadcasts still match.
 const ProgrammeTierZ = z.string().min(1).max(50);
 
+// Missing means marketing, the stricter rule set.
+const PurposeZ = z.enum(["official", "marketing"]).default("marketing");
+
 const EventCohortFilterZ = z.object({
   mode: z.literal("event_cohort"),
+  purpose: PurposeZ,
   event_id: z.string().uuid(),
   enrollment_statuses: z.array(EnrollmentStatusZ),
   language: LanguageFluencyZ.nullable(),
@@ -38,6 +42,7 @@ const EventCohortFilterZ = z.object({
 
 const ParticipantMasterFilterZ = z.object({
   mode: z.literal("participant_master"),
+  purpose: PurposeZ,
   region: z.string().max(8).nullable(),
   // Default false. Stored broadcasts created before migration 053 carry a
   // `status` array instead; z.object strips unknown keys, so they coerce to

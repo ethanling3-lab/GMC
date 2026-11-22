@@ -49,6 +49,7 @@ export async function POST(req: Request) {
     matched: resolution.total_matched,
     reachable: resolution.recipients.length,
     excluded_no_address: resolution.excluded_no_address,
+    excluded_not_subscribed: resolution.excluded_not_subscribed,
     excluded_out_of_region: resolution.excluded_out_of_region,
     preview,
   });

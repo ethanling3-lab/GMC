@@ -9,6 +9,7 @@ import { notifyAdmins } from "@/lib/notifications/admin-alerts";
 import { sendWelcomeIfFirstContact } from "@/lib/whatsapp/automations";
 import { handleConsentKeyword, unsubscribeFromFailedMessage } from "@/lib/whatsapp/consent";
 import { isMarketingOptOutError } from "./whatsapp-templates-types";
+import { recordBroadcastDeliveryFailure } from "@/lib/broadcasts/delivery";
 
 // Channel-agnostic inbound pipeline. Call from each webhook route after
 // signature verification. Idempotent: the same webhook payload can be
@@ -495,6 +496,14 @@ async function applyStatusUpdate(
     (s.error_code === 131050 || isMarketingOptOutError(s.error))
   ) {
     await unsubscribeFromFailedMessage(service, rows[0].id);
+  }
+
+  if (s.status === "failed" && rows.length > 0) {
+    await recordBroadcastDeliveryFailure(service, {
+      messageId: rows[0].id,
+      error: s.error,
+      metaCode: s.error_code,
+    });
   }
 
   if (s.status === "failed" && !wasAlreadyFailed && rows.length > 0) {
