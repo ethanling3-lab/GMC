@@ -14,11 +14,14 @@ import {
   type CheckInRecent,
   type CheckInStats,
   type DeskState,
+  type ExitTotalRow,
+  type OutNowRow,
   type SessionCounts,
 } from "./types";
 import { dayOptions, defaultDay, isIsoDay, todayInEventTz, type DayOption } from "./day";
 import { SESSIONS, isSession, sessionOf, type Session } from "./mode";
 import { EVENT_STATE_COLUMNS, deskContextFromRow, type EventStateRow } from "./gate";
+import { minutesBetween } from "./check-in-write";
 
 // Server-only loaders for the check-in dashboard (/admin/events/[id]/check-in)
 // and the scanner stations. Everything is scoped to ONE event day and ONE
@@ -53,6 +56,10 @@ export type CheckInSnapshot = {
   absent: CheckInAbsentRow[];
   bySession: SessionCounts;
   desk: DeskState;
+  /** Out of class right now (any session today; only on today's view). */
+  outNow: OutNowRow[];
+  /** Per-person out-of-class totals for the day, worst first. */
+  exitTotals: ExitTotalRow[];
 };
 
 export type CheckInPageData = CheckInSnapshot & {
@@ -305,6 +312,7 @@ export async function loadDaySnapshot(
     seats,
     { data: groupRows, error: gErr },
     { data: eventRow, error: eErr },
+    exits,
   ] = await Promise.all([
     loadPaid(supabase, eventId),
     loadDayCheckIns(supabase, eventId, day),
@@ -318,6 +326,7 @@ export async function loadDaySnapshot(
       .select(`id, start_date, end_date, ${EVENT_STATE_COLUMNS}`)
       .eq("id", eventId)
       .maybeSingle(),
+    loadDayExits(supabase, eventId, day),
   ]);
   if (gErr) throw new Error(gErr.message);
   if (eErr) throw new Error(eErr.message);
@@ -434,7 +443,107 @@ export async function loadDaySnapshot(
     };
   });
 
-  return { session, stats, recent, groups, absent, bySession, desk };
+  // A still-open exit on a past day is a leftover — it'll close as no-return
+  // on the next session switch; don't show it as "out now".
+  const { outNow, exitTotals } = summariseExits(exits, seats, day === desk.today);
+
+  return { session, stats, recent, groups, absent, bySession, desk, outNow, exitTotals };
+}
+
+// --- Out of class ----------------------------------------------------------------
+
+export type DayExit = {
+  id: string;
+  enrollment_id: string;
+  participant_id: string;
+  session: Session;
+  out_at: string;
+  back_at: string | null;
+  closed_reason: "scanned_back" | "session_ended" | null;
+  not_checked_in: boolean;
+  is_test: boolean;
+  region_id: string | null;
+  name_cn: string | null;
+  name_en: string | null;
+};
+
+export async function loadDayExits(
+  supabase: SupabaseClient,
+  eventId: string,
+  day: string,
+): Promise<DayExit[]> {
+  const { data, error } = await supabase
+    .from("class_exits")
+    .select(
+      "id, enrollment_id, participant_id, session, out_at, back_at, closed_reason, not_checked_in, is_test, " +
+        "participants!inner(region_id, name_cn, name_en)",
+    )
+    .eq("event_id", eventId)
+    .eq("exit_date", day)
+    .order("out_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as Array<
+    Omit<DayExit, "region_id" | "name_cn" | "name_en"> & {
+      participants: Pick<DayExit, "region_id" | "name_cn" | "name_en">;
+    }
+  >).map(({ participants, ...e }) => ({ ...e, ...participants }));
+}
+
+function summariseExits(
+  exits: DayExit[],
+  seats: Map<string, Seat>,
+  isToday: boolean,
+  now: string = new Date().toISOString(),
+): { outNow: OutNowRow[]; exitTotals: ExitTotalRow[] } {
+  const outNow: OutNowRow[] = [];
+  const totals = new Map<string, ExitTotalRow>();
+
+  for (const e of exits) {
+    const seat = seats.get(e.participant_id);
+    const open = e.back_at === null;
+    if (open && isToday) {
+      outNow.push({
+        exit_id: e.id,
+        enrollment_id: e.enrollment_id,
+        region_id: e.region_id,
+        name_cn: e.name_cn,
+        name_en: e.name_en,
+        group_no: seat?.group_no ?? null,
+        table_no: seat?.table_no ?? null,
+        session: e.session,
+        out_at: e.out_at,
+        not_checked_in: e.not_checked_in,
+      });
+    }
+    const minutes = minutesBetween(e.out_at, e.back_at ?? now);
+    const t =
+      totals.get(e.enrollment_id) ??
+      ({
+        enrollment_id: e.enrollment_id,
+        region_id: e.region_id,
+        name_cn: e.name_cn,
+        name_en: e.name_en,
+        group_no: seat?.group_no ?? null,
+        table_no: seat?.table_no ?? null,
+        trips: 0,
+        total_minutes: 0,
+        longest_minutes: 0,
+        no_return: 0,
+        still_out: false,
+      } satisfies ExitTotalRow);
+    t.trips += 1;
+    t.total_minutes += minutes;
+    t.longest_minutes = Math.max(t.longest_minutes, minutes);
+    if (e.closed_reason === "session_ended") t.no_return += 1;
+    if (open && isToday) t.still_out = true;
+    totals.set(e.enrollment_id, t);
+  }
+
+  // Longest out first — the people a trainer will ask about.
+  const exitTotals = [...totals.values()].sort(
+    (a, b) => b.total_minutes - a.total_minutes || b.trips - a.trips,
+  );
+  return { outNow, exitTotals };
 }
 
 // Order by the number staff actually see (table_no ?? group_no) — the number
@@ -476,6 +585,8 @@ export type ManualSearchRow = {
   /** Check-in for the requested session. */
   checked_in_at: string | null;
   check_in_id: string | null;
+  /** Set while they're out of class (an open exit today). */
+  out_since: string | null;
 };
 
 const SEARCH_LIMIT = 30;
@@ -527,7 +638,12 @@ export async function searchEligibleForCheckIn(
 
   // Today's check-ins for the whole event rather than `.in(enrollment_id, …)`
   // over every match — a 500-id list would blow the request URL.
-  const [{ data, error }, { data: checkIns, error: cErr }, seats] = await Promise.all([
+  const [
+    { data, error },
+    { data: checkIns, error: cErr },
+    seats,
+    { data: openExits, error: xErr },
+  ] = await Promise.all([
     req,
     supabase
       .from("check_ins")
@@ -536,9 +652,22 @@ export async function searchEligibleForCheckIn(
       .eq("check_in_date", day)
       .eq("session", session),
     loadSeats(supabase, eventId),
+    supabase
+      .from("class_exits")
+      .select("enrollment_id, out_at")
+      .eq("event_id", eventId)
+      .eq("exit_date", day)
+      .is("back_at", null),
   ]);
   if (error) throw new Error(error.message);
   if (cErr) throw new Error(cErr.message);
+  if (xErr) throw new Error(xErr.message);
+  const outSince = new Map(
+    ((openExits ?? []) as Array<{ enrollment_id: string; out_at: string }>).map((x) => [
+      x.enrollment_id,
+      x.out_at,
+    ]),
+  );
 
   const checkInByEnrolment = new Map(
     ((checkIns ?? []) as Array<{ id: string; enrollment_id: string; checked_in_at: string }>).map(
@@ -562,6 +691,7 @@ export async function searchEligibleForCheckIn(
       paid: isPaidEnrollment(row),
       checked_in_at: checkIn?.checked_in_at ?? null,
       check_in_id: checkIn?.id ?? null,
+      out_since: outSince.get(row.id) ?? null,
     };
   });
 

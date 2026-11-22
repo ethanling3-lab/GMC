@@ -96,6 +96,8 @@ export default async function EventCheckInPage({ params, searchParams }: PagePro
           absent: data.absent,
           bySession: data.bySession,
           desk: data.desk,
+          outNow: data.outNow,
+          exitTotals: data.exitTotals,
         }}
       />
       <p className="mt-8 text-[12px] text-[var(--ink-faint)]">

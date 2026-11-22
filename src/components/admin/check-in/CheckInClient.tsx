@@ -10,6 +10,7 @@ import { GroupCompletionCard } from "./GroupCompletionCard";
 import { AbsenteeRow } from "./AbsenteeRow";
 import { DeskScanner } from "./DeskScanner";
 import { ModeBar } from "./ModeBar";
+import { OutOfClassPanel } from "./OutOfClassPanel";
 import { CheckInSettings } from "./CheckInSettings";
 import { groupNumber } from "@/lib/group-number";
 import { useCenterSelected } from "@/lib/check-in/use-center-selected";
@@ -17,7 +18,7 @@ import { useCenterSelected } from "@/lib/check-in/use-center-selected";
 // One-stop check-in page for ONE event day: the organizer's mode bar, the
 // headcount for both registrations, the desk scanner (camera + manual
 // search), then "who's still missing, and in which group" for the session
-// being viewed. Badges are pre-sorted into group
+// being viewed, and the out-of-class log. Badges are pre-sorted into group
 // piles, so groups are listed in the order of the number on the pile.
 // Every desk runs this same page; it polls every 5s so desks see each
 // other's scans and the organizer's mode switches, and refreshes at once
@@ -59,7 +60,7 @@ export function CheckInClient({
   const dayRowRef = useCenterSelected<HTMLElement>('[aria-current="page"]', day);
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
-  const { stats, recent, groups, absent, desk, bySession } = snap;
+  const { stats, recent, groups, absent, desk, bySession, outNow, exitTotals } = snap;
   const today = desk.today;
 
   const refresh = useCallback(
@@ -218,6 +219,7 @@ export function CheckInClient({
           eventId={eventId}
           mode={desk.mode}
           canRun={canRun}
+          outNowCount={outNow.length}
           onChanged={refreshNow}
         />
       ) : null}
@@ -248,6 +250,7 @@ export function CheckInClient({
           />
         ))}
         <Figure label="Not here yet · 未到" value={remaining} />
+        {isToday ? <Figure label="Out now · 目前在外" value={outNow.length} /> : null}
         <Figure
           label="Groups complete · 小组到齐"
           value={`${groupsComplete} / ${realGroups.length}`}
@@ -265,6 +268,7 @@ export function CheckInClient({
         active={isToday}
         todayHref={`?day=${today}`}
         onCheckedIn={refreshNow}
+        listVersion={`${bySession.am.arrived}.${bySession.pm.arrived}:${outNow.map((o) => o.exit_id).join(",")}`}
       />
 
       {canRun ? (
@@ -388,6 +392,8 @@ export function CheckInClient({
           )}
         </section>
       </div>
+
+      <OutOfClassPanel outNow={outNow} totals={exitTotals} isToday={isToday} />
 
       {/* Recent */}
       <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">

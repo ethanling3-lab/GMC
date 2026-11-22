@@ -7,9 +7,11 @@ import { EVENT_TZ, isIsoDay, todayInEventTz } from "@/lib/check-in/day";
 import {
   byDisplayNumber,
   loadDayCheckIns,
+  loadDayExits,
   loadPaid,
   loadSeats,
 } from "@/lib/check-in/check-in-query";
+import { minutesBetween } from "@/lib/check-in/check-in-write";
 import { groupNumber } from "@/lib/group-number";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +19,11 @@ export const runtime = "nodejs";
 
 // GET /api/admin/events/[id]/check-in/export.xlsx?day=YYYY-MM-DD[&include_test=1]
 //
-// One event day's attendance: everyone expected, with Morning and Afternoon
-// check-in times. Test-mode records are left out unless include_test=1.
+// One workbook for one event day:
+//   Attendance    — everyone expected, with Morning / Afternoon check-in times
+//   Out of class  — every trip out during class, in order
+//   Totals        — per person: trips, minutes, longest, flags
+// Test-mode records are left out unless include_test=1.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -57,13 +62,17 @@ export async function GET(req: Request, { params }: RouteCtx) {
     .maybeSingle();
   if (!ev) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  const [paid, allCheckIns, seats] = await Promise.all([
+  const [paid, allCheckIns, seats, allExits] = await Promise.all([
     loadPaid(supabase, eventId),
     loadDayCheckIns(supabase, eventId, day),
     loadSeats(supabase, eventId),
+    loadDayExits(supabase, eventId, day),
   ]);
   const checkIns = includeTest ? allCheckIns : allCheckIns.filter((c) => !c.is_test);
+  const exits = includeTest ? allExits : allExits.filter((e) => !e.is_test);
+  const now = new Date().toISOString();
 
+  // --- Attendance ------------------------------------------------------------
   type Person = {
     enrollment_id: string;
     participant_id: string;
@@ -119,10 +128,96 @@ export async function GET(req: Request, { params }: RouteCtx) {
     };
   });
 
+  // --- Out of class ------------------------------------------------------------
+  const exitHeader = [
+    "Group · 组",
+    "Region ID",
+    "Name · 姓名",
+    "Session · 时段",
+    "Out · 外出",
+    "Back · 回来",
+    "Minutes · 分钟",
+    "No return scan · 未扫回",
+    "Not checked in · 未签到",
+  ];
+  const exitRows = exits.map((e) => {
+    const seat = seats.get(e.participant_id);
+    const g = { group_no: seat?.group_no ?? null, table_no: seat?.table_no ?? null };
+    return {
+      "Group · 组": groupCell(g),
+      "Region ID": e.region_id ?? "",
+      "Name · 姓名": e.name_cn ?? e.name_en ?? "",
+      "Session · 时段": e.session === "pm" ? "Afternoon · 下午" : "Morning · 早上",
+      "Out · 外出": time(e.out_at),
+      "Back · 回来": e.back_at ? time(e.back_at) : "Still out · 仍在外",
+      "Minutes · 分钟": minutesBetween(e.out_at, e.back_at ?? now),
+      "No return scan · 未扫回": e.closed_reason === "session_ended" ? "Yes" : "",
+      "Not checked in · 未签到": e.not_checked_in ? "Yes" : "",
+    };
+  });
+
+  // --- Totals --------------------------------------------------------------------
+  type Total = {
+    group: number | string;
+    region_id: string;
+    name: string;
+    trips: number;
+    minutes: number;
+    longest: number;
+    noReturn: number;
+  };
+  const totals = new Map<string, Total>();
+  for (const e of exits) {
+    const seat = seats.get(e.participant_id);
+    const t =
+      totals.get(e.enrollment_id) ??
+      {
+        group: groupCell({ group_no: seat?.group_no ?? null, table_no: seat?.table_no ?? null }),
+        region_id: e.region_id ?? "",
+        name: e.name_cn ?? e.name_en ?? "",
+        trips: 0,
+        minutes: 0,
+        longest: 0,
+        noReturn: 0,
+      };
+    const m = minutesBetween(e.out_at, e.back_at ?? now);
+    t.trips += 1;
+    t.minutes += m;
+    t.longest = Math.max(t.longest, m);
+    if (e.closed_reason === "session_ended") t.noReturn += 1;
+    totals.set(e.enrollment_id, t);
+  }
+  const totalHeader = [
+    "Group · 组",
+    "Region ID",
+    "Name · 姓名",
+    "Trips · 次数",
+    "Total minutes · 总分钟",
+    "Longest · 最长",
+    "No return scan · 未扫回",
+  ];
+  const totalRows = [...totals.values()]
+    .sort((a, b) => b.minutes - a.minutes || b.trips - a.trips)
+    .map((t) => ({
+      "Group · 组": t.group,
+      "Region ID": t.region_id,
+      "Name · 姓名": t.name,
+      "Trips · 次数": t.trips,
+      "Total minutes · 总分钟": t.minutes,
+      "Longest · 最长": t.longest,
+      "No return scan · 未扫回": t.noReturn || "",
+    }));
+
   const wb = XLSX.utils.book_new();
   const s1 = XLSX.utils.json_to_sheet(attendanceRows, { header: attendanceHeader });
   s1["!cols"] = [8, 8, 12, 16, 22, 12, 12, 14].map((wch) => ({ wch }));
   XLSX.utils.book_append_sheet(wb, s1, "签到 · Attendance");
+  const s2 = XLSX.utils.json_to_sheet(exitRows, { header: exitHeader });
+  s2["!cols"] = [8, 12, 16, 16, 10, 14, 10, 14, 14].map((wch) => ({ wch }));
+  XLSX.utils.book_append_sheet(wb, s2, "外出 · Out of class");
+  const s3 = XLSX.utils.json_to_sheet(totalRows, { header: totalHeader });
+  s3["!cols"] = [8, 12, 16, 10, 14, 10, 14].map((wch) => ({ wch }));
+  XLSX.utils.book_append_sheet(wb, s3, "合计 · Totals");
 
   const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 
@@ -131,7 +226,7 @@ export async function GET(req: Request, { params }: RouteCtx) {
     action: "check_in.exported",
     entity: "events",
     entity_id: eventId,
-    metadata: { day, include_test: includeTest, people: attendanceRows.length },
+    metadata: { day, include_test: includeTest, people: attendanceRows.length, exits: exitRows.length },
   });
 
   const filename = `check-in-${ev.slug as string}-${day}${includeTest ? "-with-test" : ""}.xlsx`;

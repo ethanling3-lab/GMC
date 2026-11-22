@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
-import { performCheckIn, undoCheckIn } from "@/lib/check-in/check-in-write";
+import { performCheckIn, performClassScan, undoCheckIn } from "@/lib/check-in/check-in-write";
 import { loadDaySnapshot, loadStats } from "@/lib/check-in/check-in-query";
 import { isIsoDay, todayInEventTz } from "@/lib/check-in/day";
 import { resolveDeskContext } from "@/lib/check-in/gate";
@@ -22,8 +22,10 @@ export const runtime = "nodejs";
 //                   with the live mode, and the desk asks for a rescan.
 //   allow_unpaid  — the desk confirmed an approved-but-unpaid attendee after
 //                   the 402 `unpaid` response.
+//   scan          — "out_back" when the desk is on Out/Back; default check-in.
+//   intent        — Out/Back, manual list only: "out" or "back".
 //
-// The check-in lands on the session the organizer has live (gate.ts).
+// Either way it lands on the session the organizer has live (gate.ts).
 // Outside the event dates with test mode off → 403 `locked`.
 //
 // Check-in errors carry the person (when known) so the desk can still show
@@ -42,6 +44,8 @@ const Body = z
     method: z.enum(["qr", "manual", "face_match"]).optional(),
     allow_unpaid: z.boolean().optional(),
     mode: z.enum(CHECK_IN_MODES).optional(),
+    scan: z.enum(["check_in", "out_back"]).optional(),
+    intent: z.enum(["out", "back"]).optional(),
   })
   .refine(
     (v) => Boolean(v.qr_token) !== Boolean(v.enrollment_id),
@@ -90,6 +94,24 @@ export async function POST(req: Request, { params }: RouteCtx) {
         { ok: false, error: "mode_changed", mode: ctx.mode },
         { status: 409 },
       );
+    }
+
+    if (body.scan === "out_back") {
+      const result = await performClassScan({
+        eventId,
+        actorId: admin.id,
+        day: ctx.day,
+        session: ctx.session,
+        isTest: ctx.testMode,
+        qrToken: body.qr_token ?? null,
+        enrollmentId: body.enrollment_id ?? null,
+        intent: body.intent,
+      });
+      if (!result.ok) {
+        const status = result.error === "not_found" ? 404 : 400;
+        return NextResponse.json({ kind: "class", ...result }, { status });
+      }
+      return NextResponse.json({ kind: "class", ...result });
     }
 
     const result = await performCheckIn({

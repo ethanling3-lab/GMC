@@ -128,3 +128,33 @@ export type DeskState = {
   locked: boolean;
   modeSetAt: string | null;
 };
+
+/** Someone out of class right now. */
+export type OutNowRow = {
+  exit_id: string;
+  enrollment_id: string;
+  region_id: string | null;
+  name_cn: string | null;
+  name_en: string | null;
+  group_no: number | null;
+  table_no: number | null;
+  session: Session;
+  out_at: string;
+  not_checked_in: boolean;
+};
+
+/** One person's out-of-class record for a day. Open trips count up to now. */
+export type ExitTotalRow = {
+  enrollment_id: string;
+  region_id: string | null;
+  name_cn: string | null;
+  name_en: string | null;
+  group_no: number | null;
+  table_no: number | null;
+  trips: number;
+  total_minutes: number;
+  longest_minutes: number;
+  /** Trips closed because the session moved on before they scanned back. */
+  no_return: number;
+  still_out: boolean;
+};

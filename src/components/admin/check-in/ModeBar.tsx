@@ -10,22 +10,34 @@ import { useCenterSelected } from "@/lib/check-in/use-center-selected";
 
 // Which registration is on: Morning or Afternoon. Organizers (super_admin /
 // regional_lead) switch it here and every desk follows on its next poll; desk
-// staff see which one they're in but can't change it.
+// staff see which one they're in but can't change it. Moving on closes any
+// trips still open as "didn't scan back", so that switch asks first.
 
 type Props = {
   eventId: string;
   mode: CheckInMode;
   canRun: boolean;
+  /** People out of class right now — closed if the session changes. */
+  outNowCount: number;
   onChanged: () => void;
 };
 
-export function ModeBar({ eventId, mode, canRun, onChanged }: Props) {
+export function ModeBar({ eventId, mode, canRun, outNowCount, onChanged }: Props) {
   const [pending, setPending] = useState<CheckInMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const rowRef = useCenterSelected<HTMLDivElement>('[aria-checked="true"]', mode);
 
   const switchTo = async (next: CheckInMode) => {
     if (next === mode || pending) return;
+    if (outNowCount > 0) {
+      const n = outNowCount;
+      const ok = window.confirm(
+        `${n} ${n === 1 ? "person is" : "people are"} still out of class. ` +
+          `Switching will mark ${n === 1 ? "them" : "them all"} "didn't scan back".\n` +
+          `${n} 人仍在外，切换后将记为"未扫回"。继续？`,
+      );
+      if (!ok) return;
+    }
     setPending(next);
     setError(null);
     try {
