@@ -1,6 +1,13 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
+import {
+  createAccountLink,
+  escapeHtml,
+  findAuthUserByEmail,
+  type AccountLinkType,
+} from "@/lib/auth-links";
+import { sendEmail } from "@/lib/email";
 
 // Auto-invite trigger. Used by:
 //   - enrollment-notifications.ts notifyApproved() (when admin approves
@@ -13,10 +20,10 @@ import { writeAuditLog } from "@/lib/audit";
 // Idempotent: only fires if auth_user_id is still null at trigger time.
 // Safe to call defensively from anywhere — extra calls are no-ops.
 //
-// Uses supabase.auth.admin.inviteUserByEmail which sends an "Invite user"
-// email via Supabase Auth's configured SMTP (Resend, per Phase 2.5 ops
-// task). The email contains a link to /auth/callback?claim=1 where the
-// participant sets their password.
+// The email contains a one-time link to /auth/account where the participant
+// sets their password and their login is linked to their record.
+
+const LINK_COOLDOWN_MS = 5 * 60 * 1000;
 
 export type InviteVia =
   | "enrollment_approved"
@@ -37,7 +44,7 @@ export async function inviteParticipantToAccountIfNeeded(
 
   const { data: participant, error } = await service
     .from("participants")
-    .select("id, email, auth_user_id, region_id")
+    .select("id, email, auth_user_id, region_id, name_en, name_cn")
     .eq("id", participantId)
     .maybeSingle();
 
@@ -55,26 +62,19 @@ export async function inviteParticipantToAccountIfNeeded(
     return { status: "skipped", reason: "no_email" };
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
-  const redirectTo = `${siteUrl.replace(/\/$/, "")}/auth/callback?claim=1`;
+  // An existing login means they were already invited or have an account.
+  // They can get a fresh link from Set up account on the sign-in page.
+  if (await findAuthUserByEmail(participant.email)) {
+    return { status: "skipped", reason: "already_linked" };
+  }
 
-  const { data: invitedUser, error: inviteErr } = await service.auth.admin.inviteUserByEmail(
+  const sent = await sendParticipantAccountLink(
     participant.email,
-    { redirectTo },
+    participant.name_en || participant.name_cn || "",
   );
-
-  if (inviteErr) {
-    // Supabase returns user_already_exists if the email already has an
-    // auth.users row (e.g. they previously claimed under a different
-    // participant row, or they have an admins entry). In that case skip
-    // — they can self-claim via /login set-up-account mode if they need
-    // to re-link.
-    const msg = inviteErr.message ?? "invite failed";
-    if (msg.toLowerCase().includes("already")) {
-      return { status: "skipped", reason: "already_linked" };
-    }
-    console.warn(`[participant-invite] inviteUserByEmail failed (via=${via}): ${msg}`);
-    return { status: "error", message: msg };
+  if (sent.status !== "sent") {
+    console.warn(`[participant-invite] link not sent (via=${via}): ${sent.status}`);
+    return { status: "error", message: sent.status };
   }
 
   await writeAuditLog({
@@ -84,13 +84,68 @@ export async function inviteParticipantToAccountIfNeeded(
     entity_id: participant.id,
     metadata: {
       via,
-      email: participant.email,
       region_id: participant.region_id,
-      auth_user_id: invitedUser?.user?.id ?? null,
+      auth_user_id: sent.user_id,
     },
   });
 
-  return { status: "sent", user_id: invitedUser?.user?.id ?? "" };
+  return { status: "sent", user_id: sent.user_id };
+}
+
+export type AccountLinkResult =
+  | { status: "sent"; user_id: string; type: AccountLinkType }
+  | { status: "cooldown" | "failed" };
+
+// Sends a set-password link: an invite for a new login, otherwise a reset.
+// The public forms can call this, so one address gets one link per 5 minutes.
+export async function sendParticipantAccountLink(
+  email: string,
+  name: string,
+): Promise<AccountLinkResult> {
+  const user = await findAuthUserByEmail(email);
+  if (user) {
+    const last = Math.max(
+      user.recovery_sent_at ? new Date(user.recovery_sent_at).getTime() : 0,
+      user.invited_at ? new Date(user.invited_at).getTime() : 0,
+    );
+    if (Date.now() - last < LINK_COOLDOWN_MS) return { status: "cooldown" };
+  }
+
+  const type: AccountLinkType = user ? "recovery" : "invite";
+  const link = await createAccountLink(email, type, "/auth/account");
+  if ("error" in link) {
+    console.warn(`[participant-invite] link failed: ${link.error}`);
+    return { status: "failed" };
+  }
+
+  const safeName = escapeHtml(name);
+  const url = escapeHtml(link.url);
+  const isInvite = type === "invite";
+  const greetingEn = safeName ? `Hi ${safeName},` : "Hi,";
+  const greetingZh = safeName ? `${safeName}，您好：` : "您好：";
+  const result = await sendEmail({
+    to: email,
+    subject: isInvite
+      ? "Set up your GMC account · 设置您的 GMC 账户"
+      : "Set your GMC password · 设置您的 GMC 密码",
+    html: `<p>${greetingEn}</p>
+<p>${isInvite ? "Your GMC account is ready." : "We received a request to set your GMC password."} Open the link below and choose a password.</p>
+<p><a href="${url}">Set my password</a></p>
+<p>This link works once and expires. If it has expired, request a new one on the sign-in page.${isInvite ? "" : " If you didn't ask for this, you can ignore this email."}</p>
+<hr />
+<p>${greetingZh}</p>
+<p>${isInvite ? "您的 GMC 账户已准备就绪。" : "我们收到了设置您 GMC 密码的请求。"}请打开以下链接并设置密码。</p>
+<p><a href="${url}">设置我的密码</a></p>
+<p>此链接仅可使用一次，并会过期。如已过期，请在登录页面重新申请。${isInvite ? "" : "如果这不是您本人的操作，请忽略此邮件。"}</p>`,
+    textFooter: `Set your password · 设置密码: ${link.url}`,
+  });
+
+  if (result.mocked || result.error) {
+    // Remove an unused new login so the next automatic invite can try again.
+    if (isInvite) await createSupabaseServiceClient().auth.admin.deleteUser(link.userId);
+    return { status: "failed" };
+  }
+  return { status: "sent", user_id: link.userId, type };
 }
 
 // Link an existing participants row to an auth user (called from /auth/callback

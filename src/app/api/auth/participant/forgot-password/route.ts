@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServerClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
+import { findAuthUserByEmail } from "@/lib/auth-links";
+import { sendParticipantAccountLink } from "@/lib/participant-invite";
+import { createSupabaseServiceClient } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// POST /api/auth/participant/forgot-password — sends a password-reset
-// email via Supabase Auth. Email-enumeration safe: same generic response
-// whether or not the email exists.
+// POST /api/auth/participant/forgot-password: emails a one-time link. Someone
+// with a student record but no login yet gets a setup link instead. The
+// response is the same whether or not the email exists.
 
 const schema = z.object({
   email: z.string().trim().toLowerCase().email(),
@@ -20,25 +22,32 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid_input" }, { status: 400 });
   }
+  const { email } = parsed.data;
 
-  const supabase = await createSupabaseServerClient();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
-  const redirectTo = `${siteUrl.replace(/\/$/, "")}/reset-password`;
+  try {
+    const service = createSupabaseServiceClient();
+    const { data: candidates } = await service
+      .from("participants")
+      .select("id, email, name_en, name_cn")
+      .ilike("email", email);
+    const match = (candidates ?? []).find((c) => (c.email ?? "").trim().toLowerCase() === email);
 
-  const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
-    redirectTo,
-  });
-  if (error) {
-    // Log but still return generic OK.
-    console.warn(`[forgot-password] ${parsed.data.email}: ${error.message}`);
-  } else {
-    await writeAuditLog({
-      actor_id: null,
-      action: "participant.password_reset_requested",
-      entity: "auth",
-      entity_id: parsed.data.email,
-      metadata: { email: parsed.data.email },
-    });
+    if (match || (await findAuthUserByEmail(email))) {
+      const sent = await sendParticipantAccountLink(email, match?.name_en || match?.name_cn || "");
+      if (sent.status === "sent") {
+        await writeAuditLog({
+          actor_id: null,
+          action: "participant.password_reset_requested",
+          entity: "auth",
+          entity_id: sent.user_id,
+          metadata: { link_type: sent.type },
+        });
+      } else {
+        console.warn(`[forgot-password] link not sent: ${sent.status}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[forgot-password] ${err instanceof Error ? err.message : "failed"}`);
   }
 
   return NextResponse.json({

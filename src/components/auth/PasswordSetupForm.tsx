@@ -5,7 +5,15 @@ import { useState } from "react";
 const fieldClass =
   "mt-2 w-full px-4 py-3 rounded-[var(--radius-md)] bg-[var(--paper-warm)] border border-[var(--paper-shadow)] text-[15px] text-[var(--ink)] outline-none focus:border-[var(--cinnabar)] focus:shadow-[var(--shadow-focus)] transition-[border-color,box-shadow] duration-[var(--dur-fast)]";
 
-export function StaffSetupForm({ token, type }: { token: string; type: "invite" | "recovery" }) {
+export function PasswordSetupForm({
+  token,
+  type,
+  endpoint,
+}: {
+  token: string;
+  type: "invite" | "recovery";
+  endpoint: string;
+}) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,18 +32,18 @@ export function StaffSetupForm({ token, type }: { token: string; type: "invite" 
     }
     setBusy(true);
     try {
-      const res = await fetch("/api/auth/staff-setup", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ token, type, password }),
       });
-      const json = (await res.json().catch(() => ({}))) as { detail?: string };
+      const json = (await res.json().catch(() => ({}))) as { detail?: string; redirect?: string };
       if (!res.ok) {
         setError(json.detail ?? "Couldn't set your password.");
         setBusy(false);
         return;
       }
-      window.location.assign("/admin");
+      window.location.assign(json.redirect ?? "/");
     } catch {
       setError("Network error. Try again.");
       setBusy(false);

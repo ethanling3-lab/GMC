@@ -2,15 +2,15 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
+import { sendParticipantAccountLink } from "@/lib/participant-invite";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // POST /api/auth/participant/claim — handles the /login set-up-account
 // path. Takes an email; if it matches an existing participants row that
-// has no auth_user_id yet, fires supabase.auth.admin.inviteUserByEmail.
-// The invited user clicks the email link → lands on /auth/callback?claim=1
-// where they set a password + complete the link.
+// has no auth_user_id yet, emails a one-time link to /auth/account where
+// they set a password and their login is linked to the record.
 //
 // Email-enumeration safe: response is identical regardless of whether
 // the email matched, was already linked, or was unknown. Internally we
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
 
   const { data: candidates } = await service
     .from("participants")
-    .select("id, email, auth_user_id, region_id")
+    .select("id, email, auth_user_id, region_id, name_en, name_cn")
     .ilike("email", email);
   const matches = (candidates ?? []).filter(
     (c) => (c.email ?? "").trim().toLowerCase() === email,
@@ -44,18 +44,13 @@ export async function POST(req: Request) {
   // Three outcomes — all return the same generic 200 to the client.
   if (unlinked.length >= 1) {
     // Fire the invite. If multiple unlinked participants share this email,
-    // we still fire — the /auth/callback claim logic handles the conflict
+    // we still fire — the /auth/account claim logic handles the conflict
     // case by flagging account_claim_conflict.
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
-    const redirectTo = `${siteUrl.replace(/\/$/, "")}/auth/callback?claim=1`;
-
-    const { error: inviteErr, data: invited } = await service.auth.admin.inviteUserByEmail(
+    const sent = await sendParticipantAccountLink(
       email,
-      { redirectTo },
+      unlinked[0].name_en || unlinked[0].name_cn || "",
     );
-    if (inviteErr) {
-      console.warn(`[claim] inviteUserByEmail failed for ${email}: ${inviteErr.message}`);
-    } else {
+    if (sent.status === "sent") {
       await writeAuditLog({
         actor_id: null,
         action: "participant.account_invite_sent",
@@ -63,17 +58,18 @@ export async function POST(req: Request) {
         entity_id: unlinked[0].id,
         metadata: {
           via: "self_claim",
-          email,
           region_id: unlinked[0].region_id,
-          auth_user_id: invited?.user?.id ?? null,
+          auth_user_id: sent.user_id,
           conflict_candidates: unlinked.length > 1 ? unlinked.map((u) => u.id) : null,
         },
       });
+    } else {
+      console.warn(`[claim] link not sent: ${sent.status}`);
     }
   } else if (alreadyLinked) {
-    console.info(`[claim] ${email} already has an account; no-op`);
+    console.info("[claim] email already has an account; no-op");
   } else {
-    console.info(`[claim] ${email} no participant match; no-op`);
+    console.info("[claim] no participant match; no-op");
   }
 
   // Always return the same generic message so the response can't be used

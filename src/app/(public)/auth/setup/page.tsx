@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { StaffSetupForm } from "./StaffSetupForm";
+import { PasswordSetupForm } from "@/components/auth/PasswordSetupForm";
 
 export const metadata: Metadata = {
   title: "Set your password · 设置密码 — GMC Staff",
@@ -35,7 +35,11 @@ export default async function StaffSetupPage({ searchParams }: PageProps) {
         </p>
         {valid ? (
           <div className="mt-10">
-            <StaffSetupForm token={token as string} type={type as "invite" | "recovery"} />
+            <PasswordSetupForm
+              token={token as string}
+              type={type as "invite" | "recovery"}
+              endpoint="/api/auth/staff-setup"
+            />
           </div>
         ) : null}
         <div className="mt-10 pt-7 border-t border-[var(--paper-shadow)] text-[13px]">

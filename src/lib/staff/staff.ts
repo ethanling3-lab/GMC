@@ -1,5 +1,11 @@
 import "server-only";
-import type { User } from "@supabase/supabase-js";
+import {
+  createAccountLink,
+  escapeHtml,
+  findAuthUserByEmail,
+  siteUrl,
+  type AccountLinkType,
+} from "@/lib/auth-links";
 import { sendEmail } from "@/lib/email";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import type { StaffMember, StaffRole } from "./roles";
@@ -7,24 +13,9 @@ import type { StaffMember, StaffRole } from "./roles";
 // Staff links carry a one-time token that is only used when the person submits
 // their new password, so an email scanner opening the link can't burn it.
 
-export type SetupLinkType = "invite" | "recovery";
+export type SetupLinkType = AccountLinkType;
 
-export type LinkDelivery = {
-  setup_url: string | null;
-  email_sent: boolean;
-};
-
-function siteUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+export { findAuthUserByEmail };
 
 export async function loadStaff(): Promise<StaffMember[]> {
   const service = createSupabaseServiceClient();
@@ -58,31 +49,8 @@ export async function loadStaff(): Promise<StaffMember[]> {
   return members.sort((a, b) => rank[a.status] - rank[b.status]);
 }
 
-export async function findAuthUserByEmail(email: string): Promise<User | null> {
-  const service = createSupabaseServiceClient();
-  const target = email.toLowerCase();
-  const perPage = 1000;
-  for (let page = 1; ; page++) {
-    const { data, error } = await service.auth.admin.listUsers({ page, perPage });
-    if (error) throw new Error(error.message);
-    const hit = data.users.find((u) => u.email?.toLowerCase() === target);
-    if (hit) return hit;
-    if (data.users.length < perPage) return null;
-  }
-}
-
-export async function createSetupLink(
-  email: string,
-  type: SetupLinkType,
-): Promise<{ userId: string; url: string } | { error: string }> {
-  const service = createSupabaseServiceClient();
-  const { data, error } = await service.auth.admin.generateLink({ type, email });
-  const token = data?.properties?.hashed_token;
-  if (error || !token || !data.user) {
-    return { error: error?.message ?? "link_failed" };
-  }
-  const qs = new URLSearchParams({ token, type });
-  return { userId: data.user.id, url: `${siteUrl()}/auth/setup?${qs.toString()}` };
+export function createSetupLink(email: string, type: SetupLinkType) {
+  return createAccountLink(email, type, "/auth/setup");
 }
 
 export async function sendSetupEmail(args: {
