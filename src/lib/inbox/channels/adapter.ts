@@ -17,6 +17,16 @@ export type ParsedInboundMessage = {
   body_text: string | null;
   received_at: string | null;         // ISO8601 from provider, if given
   attachments: ParsedInboundAttachment[];
+  /**
+   * The sender's WhatsApp profile name, when the provider sends one.
+   *
+   * Meta puts this in `value.contacts[].profile.name` and it was typed but
+   * never read, so EVERY auto-created lead was nameless and the inbox rendered
+   * a wall of phone numbers. It is self-asserted, not verified — it names the
+   * lead, it does not confirm identity, so identity_confidence stays
+   * "unverified".
+   */
+  profile_name: string | null;
   /** Provider-specific raw fields for debugging / future use. */
   raw: Record<string, unknown>;
 };

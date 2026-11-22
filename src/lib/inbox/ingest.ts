@@ -34,7 +34,7 @@ export type IngestSummary = {
   errors: string[];
 };
 
-export async function ingestWebhook(
+export async function enqueueWebhook(
   channel: ChannelKey,
   payload: unknown,
 ): Promise<IngestSummary> {
@@ -49,10 +49,13 @@ export async function ingestWebhook(
   const parsed: ParsedWebhookResult = adapter.parseWebhook(payload);
   const service = createSupabaseServiceClient();
 
+  // Inbound messages are ENQUEUED, not processed. The heavy work — media
+  // downloads and a Claude tool-use loop — moves to a worker so a failure
+  // leaves a retryable row instead of a gap.
   for (const msg of parsed.messages) {
     try {
-      const handled = await processInboundMessage(service, channel, msg);
-      if (handled === "inserted") summary.inserted_messages++;
+      const enqueued = await enqueueInboundMessage(service, channel, msg);
+      if (enqueued === "enqueued") summary.inserted_messages++;
       else summary.skipped_messages++;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -60,49 +63,68 @@ export async function ingestWebhook(
     }
   }
 
-  for (const s of parsed.statuses) {
+  // Status updates stay SYNCHRONOUS on purpose. They are a single indexed
+  // UPDATE plus a best-effort alert — microseconds, no external calls — and
+  // deferring them would delay the delivered/read ticks that staff read as
+  // "did it land". They are also idempotent, so a webhook replay is harmless.
+  for (const st of parsed.statuses) {
     try {
-      const updated = await applyStatusUpdate(service, s);
+      const updated = await applyStatusUpdate(service, st);
       if (updated) summary.status_updates++;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`status ${s.external_message_id}: ${message}`);
+      summary.errors.push(`status ${st.external_message_id}: ${message}`);
     }
   }
 
   return summary;
 }
 
+/**
+ * Write one queue row. The unique index on (channel, external_event_id) makes
+ * this the idempotent step — a replayed webhook collides and is skipped.
+ *
+ * The FULL parsed message is stored, not just the provider's raw body, so the
+ * worker never re-parses. `raw` is carried inside it, so a payload can still be
+ * re-read later against a fixed parser.
+ */
+async function enqueueInboundMessage(
+  service: ReturnType<typeof createSupabaseServiceClient>,
+  channel: ChannelKey,
+  msg: ParsedInboundMessage,
+): Promise<"enqueued" | "duplicate"> {
+  const { error } = await service.from("webhook_events").insert({
+    channel,
+    external_event_id: msg.external_event_id,
+    payload: msg as unknown as Record<string, unknown>,
+    // Serialisation key. Every event from one person shares it, so the claim
+    // hands a whole conversation to one worker and keeps its messages ordered.
+    thread_key: `${channel}:${msg.external_thread_id}`,
+    status: "pending",
+  });
+  if (error) {
+    if ((error as { code?: string }).code === "23505") return "duplicate";
+    throw new Error(`webhook_events insert failed: ${error.message}`);
+  }
+  return "enqueued";
+}
+
 // -----------------------------------------------------------------------------
 // One inbound message — the main pipeline.
 // -----------------------------------------------------------------------------
 
-async function processInboundMessage(
+export async function processInboundMessage(
   service: ReturnType<typeof createSupabaseServiceClient>,
   channel: ChannelKey,
   msg: ParsedInboundMessage,
 ): Promise<"inserted" | "duplicate"> {
-  // 1. Dedupe at the event level.
-  const eventInsert = await service
-    .from("webhook_events")
-    .insert({
-      channel,
-      external_event_id: msg.external_event_id,
-      payload: msg.raw,
-    })
-    .select("id")
-    .single();
-  if (eventInsert.error) {
-    const code = (eventInsert.error as { code?: string }).code;
-    if (code === "23505") {
-      // Already processed this event — short-circuit.
-      return "duplicate";
-    }
-    throw new Error(`webhook_events insert failed: ${eventInsert.error.message}`);
-  }
+  // NOTE: the webhook_events row already exists — enqueueInboundMessage wrote
+  // it and the claim marked it `processing`. Dedupe happened at enqueue time,
+  // which is the fix: the ledger entry used to be committed BEFORE the work it
+  // guarded, so a mid-pipeline crash marked the message seen and lost it.
 
   // 2. Resolve the participant.
-  const identity = await resolveIdentity(service, channel, msg.identifier);
+  const identity = await resolveIdentity(service, channel, msg.identifier, msg.profile_name);
 
   // 3. Find or create the conversation.
   const conversationId = await findOrCreateConversation(
@@ -296,9 +318,11 @@ async function processInboundMessage(
           participantRegion,
         });
       } catch (err) {
-        // Failure inside Tier 1 already handoffs the conversation; here we
-        // just swallow so the webhook still returns 200 and Meta doesn't
-        // retry-bomb a message we've already persisted.
+        // Still swallowed, and now for a better reason than before. The message
+        // row is already committed, so retrying this queue event would only
+        // re-run the AI on a message that is safely stored — and tier1 has
+        // already handed the conversation to a human on its way out. Letting it
+        // throw would dead-letter an event whose actual work succeeded.
         console.warn(
           "[tier1] run failed, conversation already handed off:",
           err instanceof Error ? err.message : err,

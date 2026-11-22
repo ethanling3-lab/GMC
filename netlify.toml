@@ -32,6 +32,15 @@
   schedule = "@hourly"
   timeout = 60
 
+# Inbound WhatsApp queue worker: 15 minutes, so a slow AI reply can't be cut off.
+[functions."whatsapp-ingest-background"]
+  timeout = 900
+
+# Recovery sweep for the inbound queue. Same CRON_SECRET gate.
+[functions."cron-webhook-sweep"]
+  schedule = "*/5 * * * *"
+  timeout = 60
+
 # M7.6 — broadcast fan-out runs as a background function (15-min ceiling)
 # so a 500-recipient blast finishes well past the 26s system-handler
 # timeout. Invoked fire-and-forget by /api/admin/broadcasts/:id/send

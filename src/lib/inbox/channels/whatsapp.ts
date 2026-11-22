@@ -141,9 +141,18 @@ function parseWebhook(body: unknown): ParsedWebhookResult {
       const value = change.value;
       if (!value) continue;
 
-      // Inbound messages
+      // Inbound messages.
+      //
+      // contacts[] is a sibling of messages[] in the payload — one entry per
+      // sender — so the profile name has to be looked up here and handed down;
+      // normalizeInbound cannot see it. This is why every auto-created lead
+      // was nameless.
       for (const msg of value.messages ?? []) {
-        messages.push(normalizeInbound(entry.id, msg));
+        const profileName =
+          (value.contacts ?? []).find((c) => c.wa_id === msg.from)?.profile?.name
+          ?? (value.contacts ?? [])[0]?.profile?.name
+          ?? null;
+        messages.push(normalizeInbound(entry.id, msg, profileName));
       }
 
       // Outbound delivery status
@@ -165,6 +174,7 @@ function parseWebhook(body: unknown): ParsedWebhookResult {
 function normalizeInbound(
   entryId: string,
   msg: WhatsAppInboundMessage,
+  profileName: string | null,
 ): ParsedInboundMessage {
   const attachments: ParsedInboundAttachment[] = [];
   let bodyText: string | null = null;
@@ -218,6 +228,7 @@ function normalizeInbound(
     body_text: bodyText,
     received_at: msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : null,
     attachments,
+    profile_name: profileName?.trim() || null,
     raw: msg as unknown as Record<string, unknown>,
   };
 }

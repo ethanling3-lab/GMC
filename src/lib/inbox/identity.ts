@@ -24,6 +24,14 @@ export async function resolveIdentity(
   service: SupabaseClient,
   channel: ChannelKey,
   identifier: string,
+  /**
+   * The sender's self-asserted profile name, when the channel supplies one.
+   * Used ONLY to name a newly auto-created lead — never to update an existing
+   * participant, whose name a human or a registration has already established,
+   * and never to raise identity_confidence: a WhatsApp profile name is chosen
+   * by the sender and confirms nothing.
+   */
+  profileName?: string | null,
 ): Promise<ResolvedIdentity> {
   const normalized = normalize(channel, identifier);
 
@@ -76,6 +84,17 @@ export async function resolveIdentity(
     phone_e164: channel === "whatsapp" ? normalized : null,
     email: channel === "email" ? normalized : null,
   };
+
+  // Name the lead if the channel told us who they are. Without this every
+  // auto-created participant was nameless and the inbox rendered a wall of
+  // phone numbers — the data was in the payload the whole time, parsed and
+  // discarded. Which column depends on the script: a CJK profile name belongs
+  // in name_cn, anything else in name_en, so the bilingual UI picks it up.
+  const trimmedName = profileName?.trim();
+  if (trimmedName) {
+    if (/[\u4e00-\u9fff]/.test(trimmedName)) leadRow.name_cn = trimmedName;
+    else leadRow.name_en = trimmedName;
+  }
   let { data: created, error: createErr } = await service
     .from("participants")
     .insert(leadRow)
