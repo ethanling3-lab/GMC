@@ -132,6 +132,8 @@ export type AuditAction =
   | "participant.face_embedding_computed"
   | "participant.face_embedding_failed"
   | "participant.facial_recognition_consent_changed"
+  | "whatsapp.settings_changed"
+  | "whatsapp.welcome_sent"
   | "broadcast.created"
   | "broadcast.updated"
   | "broadcast.cancelled"

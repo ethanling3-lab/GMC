@@ -6,6 +6,7 @@ import { getAdapter, type ChannelKey } from "./channels";
 import type { ParsedInboundMessage, ParsedWebhookResult } from "./channels/adapter";
 import { runTier1Reply } from "./ai/tier1";
 import { notifyAdmins } from "@/lib/notifications/admin-alerts";
+import { sendWelcomeIfFirstContact } from "@/lib/whatsapp/automations";
 
 // Channel-agnostic inbound pipeline. Call from each webhook route after
 // signature verification. Idempotent: the same webhook payload can be
@@ -240,12 +241,19 @@ async function processInboundMessage(
     },
   });
 
+  // 6c. First contact: the admin-configured welcome. True means it fully
+  //     answered a bare "hello", so the AI doesn't send a second greeting.
+  const welcomed = await sendWelcomeIfFirstContact(service, {
+    conversationId,
+    inboundText: msg.body_text,
+  });
+
   // 7. If AI is enabled on this conversation and the message is plain text
   //    (no attachments — Tier 1 doesn't handle media), fire the Tier 1
   //    responder. Runs inline — Meta's webhook timeout is generous enough
   //    for Claude to return within it. If AI calls handoff_to_human, the
   //    function will flip ai_enabled off itself.
-  if (storedAttachments.length === 0 && msg.body_text && msg.body_text.trim()) {
+  if (!welcomed && storedAttachments.length === 0 && msg.body_text && msg.body_text.trim()) {
     const { data: conv } = await service
       .from("conversations")
       .select("ai_enabled, participant:participants(language_fluency, region)")

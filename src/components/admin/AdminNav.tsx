@@ -11,6 +11,7 @@ type NavItem = {
 };
 
 type IconName =
+  | "whatsapp"
   | "ai"
   | "overview"
   | "participants"
@@ -25,6 +26,7 @@ type IconName =
 const PRIMARY: NavItem[] = [
   { href: "/admin", label: "Overview", labelZh: "概览", icon: "overview" },
   { href: "/admin/inbox", label: "Inbox", labelZh: "收件箱", icon: "inbox" },
+  { href: "/admin/whatsapp", label: "WhatsApp setup", labelZh: "设置", icon: "whatsapp" },
   { href: "/admin/broadcasts", label: "Broadcasts", labelZh: "群发", icon: "broadcasts" },
   { href: "/admin/ai", label: "AI", labelZh: "AI 助手", icon: "ai" },
   { href: "/admin/participants", label: "Participants", labelZh: "学员", icon: "participants" },
@@ -100,6 +102,13 @@ function NavIcon({ name }: { name: IconName }) {
         <svg {...common}>
           <path d="M2.5 4.5a1.5 1.5 0 0 1 1.5-1.5h8a1.5 1.5 0 0 1 1.5 1.5V11a1.5 1.5 0 0 1-1.5 1.5H6L3.5 14.5V12.5H4A1.5 1.5 0 0 1 2.5 11z" />
           <path d="M5.5 7h5M5.5 9h3" />
+        </svg>
+      );
+    case "whatsapp":
+      return (
+        <svg {...common}>
+          <path d="M3 13l.8-2.6A5.2 5.2 0 1 1 5.8 12.3z" />
+          <path d="M6.4 6.2c0 2 1.5 3.5 3.5 3.6l.7-.9-1.1-.6-.5.4c-.6-.3-1-.7-1.2-1.2l.4-.5-.6-1.1z" />
         </svg>
       );
     case "broadcasts":
