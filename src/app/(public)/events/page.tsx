@@ -3,6 +3,8 @@ import Link from "next/link";
 import { PagePreamble } from "@/components/marketing/PagePreamble";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
+import { registrationBlock } from "@/lib/event-registration-window";
+import { RegistrationUnavailable } from "@/components/marketing/RegistrationUnavailable";
 
 export const metadata = { title: "Courses" };
 export const revalidate = 60;
@@ -13,7 +15,7 @@ async function loadOpenEvents(locale: "zh" | "en") {
     const { data, error } = await supabase
       .from("events")
       .select(
-        "slug, title_cn, title_en, heading_cn, heading_en, poster_url, city, country, start_date, end_date, arrival_day, departure_day, type, mode, status, requires_approval",
+        "slug, title_cn, title_en, heading_cn, heading_en, poster_url, city, country, start_date, end_date, arrival_day, departure_day, type, mode, status, requires_approval, enrollment_opens_at, enrollment_closes_at",
       )
       .eq("status", "open")
       .order("start_date", { ascending: true });
@@ -258,6 +260,9 @@ export default async function EventsPage() {
                   ) : null}
 
                   <div className="mt-auto pt-6">
+                    {registrationBlock(e) ? (
+                      <RegistrationUnavailable block={registrationBlock(e)!} locale={locale} className="h-11" />
+                    ) : (
                     <Link
                       href={`/register?event=${encodeURIComponent(e.slug)}`}
                       style={{ color: "#ffffff" }}
@@ -286,6 +291,7 @@ export default async function EventsPage() {
                         <path d="M3 7h8M7.5 3l4 4-4 4" />
                       </svg>
                     </Link>
+                    )}
                   </div>
                   </div>
                 </article>

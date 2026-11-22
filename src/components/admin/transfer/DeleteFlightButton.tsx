@@ -8,9 +8,7 @@ import { useRouter } from "next/navigation";
 // on first click ("Click again to confirm"), then fires DELETE on the
 // second click. Hits the existing /api/admin/flight-info route.
 //
-// After delete, the row's flight_info_ids still references the now-missing
-// id until the user clicks Regenerate — that's intentional, the action bar
-// already surfaces Regenerate clearly.
+// A draft list updates itself after the delete; a final list is left as sent.
 
 export type DeleteFlightInitial = {
   enrollment_id: string;
@@ -132,10 +130,10 @@ export function DeleteFlightButton({ initial }: { initial: DeleteFlightInitial }
             </div>
             <div className="px-6 py-5">
               <div className="rounded-[var(--radius-md)] border border-[var(--cinnabar)]/25 bg-[var(--cinnabar-wash)]/30 px-4 py-3 text-[12px] leading-[1.6] text-[var(--ink-soft)]">
-                This removes the flight from the participant's record. They'll
-                disappear from the transfer list after the next{" "}
-                <strong className="text-[var(--ink)]">Regenerate</strong>.
-                This cannot be undone.
+                This removes the flight from the participant&apos;s record and
+                takes them off a draft transfer list right away. A final list
+                stays as it is until you move it back to draft. This cannot be
+                undone.
               </div>
               {error ? (
                 <div className="mt-3 text-[11.5px] text-[var(--cinnabar-deep)] leading-[1.5]">

@@ -13,7 +13,7 @@ const CRUMB_LABELS: Record<string, string> = {
   inbox: "Inbox",
   travel: "Travel",
   finance: "Finance",
-  "transfer-lists": "Transfer lists",
+  logistics: "Logistics",
   imports: "Imports",
   notifications: "Notifications",
   enrollments: "Enrolments",

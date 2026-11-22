@@ -3,7 +3,8 @@ import { requireParticipant } from "@/lib/participant-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { isEventFull } from "@/lib/event-capacity";
 import { createPaymentAccessToken } from "@/lib/tokens";
-import { resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
+import { amountDueFor, resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
+import { registrationBlock } from "@/lib/event-registration-window";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,7 +31,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   const service = createSupabaseServiceClient();
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers")
+    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, enrollment_opens_at, enrollment_closes_at")
     .eq("slug", slug)
     .maybeSingle();
   if (!event) {
@@ -44,13 +45,15 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     price: number | string | null;
     misc_fee: number | string | null;
     price_tiers: PriceTier[] | null;
+    enrollment_opens_at: string | null;
+    enrollment_closes_at: string | null;
   };
-  if (ev.status !== "open") {
+  if (ev.status !== "open" || registrationBlock(ev)) {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
   }
 
   // Capacity gate.
-  if (ev.capacity && (await isEventFull(service, ev.id, ev.capacity))) {
+  if (await isEventFull(service, ev.id, ev.capacity)) {
     return NextResponse.json({ error: "event_full" }, { status: 409 });
   }
 
@@ -74,11 +77,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     .eq("id", participant.id)
     .maybeSingle();
   const tier = resolvePriceTier(ev, pricingParticipantFromRow(pricing));
-  const amountDue = tier
-    ? tier.amount
-    : ev.price != null && Number.isFinite(Number(ev.price))
-      ? Number(ev.price)
-      : null;
+  const amountDue = amountDueFor(ev, tier);
 
   const status = ev.requires_approval ? "pending_approval" : "approved";
   const { data: enrollment, error: insErr } = await service

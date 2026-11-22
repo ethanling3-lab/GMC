@@ -1,5 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  isTransferEligible,
+  TRANSFER_ELIGIBLE_OR,
+  TRANSFER_EXCLUDED_STATUSES,
+} from "./eligibility";
 
 // Loader for the /admin/transfer-lists list view. One row per event that has
 // either an arrival_day or departure_day set (events that need transfer
@@ -20,6 +25,9 @@ export type TransferEventRow = {
   transfer_sheet_id: string | null;
   transfer_sheet_url: string | null;
   transfer_synced_at: string | null;
+  // Loaded on the event's Logistics page only.
+  designated_hotels?: Record<string, string> | null;
+  transfer_rules?: unknown;
   // Total approved/paid enrolments — denominator for "X/Y confirmed" pills.
   total_enrolled: number;
   arrival: TransferDirectionState;
@@ -49,6 +57,8 @@ type EventQueryRow = {
   transfer_sheet_id: string | null;
   transfer_sheet_url: string | null;
   transfer_synced_at: string | null;
+  designated_hotels?: Record<string, string> | null;
+  transfer_rules?: unknown;
 };
 
 export async function loadTransferListsOverview(
@@ -99,14 +109,18 @@ export async function loadTransferListsOverview(
   const { data: flights, error: flErr } = await supabase
     .from("flight_info")
     .select(
-      "direction, confirmed_at, enrollment:enrollments!inner(event_id)",
+      "direction, confirmed_at, enrollment:enrollments!inner(event_id, status, payment_status)",
     )
     .in("enrollment.event_id", eventIds)
     .returns<
       Array<{
         direction: "arrival" | "departure";
         confirmed_at: string | null;
-        enrollment: { event_id: string } | null;
+        enrollment: {
+          event_id: string;
+          status: string;
+          payment_status: string;
+        } | null;
       }>
     >();
   if (flErr) {
@@ -115,7 +129,7 @@ export async function loadTransferListsOverview(
   const flightTotals = new Map<string, { total: number; confirmed: number }>();
   for (const f of flights ?? []) {
     const eid = f.enrollment?.event_id;
-    if (!eid) continue;
+    if (!eid || !isTransferEligible(f.enrollment!)) continue;
     const key = `${eid}:${f.direction}`;
     const cur = flightTotals.get(key) ?? { total: 0, confirmed: 0 };
     cur.total += 1;
@@ -129,7 +143,8 @@ export async function loadTransferListsOverview(
     .from("enrollments")
     .select("event_id")
     .in("event_id", eventIds)
-    .in("status", ["approved", "paid"])
+    .or(TRANSFER_ELIGIBLE_OR)
+    .not("status", "in", TRANSFER_EXCLUDED_STATUSES)
     .returns<Array<{ event_id: string }>>();
   const enrolByEvent = new Map<string, number>();
   for (const r of enrolRows ?? []) {
@@ -222,6 +237,7 @@ export type TransferRowFlight = {
   terminal: string | null;
   hotel_key: string | null;
   is_vip: boolean;
+  updated_at: string;
   participant: {
     id: string;
     region_id: string | null;
@@ -244,7 +260,7 @@ export async function loadTransferDetail(
   const { data: events } = await supabase
     .from("events")
     .select(
-      "id, slug, title_en, title_cn, arrival_day, departure_day, city, status, main_venue_hotel_name, transfer_sheet_id, transfer_sheet_url, transfer_synced_at",
+      "id, slug, title_en, title_cn, arrival_day, departure_day, city, status, main_venue_hotel_name, designated_hotels, transfer_rules, transfer_sheet_id, transfer_sheet_url, transfer_synced_at",
     )
     .eq("id", eventId)
     .returns<EventQueryRow[]>();
@@ -358,7 +374,7 @@ export async function loadTransferDetail(
       const { data: f } = await supabase
         .from("flight_info")
         .select(
-          "id, enrollment_id, flight_number, airline, origin_airport, destination_airport, scheduled_at, terminal, hotel_key, is_vip, enrollment:enrollments!inner(participant:participants!inner(id, region_id, name_cn, name_en, region))",
+          "id, enrollment_id, flight_number, airline, origin_airport, destination_airport, scheduled_at, terminal, hotel_key, is_vip, updated_at, enrollment:enrollments!inner(participant:participants!inner(id, region_id, name_cn, name_en, region))",
         )
         .in("id", allFlightIds)
         .returns<
@@ -373,6 +389,7 @@ export async function loadTransferDetail(
             terminal: string | null;
             hotel_key: string | null;
             is_vip: boolean;
+            updated_at: string;
             enrollment: {
               participant: {
                 id: string;
@@ -395,6 +412,7 @@ export async function loadTransferDetail(
         terminal: row.terminal,
         hotel_key: row.hotel_key,
         is_vip: row.is_vip,
+        updated_at: row.updated_at,
         participant: row.enrollment?.participant ?? null,
       }));
     }

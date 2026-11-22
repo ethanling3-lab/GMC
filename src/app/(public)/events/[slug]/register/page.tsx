@@ -4,6 +4,14 @@ import Link from "next/link";
 import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase";
 import { loadSelfProfile } from "@/lib/participant-self";
 import { QuickRegisterConfirm } from "./QuickRegisterConfirm";
+import { registrationBlock } from "@/lib/event-registration-window";
+import { currentEventSlug } from "@/lib/event-slug";
+import {
+  amountDueFor,
+  pricingParticipantFromRow,
+  resolvePriceTier,
+  type PriceTier,
+} from "@/lib/pricing/tiers";
 
 export const metadata: Metadata = { title: "Register · 报名 — GMC" };
 export const dynamic = "force-dynamic";
@@ -20,6 +28,9 @@ type PageProps = {
 
 export default async function EventRegisterPage({ params }: PageProps) {
   const { slug } = await params;
+
+  const moved = await currentEventSlug(createSupabaseServiceClient(), slug);
+  if (moved) redirect(`/events/${encodeURIComponent(moved)}/register`);
 
   const supabase = await createSupabaseServerClient();
   const {
@@ -47,12 +58,16 @@ export default async function EventRegisterPage({ params }: PageProps) {
   const { data: event } = await service
     .from("events")
     .select(
-      "id, slug, status, title_en, title_cn, start_date, end_date, venue, price, capacity, requires_approval",
+      "id, slug, status, title_en, title_cn, start_date, end_date, venue, price, misc_fee, price_tiers, currency, capacity, requires_approval, enrollment_opens_at, enrollment_closes_at",
     )
     .eq("slug", slug)
     .maybeSingle();
   if (!event) notFound();
-  if ((event as { status: string }).status !== "open") {
+  const windowFields = event as {
+    enrollment_opens_at: string | null;
+    enrollment_closes_at: string | null;
+  };
+  if ((event as { status: string }).status !== "open" || registrationBlock(windowFields)) {
     return (
       <section className="min-h-[calc(100dvh-200px)] flex items-center justify-center px-6 py-16">
         <div className="max-w-[420px] text-center">
@@ -88,6 +103,23 @@ export default async function EventRegisterPage({ params }: PageProps) {
   const profile = await loadSelfProfile(participant.id);
   if (!profile) notFound();
 
+  // Show the amount this person will actually be charged.
+  const { data: pricingRow } = await service
+    .from("participants")
+    .select("is_old_student, programme_expires_at, programmes(slug)")
+    .eq("id", participant.id)
+    .maybeSingle();
+  const priced = event as {
+    price: number | string | null;
+    misc_fee: number | string | null;
+    price_tiers: PriceTier[] | null;
+    currency: string | null;
+  };
+  const amountDue = amountDueFor(
+    priced,
+    resolvePriceTier(priced, pricingParticipantFromRow(pricingRow)),
+  );
+
   return (
     <section className="min-h-[calc(100dvh-160px)] px-4 md:px-8 py-10 max-w-[720px] mx-auto">
       <div className="text-[11px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
@@ -115,7 +147,8 @@ export default async function EventRegisterPage({ params }: PageProps) {
         }
         startDate={(event as { start_date: string | null }).start_date}
         venue={(event as { venue: string | null }).venue}
-        price={(event as { price: number | string | null }).price}
+        price={amountDue}
+        currency={priced.currency ?? "SGD"}
         profile={{
           name_cn: profile.name_cn,
           name_en: profile.name_en,

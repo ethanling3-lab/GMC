@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { FlightSubmissionStatus } from "@/lib/transfer/flight-status";
+import type {
+  FlightStatus,
+  FlightSubmissionStatus,
+} from "@/lib/transfer/flight-status";
 
 // Collapsible card showing who's submitted vs missing flight info, per
 // direction. Default state shows just the totals; expand to see the full
@@ -20,8 +23,11 @@ export function PendingFlightsPanel({
 }) {
   const [open, setOpen] = useState(false);
 
-  const arrivalGap = status.arrival.missing + status.arrival.draft;
-  const departureGap = status.departure.missing + status.departure.draft;
+  const needsTime = status.arrival.needs_time + status.departure.needs_time;
+  const arrivalGap =
+    status.arrival.missing + status.arrival.draft + status.arrival.needs_time;
+  const departureGap =
+    status.departure.missing + status.departure.draft + status.departure.needs_time;
   const anyGap = arrivalGap > 0 || departureGap > 0;
 
   return (
@@ -51,6 +57,12 @@ export function PendingFlightsPanel({
             total={status.total_enrolled}
             gap={departureGap}
           />
+          {needsTime > 0 ? (
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#7A5617]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#A87A2A]" aria-hidden="true" />
+              {needsTime} need{needsTime === 1 ? "s" : ""} a flight time
+            </span>
+          ) : null}
         </div>
         <span
           className="text-[var(--ink-mute)] text-[11px] tracking-[0.18em] uppercase"
@@ -165,12 +177,20 @@ function DirChip({
   );
 }
 
-function StatusPip({ status }: { status: "confirmed" | "draft" | "missing" }) {
+function StatusPip({ status }: { status: FlightStatus }) {
   if (status === "confirmed") {
     return (
       <span className="inline-flex items-center gap-1.5 text-[10.5px] tracking-[0.12em] uppercase text-[#3a6b3b]">
         <span className="w-1.5 h-1.5 rounded-full bg-[#5b9a5d]" aria-hidden="true" />
         Confirmed
+      </span>
+    );
+  }
+  if (status === "needs_time") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[10.5px] tracking-[0.12em] uppercase font-medium text-[#7A5617] whitespace-nowrap">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#A87A2A]" aria-hidden="true" />
+        Needs time
       </span>
     );
   }

@@ -1,7 +1,9 @@
 // Departure list builder.
 //
 // Rules (Skills/airport-transfer-list.md):
-//   * All departures from main venue hotel.
+//   * Departures from main venue hotel, except "Other hotel" guests when the
+//     list is set to collect them: own vehicle(s) per hotel, on the lead-time
+//     rule, never the shared coach.
 //   * 3-hour rule: hotel departure = flight time − 3h. Applies to:
 //       - All flights BEFORE 15:00 on departure day
 //       - All flights on non-departure days (before departure day)
@@ -19,9 +21,8 @@
 
 import type { EventContext, FlightRow, GeneratorRules, TransferGroup } from "./types";
 import { partitionVip, buildVipGroup } from "./vip";
-import { sortByScheduled, consolidate, consolidationRemark } from "./consolidate";
-import { pickVehicle } from "./vehicles";
-import { departurePickup } from "./routing";
+import { sortByScheduled, consolidate, consolidationRemark, splitBucket } from "./consolidate";
+import { departurePickup, ownHotelPickup } from "./routing";
 import { formatFlightInfo } from "./format";
 import {
   collapseTerminals,
@@ -69,7 +70,7 @@ export function buildDepartures(
         pax: v,
         direction: "departure",
         scheduled_at: hotelDeparture,
-        destination: pickup,
+        destination: ownHotelPickup(v, rules) ?? pickup,
         terminal: v.terminal,
         remarkExtra: `Flight ${formatFlightInfo(v)}`,
       }),
@@ -81,7 +82,16 @@ export function buildDepartures(
   const before: FlightRow[] = [];
   const coachDay: FlightRow[] = [];
   const after: FlightRow[] = [];
+  const ownHotels = new Map<string, { name: string; rows: FlightRow[] }>();
   for (const r of sortByScheduled(rest)) {
+    const own = ownHotelPickup(r, rules);
+    if (own) {
+      const key = own.toLowerCase();
+      const hotel = ownHotels.get(key) ?? { name: own, rows: [] };
+      hotel.rows.push(r);
+      ownHotels.set(key, hotel);
+      continue;
+    }
     const c = categorize(
       r,
       ctx.departure_day,
@@ -94,17 +104,18 @@ export function buildDepartures(
   }
 
   // 3-hour-rule buckets (early leavers + departure-day pre-15:00).
-  for (const bucket of consolidate(before, rules.consolidation_window_minutes)) {
+  const beforeBuckets = consolidate(before, rules.consolidation_window_minutes)
+    .flatMap((b) => splitBucket(b, rules.oversize_strategy));
+  for (const bucket of beforeBuckets) {
     const pax = bucket.rows.length;
-    const vehicle = pickVehicle(pax);
+    const vehicle = bucket.vehicle;
     const hotelDeparture = subtractHoursIso(
       bucket.earliest_at,
       rules.departure_lead_hours,
     );
-    const consolidationNote = consolidationRemark(bucket);
-    const remark = consolidationNote
-      ? `${consolidationNote} · ${pax} pax`
-      : `${pax} pax`;
+    const remark = [consolidationRemark(bucket), `${pax} pax`, bucket.part]
+      .filter(Boolean)
+      .join(" · ");
     groups.push({
       group_no: 0,
       direction: "departure",
@@ -119,27 +130,66 @@ export function buildDepartures(
     });
   }
 
-  // Departure-day coach (≥15:00). Single row regardless of pax — vehicle
-  // sized by combined pax count per spec line 188.
+  // "Other hotel" guests, collected from their own hotel.
+  for (const hotel of ownHotels.values()) {
+    const buckets = consolidate(hotel.rows, rules.consolidation_window_minutes)
+      .flatMap((b) => splitBucket(b, rules.oversize_strategy));
+    for (const bucket of buckets) {
+      groups.push({
+        group_no: 0,
+        direction: "departure",
+        vehicle_type: bucket.vehicle.type,
+        landing_or_takeoff_at: subtractHoursIso(
+          bucket.earliest_at,
+          rules.departure_lead_hours,
+        ),
+        terminal: collapseTerminals(bucket.rows),
+        destination: hotel.name,
+        remark: [
+          consolidationRemark(bucket),
+          `${bucket.rows.length} pax`,
+          "pickup from own hotel",
+          bucket.part,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        vip: false,
+        flight_info_ids: bucket.rows.map((r) => r.flight_info_id),
+        passengers: bucket.rows,
+      });
+    }
+  }
+
+  // Departure-day coach (≥15:00). One pickup time, as many vehicles as the
+  // group needs under the chosen over-14 option.
   if (coachDay.length > 0 && ctx.departure_day) {
     const coachAt = composeLocalIso(
       ctx.departure_day,
       rules.coach_hotel_departure_local,
     );
-    const pax = coachDay.length;
-    const vehicle = pickVehicle(pax);
-    groups.push({
-      group_no: 0,
-      direction: "departure",
-      vehicle_type: vehicle.type,
-      landing_or_takeoff_at: coachAt,
-      terminal: collapseTerminals(coachDay),
-      destination: pickup,
-      remark: `Coach ${rules.coach_hotel_departure_local} (${pax} pax) · departure-day ≥${rules.coach_cutoff_hour_local}:00`,
-      vip: false,
-      flight_info_ids: coachDay.map((r) => r.flight_info_id),
-      passengers: coachDay,
-    });
+    const coachBuckets = splitBucket(
+      {
+        rows: coachDay,
+        earliest_at: coachDay[0].scheduled_at,
+        latest_at: coachDay[coachDay.length - 1].scheduled_at,
+      },
+      rules.oversize_strategy,
+    );
+    for (const bucket of coachBuckets) {
+      const base = `Coach ${rules.coach_hotel_departure_local} (${bucket.rows.length} pax) · departure-day ≥${rules.coach_cutoff_hour_local}:00`;
+      groups.push({
+        group_no: 0,
+        direction: "departure",
+        vehicle_type: bucket.vehicle.type,
+        landing_or_takeoff_at: coachAt,
+        terminal: collapseTerminals(bucket.rows),
+        destination: pickup,
+        remark: bucket.part ? `${base} · ${bucket.part}` : base,
+        vip: false,
+        flight_info_ids: bucket.rows.map((r) => r.flight_info_id),
+        passengers: bucket.rows,
+      });
+    }
   }
 
   // Late-leavers — behavior depends on coach_rule_enabled:
@@ -160,7 +210,7 @@ export function buildDepartures(
         groups.push({
           group_no: 0,
           direction: "departure",
-          vehicle_type: `Van (18-seater) — joining departure-day coach`,
+          vehicle_type: "Joining departure-day coach",
           landing_or_takeoff_at: coachAt,
           terminal: r.terminal,
           destination: pickup,
@@ -171,17 +221,22 @@ export function buildDepartures(
         });
       }
     } else {
-      for (const bucket of consolidate(after, rules.consolidation_window_minutes)) {
+      const afterBuckets = consolidate(after, rules.consolidation_window_minutes)
+        .flatMap((b) => splitBucket(b, rules.oversize_strategy));
+      for (const bucket of afterBuckets) {
         const pax = bucket.rows.length;
-        const vehicle = pickVehicle(pax);
+        const vehicle = bucket.vehicle;
         const hotelDeparture = subtractHoursIso(
           bucket.earliest_at,
           rules.departure_lead_hours,
         );
-        const consolidationNote = consolidationRemark(bucket);
-        const remark = consolidationNote
-          ? `${consolidationNote} · ${pax} pax (after dep. day)`
-          : `${pax} pax (after dep. day)`;
+        const remark = [
+          consolidationRemark(bucket),
+          `${pax} pax (after dep. day)`,
+          bucket.part,
+        ]
+          .filter(Boolean)
+          .join(" · ");
         groups.push({
           group_no: 0,
           direction: "departure",

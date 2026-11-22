@@ -34,10 +34,6 @@ const PRIMARY: NavItem[] = [
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance" },
 ];
 
-const UPCOMING: NavItem[] = [
-  { href: "/admin/transfer-lists", label: "Transfer lists", labelZh: "接送列表", icon: "transfer" },
-];
-
 // Active detection compares each nav href against the active route segment.
 // `segment` is supplied by AdminShell — server-derived from the `x-pathname`
 // header for SSR/first paint, then the live `useSelectedLayoutSegment()` after
@@ -261,30 +257,6 @@ export function AdminNav({
         )}
         <ul className="space-y-0.5">
           {PRIMARY.map((item) => (
-            <li key={item.href}>
-              <Item
-                item={item}
-                active={isActive(segment, item.href)}
-                collapsed={collapsed}
-              />
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div>
-        {!collapsed ? (
-          <div className="px-4 pb-2 text-[9px] tracking-[0.28em] uppercase text-[var(--ink-faint)]">
-            Logistics
-          </div>
-        ) : (
-          <div
-            aria-hidden="true"
-            className="mx-auto mb-2 w-5 h-px bg-[var(--paper-shadow)]"
-          />
-        )}
-        <ul className="space-y-0.5">
-          {UPCOMING.map((item) => (
             <li key={item.href}>
               <Item
                 item={item}

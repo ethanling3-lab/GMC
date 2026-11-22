@@ -26,7 +26,8 @@ export type GenerateInput = {
 export type GenerateResult = {
   direction: FlightDirection;
   groups: TransferGroup[];
-  rules_snapshot: GeneratorRules;
+  // departure_day is recorded so the page can flag a list made before it changed.
+  rules_snapshot: GeneratorRules & { departure_day: string | null };
   total_pax: number;
   total_groups: number;
 };
@@ -51,7 +52,7 @@ export function generateTransferList(input: GenerateInput): GenerateResult {
   return {
     direction: input.direction,
     groups,
-    rules_snapshot: rules,
+    rules_snapshot: { ...rules, departure_day: input.context.departure_day },
     total_pax,
     total_groups: groups.length,
   };

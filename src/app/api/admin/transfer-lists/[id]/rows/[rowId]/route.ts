@@ -26,7 +26,7 @@ const ManualPassenger = z.object({
 
 const Body = z
   .object({
-    vehicle_type: z.string().trim().min(1).max(64).optional(),
+    vehicle_type: z.string().trim().min(1).max(128).optional(),
     landing_or_takeoff_at: z
       .string()
       .trim()

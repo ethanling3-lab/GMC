@@ -20,6 +20,7 @@ type Props = {
   startDate: string | null;
   venue: string | null;
   price: number | string | null;
+  currency: string;
   profile: Profile;
 };
 
@@ -30,6 +31,7 @@ export function QuickRegisterConfirm({
   startDate,
   venue,
   price,
+  currency,
   profile,
 }: Props) {
   const router = useRouter();
@@ -97,7 +99,7 @@ export function QuickRegisterConfirm({
           {price ? (
             <span>
               <span className="text-[var(--ink-faint)]">Price</span>{" "}
-              <span className="text-[var(--ink)] font-medium">${price}</span>
+              <span className="text-[var(--ink)] font-medium">{currency} {Number(price).toLocaleString("en-US")}</span>
             </span>
           ) : null}
         </div>

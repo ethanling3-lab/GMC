@@ -11,8 +11,7 @@
 
 import type { EventContext, FlightRow, GeneratorRules, TransferGroup } from "./types";
 import { partitionVip, buildVipGroup } from "./vip";
-import { sortByScheduled, consolidate, consolidationRemark } from "./consolidate";
-import { pickVehicle } from "./vehicles";
+import { sortByScheduled, consolidate, consolidationRemark, splitBucket } from "./consolidate";
 import { arrivalDestination } from "./routing";
 import { collapseTerminals } from "./time";
 
@@ -41,11 +40,12 @@ export function buildArrivals(
 
   // Non-VIPs — 30-min consolidation buckets, one row per bucket. Multi-hotel
   // drop-offs ride one vehicle with the destination text listing each hotel.
-  const buckets = consolidate(sortByScheduled(rest), rules.consolidation_window_minutes);
+  const buckets = consolidate(sortByScheduled(rest), rules.consolidation_window_minutes)
+    .flatMap((b) => splitBucket(b, rules.oversize_strategy));
 
   for (const bucket of buckets) {
     const pax = bucket.rows.length;
-    const vehicle = pickVehicle(pax);
+    const vehicle = bucket.vehicle;
 
     const dests = new Set(bucket.rows.map((r) => arrivalDestination(r, ctx)));
     const destination =
@@ -56,9 +56,9 @@ export function buildArrivals(
       bucket.rows.length > 1 &&
       new Set(bucket.rows.map((r) => r.flight_number)).size === 1;
     const paxLabel = sameFlight ? `${pax} pax, same flight` : `${pax} pax`;
-    const remark = consolidationNote
-      ? `${consolidationNote} · ${paxLabel}`
-      : paxLabel;
+    const remark = [consolidationNote, paxLabel, bucket.part]
+      .filter(Boolean)
+      .join(" · ");
 
     groups.push({
       group_no: 0,

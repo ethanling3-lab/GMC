@@ -188,12 +188,6 @@ export function EventEditor({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [targetFilterText, setTargetFilterText] = useState(
-    JSON.stringify(event.target_audience_filter ?? {}, null, 2),
-  );
-  const [targetFilterError, setTargetFilterError] = useState<string | null>(
-    null,
-  );
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
 
@@ -265,29 +259,6 @@ export function EventEditor({
   async function onSave() {
     setError(null);
     setSuccess(null);
-    setTargetFilterError(null);
-
-    // Parse target_audience_filter JSON textarea
-    let targetFilter: Record<string, unknown> = {};
-    const trimmed = targetFilterText.trim();
-    if (trimmed) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (
-          typeof parsed !== "object" ||
-          Array.isArray(parsed) ||
-          parsed === null
-        ) {
-          throw new Error("Must be a JSON object.");
-        }
-        targetFilter = parsed;
-      } catch (err) {
-        setTargetFilterError(
-          err instanceof Error ? err.message : "Invalid JSON",
-        );
-        return;
-      }
-    }
 
     setSaving(true);
     try {
@@ -319,7 +290,6 @@ export function EventEditor({
         currency: draft.currency,
         price_tiers: draft.price_tiers ?? [],
         payment_methods: draft.payment_methods,
-        target_audience_filter: targetFilter,
         requires_approval: draft.requires_approval,
         bank_details: draft.bank_details ?? {},
         main_venue_hotel_name: draft.main_venue_hotel_name,
@@ -364,9 +334,6 @@ export function EventEditor({
 
   const statusTone = STATUS_TONE[draft.status];
   const dirty = JSON.stringify(draft) !== JSON.stringify(event);
-  const targetFilterDirty =
-    targetFilterText.trim() !==
-    JSON.stringify(event.target_audience_filter ?? {}, null, 2).trim();
 
   return (
     <div className="flex flex-col gap-6">
@@ -545,6 +512,28 @@ export function EventEditor({
               Badges
               <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
                 名牌
+              </span>
+            </Link>
+
+            {/* Logistics link — flights, arrivals, departures and vendor export */}
+            <Link
+              href={`/admin/events/${event.id}/logistics`}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12.5px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M2 10V6.5A1.5 1.5 0 0 1 3.5 5h7L14 8v2.5h-1.5" />
+                <path d="M6 10.5h4" />
+                <circle cx="4.5" cy="11" r="1.5" />
+                <circle cx="11.5" cy="11" r="1.5" />
+              </svg>
+              Logistics
+              <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
+                接送
               </span>
             </Link>
 
@@ -1113,35 +1102,11 @@ export function EventEditor({
         />
       </Section>
 
-      {/* Target audience */}
-      <Section title="Target audience" titleZh="目标学员" description="Filter DSL for WhatsApp blast + automated matching. JSON object keyed by participant column.">
-        <Field
-          label="target_audience_filter"
-          hint={`Example: {"region": "MY", "influence_score": {"gte": 7}}. Leave as {} to target everyone.`}
-        >
-          <textarea
-            rows={6}
-            value={targetFilterText}
-            onChange={(e) => {
-              setTargetFilterText(e.target.value);
-              setTargetFilterError(null);
-            }}
-            disabled={!canEdit}
-            className={textareaCls("font-mono text-[12px]")}
-          />
-          {targetFilterError ? (
-            <div className="mt-1.5 text-[11.5px] text-[var(--cinnabar-deep)]">
-              {targetFilterError}
-            </div>
-          ) : null}
-        </Field>
-      </Section>
-
       {/* Save bar */}
       {canEdit ? (
         <div className="sticky bottom-4 z-10 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]/95 backdrop-blur shadow-[var(--shadow-paper-2)] p-4 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-[11.5px] tracking-[0.14em] uppercase text-[var(--ink-mute)]">
-            {dirty || targetFilterDirty
+            {dirty
               ? <span className="text-[var(--cinnabar-deep)]">Unsaved changes</span>
               : "All changes saved"}
             {success ? (
@@ -1161,13 +1126,13 @@ export function EventEditor({
             <button
               type="button"
               onClick={onSave}
-              disabled={saving || (!dirty && !targetFilterDirty)}
+              disabled={saving || !dirty}
               className={`inline-flex items-center gap-2 h-10 px-5 rounded-[var(--radius-pill)]
                           text-[13px] tracking-[0.04em] font-medium
                           transition-[background-color,color,transform] duration-[var(--dur-fast)]
                           focus-visible:shadow-[var(--shadow-focus)]
                           ${
-                            !saving && (dirty || targetFilterDirty)
+                            !saving && dirty
                               ? "bg-[var(--cinnabar)] text-[var(--paper-warm)] hover:bg-[var(--cinnabar-deep)] shadow-[0_4px_14px_rgba(37,99,235,0.25)] active:scale-[0.98]"
                               : "bg-[var(--paper-deep)] text-[var(--ink-faint)] cursor-not-allowed"
                           }`}

@@ -137,6 +137,17 @@ export function resolvePriceTier(
   return { tier_key: fallback.key, amount: miscOf(event) + Number(fallback.amount) };
 }
 
+/** What a new enrollment owes: its tier total, else misc fee + single price. */
+export function amountDueFor(
+  event: EventLike,
+  tier: { amount: number } | null,
+): number | null {
+  if (tier) return tier.amount;
+  const price = event.price;
+  if (price == null || !Number.isFinite(Number(price))) return null;
+  return miscOf(event) + Number(price);
+}
+
 /** Look up a tier row by key (e.g. to relabel an enrollment). */
 export function findTierByKey(
   event: EventLike,

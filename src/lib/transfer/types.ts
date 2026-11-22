@@ -5,6 +5,8 @@
 // loads inputs from Supabase, calls generate(), and persists the output to
 // transfer_lists + transfer_list_rows.
 
+import type { OversizeStrategy } from "./vehicles";
+
 export type FlightDirection = "arrival" | "departure";
 
 // Hotel routing key. Mirrors the convention captured in flight_info.hotel_key:
@@ -35,6 +37,7 @@ export type FlightRow = {
   terminal: string | null;
   hotel_key: HotelKey;
   is_vip: boolean;
+  updated_at?: string;             // tells Regenerate if the flight changed
 };
 
 // Per-event context resolved by the route layer before calling generate().
@@ -77,6 +80,8 @@ export type GeneratorRules = {
   coach_cutoff_hour_local: number;            // 15 (≥15:00 = coach)
   coach_hotel_departure_local: string;        // '12:00'
   coach_rule_enabled: boolean;                // false → flights ≥cutoff use 3-hour rule, no 12:00 coach
+  oversize_strategy: OversizeStrategy;        // groups over 14 pax: split into vehicles, or 45-seater bus
+  other_hotel_pickup: "own" | "main";         // departures for "Other hotel" guests
   vehicle_table_version: string;              // for telemetry / audit
 };
 
@@ -86,7 +91,9 @@ export const DEFAULT_RULES: GeneratorRules = {
   coach_cutoff_hour_local: 15,
   coach_hotel_departure_local: "12:00",
   coach_rule_enabled: true,
-  vehicle_table_version: "2026-04-28",
+  oversize_strategy: "split",
+  other_hotel_pickup: "own",
+  vehicle_table_version: "2026-11-22",
 };
 
 // Validates a per-event override JSONB against the GeneratorRules shape and
@@ -120,6 +127,12 @@ export function parseRulesOverride(
   }
   if (typeof r.coach_rule_enabled === "boolean") {
     out.coach_rule_enabled = r.coach_rule_enabled;
+  }
+  if (r.oversize_strategy === "split" || r.oversize_strategy === "bus") {
+    out.oversize_strategy = r.oversize_strategy;
+  }
+  if (r.other_hotel_pickup === "own" || r.other_hotel_pickup === "main") {
+    out.other_hotel_pickup = r.other_hotel_pickup;
   }
   return out;
 }

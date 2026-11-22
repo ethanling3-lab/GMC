@@ -1,8 +1,12 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { currentEventSlug } from "@/lib/event-slug";
 import { RegistrationForm } from "@/components/forms/RegistrationForm";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 import { getDict, t } from "@/lib/i18n";
 import { verifyPrefillToken } from "@/lib/tokens";
+import { registrationBlock } from "@/lib/event-registration-window";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +19,7 @@ async function loadOpenEvents() {
     const supabase = createSupabaseServiceClient();
     const primary = await supabase
       .from("events")
-      .select("slug, title_cn, title_en, status, form_schema")
+      .select("slug, title_cn, title_en, status, form_schema, enrollment_opens_at, enrollment_closes_at")
       .eq("status", "open")
       .order("start_date", { ascending: true });
 
@@ -39,7 +43,7 @@ async function loadOpenEvents() {
       }));
     }
     if (!primary.data) return [];
-    return primary.data.map((e) => ({
+    return primary.data.filter((e) => !registrationBlock(e)).map((e) => ({
       slug: e.slug,
       title_cn: e.title_cn,
       title_en: e.title_en,
@@ -85,6 +89,16 @@ export default async function RegisterPage({ searchParams }: PageProps) {
 
   const prefillValues = await resolvePrefill(sp.prefill);
   const prefillToken = prefillValues ? sp.prefill : undefined;
+  const linkedEventUnavailable =
+    Boolean(sp.event) && !events.some((e) => e.slug === sp.event);
+  if (linkedEventUnavailable && sp.event) {
+    const moved = await currentEventSlug(createSupabaseServiceClient(), sp.event);
+    if (moved) {
+      const next = new URLSearchParams({ event: moved });
+      if (sp.prefill) next.set("prefill", sp.prefill);
+      redirect(`/register?${next.toString()}`);
+    }
+  }
 
   return (
     <div className="relative overflow-hidden">
@@ -110,7 +124,22 @@ export default async function RegisterPage({ searchParams }: PageProps) {
         </p>
 
         <div className="mt-12 bg-[var(--paper-warm)] border border-[var(--paper-shadow)] p-8 md:p-12 shadow-[var(--shadow-paper-1)]">
-          {events.length === 0 ? (
+          {linkedEventUnavailable ? (
+            <div className="py-10 text-center text-[var(--ink-soft)]">
+              <p>
+                {locale === "zh"
+                  ? "此课程目前未开放报名。"
+                  : "This course is not open for registration right now."}
+              </p>
+              <Link
+                href="/events"
+                className="mt-4 inline-block underline underline-offset-4 text-[var(--cinnabar-deep)] hover:text-[var(--cinnabar)] focus-visible:shadow-[var(--shadow-focus)] active:opacity-70 transition-colors"
+                style={{ color: "var(--cinnabar-deep)" }}
+              >
+                {locale === "zh" ? "查看其他课程" : "See other courses"}
+              </Link>
+            </div>
+          ) : events.length === 0 ? (
             <div className="py-10 text-center text-[var(--ink-mute)]">
               {locale === "zh"
                 ? "目前暂无对外开放的课程。请稍后回来查看。"

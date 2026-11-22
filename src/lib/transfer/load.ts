@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
+import { isTransferEligible } from "./eligibility";
 import { parseRulesOverride, type EventContext, type FlightDirection, type FlightRow } from "./types";
 
 // Loads the inputs the generator needs for a single (event, direction) pair:
@@ -39,8 +40,11 @@ type FlightDbRow = {
   hotel_key: string | null;
   is_vip: boolean;
   confirmed_at: string | null;
+  updated_at: string;
   enrollment: {
     participant_id: string;
+    status: string;
+    payment_status: string;
     participant: {
       id: string;
       region_id: string | null;
@@ -90,7 +94,8 @@ export async function loadGeneratorInputs(
         "hotel_key",
         "is_vip",
         "confirmed_at",
-        "enrollment:enrollments!inner(participant_id, participant:participants!inner(id, region_id, name_cn, name_en, region), event_id)",
+        "updated_at",
+        "enrollment:enrollments!inner(participant_id, status, payment_status, participant:participants!inner(id, region_id, name_cn, name_en, region), event_id)",
       ].join(", "),
     )
     .eq("direction", direction)
@@ -102,7 +107,12 @@ export async function loadGeneratorInputs(
   if (rowsErr) return { error: rowsErr.message };
 
   const flights: FlightRow[] = (rows ?? [])
-    .filter((r) => r.scheduled_at && r.enrollment?.participant)
+    .filter(
+      (r) =>
+        r.scheduled_at &&
+        r.enrollment?.participant &&
+        isTransferEligible(r.enrollment),
+    )
     .map((r) => ({
       flight_info_id: r.id,
       enrollment_id: r.enrollment_id,
@@ -119,6 +129,7 @@ export async function loadGeneratorInputs(
       terminal: r.terminal,
       hotel_key: r.hotel_key,
       is_vip: r.is_vip,
+      updated_at: r.updated_at,
     }));
 
   const context: EventContext = {

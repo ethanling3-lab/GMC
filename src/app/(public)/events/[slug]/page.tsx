@@ -1,10 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { currentEventSlug } from "@/lib/event-slug";
 import { PosterSlideshow } from "@/components/marketing/PosterSlideshow";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 import { TYPE_LABEL } from "@/lib/events-shared";
-import { lowestTierAmount, type PriceTier } from "@/lib/pricing/tiers";
+import { amountDueFor, lowestTierAmount, type PriceTier } from "@/lib/pricing/tiers";
+import { registrationBlock } from "@/lib/event-registration-window";
+import { RegistrationUnavailable } from "@/components/marketing/RegistrationUnavailable";
 
 export const revalidate = 60;
 
@@ -31,9 +34,11 @@ type EventRow = {
   end_date: string | null;
   arrival_day: string | null;
   departure_day: string | null;
+  enrollment_opens_at: string | null;
   enrollment_closes_at: string | null;
   capacity: number | null;
   price: number | string | null;
+  misc_fee?: number | string | null;
   price_tiers?: PriceTier[] | null;
   currency: string | null;
   status: string;
@@ -44,10 +49,10 @@ async function loadEvent(slug: string): Promise<EventRow | null> {
   try {
     const supabase = createSupabaseServiceClient();
     const base =
-      "slug, title_cn, title_en, heading_cn, heading_en, sub_heading_cn, sub_heading_en, body_cn, body_en, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_closes_at, capacity, price, currency, status, requires_approval";
+      "slug, title_cn, title_en, heading_cn, heading_en, sub_heading_cn, sub_heading_en, body_cn, body_en, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, status, requires_approval";
     let res = await supabase
       .from("events")
-      .select(`${base}, price_tiers`)
+      .select(`${base}, price_tiers, misc_fee`)
       .eq("slug", slug)
       .eq("status", "open")
       .maybeSingle();
@@ -126,7 +131,11 @@ export async function generateMetadata({ params }: PageProps) {
 export default async function EventDetailPage({ params }: PageProps) {
   const [locale, { slug }] = await Promise.all([getServerLocale(), params]);
   const event = await loadEvent(slug);
-  if (!event) notFound();
+  if (!event) {
+    const moved = await currentEventSlug(createSupabaseServiceClient(), slug);
+    if (moved) redirect(`/events/${encodeURIComponent(moved)}`);
+    notFound();
+  }
 
   const title =
     (locale === "zh" ? event.title_cn : event.title_en) ??
@@ -182,7 +191,7 @@ export default async function EventDetailPage({ params }: PageProps) {
       ? locale === "zh"
         ? `${fmtPrice(lowest, event.currency, locale)} 起`
         : `from ${fmtPrice(lowest, event.currency, locale)}`
-      : fmtPrice(event.price, event.currency, locale);
+      : fmtPrice(amountDueFor(event, null), event.currency, locale);
   const capacityTxt =
     event.capacity && event.capacity > 0
       ? locale === "zh"
@@ -233,6 +242,7 @@ export default async function EventDetailPage({ params }: PageProps) {
     });
 
   const registerHref = `/register?event=${encodeURIComponent(event.slug)}`;
+  const regBlock = registrationBlock(event);
 
   const bodyParagraphs = body
     .split(/\n{2,}/)
@@ -382,6 +392,9 @@ export default async function EventDetailPage({ params }: PageProps) {
               </dl>
 
               <div className="mt-8 pt-6 border-t border-dashed border-[var(--paper-shadow)]">
+                {regBlock ? (
+                  <RegistrationUnavailable block={regBlock} locale={locale} className="w-full h-12" />
+                ) : (
                 <Link
                   href={registerHref}
                   style={{ color: "#ffffff" }}
@@ -409,6 +422,7 @@ export default async function EventDetailPage({ params }: PageProps) {
                     <path d="M3 7h8M7.5 3l4 4-4 4" />
                   </svg>
                 </Link>
+                )}
 
                 {event.requires_approval ? (
                   <p className="mt-4 text-[11.5px] leading-[1.6] italic text-[var(--ink-faint)]">
@@ -548,6 +562,9 @@ export default async function EventDetailPage({ params }: PageProps) {
                 : "Seats are allocated in the order registrations are received."}
           </p>
           <div className="mt-10 flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
+            {regBlock ? (
+              <RegistrationUnavailable block={regBlock} locale={locale} className="h-12" />
+            ) : (
             <Link
               href={registerHref}
               style={{ color: "#ffffff" }}
@@ -564,6 +581,7 @@ export default async function EventDetailPage({ params }: PageProps) {
                 className="w-4 h-px bg-current transition-transform duration-[var(--dur-base)] ease-[var(--ease-spring)] group-hover:translate-x-1"
               />
             </Link>
+            )}
             <Link
               href="/events"
               className="inline-flex items-center justify-center gap-3 h-12 px-7 rounded-full bg-transparent text-[var(--ink)] text-[13px] font-medium tracking-[0.02em]

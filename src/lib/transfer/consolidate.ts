@@ -12,12 +12,39 @@
 // — if a new flight is >30 min from the earliest, start a new group."
 
 import type { FlightRow } from "./types";
+import { planVehicles, type OversizeStrategy, type Vehicle } from "./vehicles";
 
 export type Bucket = {
   rows: FlightRow[];
   earliest_at: string;
   latest_at: string;
 };
+
+export type VehicleBucket = Bucket & {
+  vehicle: Vehicle;
+  // e.g. "vehicle 1 of 2"; null when the bucket fits one vehicle.
+  part: string | null;
+};
+
+// Seats a time-sorted bucket into as many vehicles as it needs.
+export function splitBucket(
+  bucket: Bucket,
+  strategy: OversizeStrategy,
+): VehicleBucket[] {
+  const plan = planVehicles(bucket.rows.length, strategy);
+  let start = 0;
+  return plan.map((p, i) => {
+    const rows = bucket.rows.slice(start, start + p.pax);
+    start += p.pax;
+    return {
+      rows,
+      earliest_at: rows[0].scheduled_at,
+      latest_at: rows[rows.length - 1].scheduled_at,
+      vehicle: p.vehicle,
+      part: plan.length > 1 ? `vehicle ${i + 1} of ${plan.length}` : null,
+    };
+  });
+}
 
 // Greedy bucketing on a pre-sorted array. Caller must sort by scheduled_at
 // ascending. The bucketing key is the bucket's earliest scheduled time —

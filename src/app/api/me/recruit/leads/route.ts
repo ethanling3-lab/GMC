@@ -7,7 +7,8 @@ import { upsertParticipant } from "@/lib/participants-write";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
 import { isEligibleVolunteer } from "@/lib/participant-recruit";
-import { resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
+import { amountDueFor, resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
+import { registrationBlock } from "@/lib/event-registration-window";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 export const dynamic = "force-dynamic";
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
   // Load event.
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers")
+    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, enrollment_opens_at, enrollment_closes_at")
     .eq("slug", body.event_slug)
     .maybeSingle();
   if (!event) {
@@ -78,11 +79,13 @@ export async function POST(req: Request) {
     price: number | string | null;
     misc_fee: number | string | null;
     price_tiers: PriceTier[] | null;
+    enrollment_opens_at: string | null;
+    enrollment_closes_at: string | null;
   };
-  if (ev.status !== "open") {
+  if (ev.status !== "open" || registrationBlock(ev)) {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
   }
-  if (ev.capacity && (await isEventFull(service, ev.id, ev.capacity))) {
+  if (await isEventFull(service, ev.id, ev.capacity)) {
     return NextResponse.json({ error: "event_full" }, { status: 409 });
   }
 
@@ -135,11 +138,7 @@ export async function POST(req: Request) {
   // programme, so this resolves to the new-student / default tier (parity
   // with the public + logged-in register flows).
   const tier = resolvePriceTier(ev, null);
-  const amountDue = tier
-    ? tier.amount
-    : ev.price != null && Number.isFinite(Number(ev.price))
-      ? Number(ev.price)
-      : null;
+  const amountDue = amountDueFor(ev, tier);
 
   const status = ev.requires_approval ? "pending_approval" : "approved";
   const { data: enrollment, error: insErr } = await service

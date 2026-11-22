@@ -5,6 +5,10 @@ import { requireAdmin } from "@/lib/admin-guard";
 import {
   upsertFlightInfo,
   deleteFlightInfo,
+  FLIGHT_TIME_REQUIRED,
+  FLIGHT_TIME_REQUIRED_DETAIL,
+  HOTEL_NAME_REQUIRED,
+  HOTEL_NAME_REQUIRED_DETAIL,
 } from "@/lib/inbox/flight-info-write";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +48,7 @@ const PostBody = z.object({
   destination_airport: z.string().trim().toUpperCase().length(3).optional().or(z.literal("")),
   scheduled_at: isoOrEmpty,
   terminal: z.string().trim().max(16).optional(),
-  hotel_key: z.string().trim().max(64).optional(),
+  hotel_key: z.string().trim().max(240).optional(),
   is_vip: z.boolean().optional(),
   confirm: z.boolean().optional(),
 });
@@ -108,6 +112,18 @@ export async function POST(req: Request, { params }: RouteCtx) {
   });
 
   if (!result.ok) {
+    if (result.error === FLIGHT_TIME_REQUIRED) {
+      return NextResponse.json(
+        { error: result.error, detail: FLIGHT_TIME_REQUIRED_DETAIL },
+        { status: 400 },
+      );
+    }
+    if (result.error === HOTEL_NAME_REQUIRED) {
+      return NextResponse.json(
+        { error: result.error, detail: HOTEL_NAME_REQUIRED_DETAIL },
+        { status: 400 },
+      );
+    }
     if (result.error === "enrollment_not_found") {
       return NextResponse.json({ error: result.error }, { status: 404 });
     }
@@ -118,6 +134,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
     ok: true,
     id: result.id,
     confirmed_at: result.confirmed_at,
+    transfer: result.transfer,
   });
 }
 
@@ -148,5 +165,5 @@ export async function DELETE(req: Request, { params }: RouteCtx) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, missing: !result.deleted });
+  return NextResponse.json({ ok: true, missing: !result.deleted, transfer: result.transfer });
 }

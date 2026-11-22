@@ -15,7 +15,8 @@ import {
 } from "@/lib/participants-write";
 import { isEventFull } from "@/lib/event-capacity";
 import { setMarketingStatus } from "@/lib/whatsapp/consent";
-import { resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
+import { amountDueFor, resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
+import { registrationBlock } from "@/lib/event-registration-window";
 
 export const runtime = "nodejs";
 
@@ -50,6 +51,7 @@ export async function POST(req: NextRequest) {
         id: string;
         status: string;
         requires_approval: boolean;
+        enrollment_opens_at: string | null;
         enrollment_closes_at: string | null;
         capacity: number | null;
         form_schema?: unknown;
@@ -65,7 +67,7 @@ export async function POST(req: NextRequest) {
     const primary = await supabase
       .from("events")
       .select(
-        "id, status, requires_approval, enrollment_closes_at, capacity, form_schema, price, misc_fee, price_tiers",
+        "id, status, requires_approval, enrollment_opens_at, enrollment_closes_at, capacity, form_schema, price, misc_fee, price_tiers",
       )
       .eq("slug", presliced.data.event_slug)
       .maybeSingle();
@@ -77,7 +79,7 @@ export async function POST(req: NextRequest) {
       tieredAvailable = false;
       const fallback = await supabase
         .from("events")
-        .select("id, status, requires_approval, enrollment_closes_at, capacity, price")
+        .select("id, status, requires_approval, enrollment_opens_at, enrollment_closes_at, capacity, price")
         .eq("slug", presliced.data.event_slug)
         .maybeSingle();
       if (fallback.error || !fallback.data) {
@@ -93,7 +95,7 @@ export async function POST(req: NextRequest) {
   if (!event) {
     return NextResponse.json({ error: "event_not_found" }, { status: 404 });
   }
-  if (event.status !== "open") {
+  if (event.status !== "open" || registrationBlock(event)) {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
   }
 
@@ -227,16 +229,10 @@ export async function POST(req: NextRequest) {
       .select("is_old_student, programme_expires_at, programmes(slug)")
       .eq("id", participantId)
       .maybeSingle();
-    const tier = resolvePriceTier(
-      { price: event.price, misc_fee: event.misc_fee, price_tiers: event.price_tiers },
-      pricingParticipantFromRow(pricing),
-    );
+    const priced = { price: event.price, misc_fee: event.misc_fee, price_tiers: event.price_tiers };
+    const tier = resolvePriceTier(priced, pricingParticipantFromRow(pricing));
     priceTierKey = tier?.tier_key ?? null;
-    amountDue = tier
-      ? tier.amount
-      : event.price != null && Number.isFinite(Number(event.price))
-        ? Number(event.price)
-        : null;
+    amountDue = amountDueFor(priced, tier);
   }
 
   // Pin `event` here so the narrowing survives into the closure below.

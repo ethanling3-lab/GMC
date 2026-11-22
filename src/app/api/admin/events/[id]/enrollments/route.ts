@@ -14,7 +14,7 @@ import {
   notifyPaymentReceived,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
-import { resolvePriceTier, pricingParticipantFromRow } from "@/lib/pricing/tiers";
+import { amountDueFor, resolvePriceTier, pricingParticipantFromRow } from "@/lib/pricing/tiers";
 import { writeAuditLog } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
@@ -175,11 +175,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
     .eq("id", participantId)
     .maybeSingle();
   const tier = resolvePriceTier(event, pricingParticipantFromRow(pricingRow));
-  const amountDue = tier
-    ? tier.amount
-    : event.price != null && Number.isFinite(Number(event.price))
-      ? Number(event.price)
-      : null;
+  const amountDue = amountDueFor(event, tier);
 
   // Build the insert payload from the chosen initial state. Mirrors the
   // PATCH route's per-action mutation logic so a manually-created "approved"

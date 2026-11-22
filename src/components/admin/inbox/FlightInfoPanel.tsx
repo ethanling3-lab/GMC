@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { HotelSelect } from "@/components/admin/transfer/HotelSelect";
 import type {
   FlightInfoEnrollmentRow,
   FlightInfoSlot,
@@ -263,15 +264,6 @@ function SlotForm({
     }
   }
 
-  const hotelOptions: Array<{ key: string; label: string }> = [
-    { key: "", label: "—" },
-    { key: "main_venue", label: mainVenueName ? `Main · ${mainVenueName}` : "Main venue" },
-    ...Object.entries(designatedHotels).map(([k, v]) => ({
-      key: `designated:${k}`,
-      label: `Designated · ${v}`,
-    })),
-  ];
-
   return (
     <div className="px-3 pb-3 pt-1 border-t border-[var(--paper-shadow)] flex flex-col gap-2">
       <div className="grid grid-cols-2 gap-2">
@@ -334,17 +326,14 @@ function SlotForm({
           />
         </Field>
         <Field label="Hotel">
-          <select
+          <HotelSelect
             value={hotelKey}
-            onChange={(e) => setHotelKey(e.target.value)}
+            onChange={setHotelKey}
+            mainVenueName={mainVenueName}
+            designatedHotels={designatedHotels}
             className={inputClass}
-          >
-            {hotelOptions.map((o) => (
-              <option key={o.key || "none"} value={o.key}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            allowEmpty
+          />
         </Field>
       </div>
       <label className="inline-flex items-center gap-2 text-[11px] tracking-[0.04em] text-[var(--ink-soft)]">

@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { TRANSFER_ELIGIBLE_OR, TRANSFER_EXCLUDED_STATUSES } from "./eligibility";
 
 // Loader for "who has submitted their flight info, who hasn't" — feeds the
 // pending-flights panel on the transfer-list detail page, the aggregate count
@@ -8,9 +9,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // "Confirmed" means flight_info.confirmed_at IS NOT NULL — that's what the
 // generator actually uses. A draft flight (entered but not confirmed) is
 // surfaced separately so admin can chase the confirmation, not a brand-new
-// submission.
+// submission. "needs_time" is a confirmed flight with no scheduled time: the
+// generator can't place it, so it must not count as ready.
 
-export type FlightStatus = "confirmed" | "draft" | "missing";
+export type FlightStatus = "confirmed" | "needs_time" | "draft" | "missing";
+
+const CHASE_WEIGHT: Record<FlightStatus, number> = {
+  needs_time: 3,
+  missing: 2,
+  draft: 1,
+  confirmed: 0,
+};
 
 export type EnrolmentSubmission = {
   enrollment_id: string;
@@ -23,8 +32,8 @@ export type EnrolmentSubmission = {
 
 export type FlightSubmissionStatus = {
   total_enrolled: number;
-  arrival: { confirmed: number; draft: number; missing: number };
-  departure: { confirmed: number; draft: number; missing: number };
+  arrival: Record<FlightStatus, number>;
+  departure: Record<FlightStatus, number>;
   enrolments: EnrolmentSubmission[];
 };
 
@@ -42,6 +51,7 @@ type FlightRow = {
   enrollment_id: string;
   direction: "arrival" | "departure";
   confirmed_at: string | null;
+  scheduled_at: string | null;
 };
 
 export async function loadFlightSubmissionStatus(
@@ -54,7 +64,8 @@ export async function loadFlightSubmissionStatus(
       "id, participant:participants!inner(id, region_id, name_en, name_cn)",
     )
     .eq("event_id", eventId)
-    .in("status", ["approved", "paid"])
+    .or(TRANSFER_ELIGIBLE_OR)
+    .not("status", "in", TRANSFER_EXCLUDED_STATUSES)
     .returns<EnrolRow[]>();
 
   const enrolments = enrolRows ?? [];
@@ -64,22 +75,22 @@ export async function loadFlightSubmissionStatus(
   if (enrollmentIds.length > 0) {
     const { data: flightRows } = await supabase
       .from("flight_info")
-      .select("enrollment_id, direction, confirmed_at")
+      .select("enrollment_id, direction, confirmed_at, scheduled_at")
       .in("enrollment_id", enrollmentIds)
       .returns<FlightRow[]>();
     for (const f of flightRows ?? []) {
       const key = `${f.enrollment_id}:${f.direction}`;
       flightByEnrolDir.set(
         key,
-        f.confirmed_at ? "confirmed" : "draft",
+        !f.confirmed_at ? "draft" : f.scheduled_at ? "confirmed" : "needs_time",
       );
     }
   }
 
   const status: FlightSubmissionStatus = {
     total_enrolled: enrolments.length,
-    arrival: { confirmed: 0, draft: 0, missing: 0 },
-    departure: { confirmed: 0, draft: 0, missing: 0 },
+    arrival: { confirmed: 0, needs_time: 0, draft: 0, missing: 0 },
+    departure: { confirmed: 0, needs_time: 0, draft: 0, missing: 0 },
     enrolments: [],
   };
 
@@ -101,12 +112,13 @@ export async function loadFlightSubmissionStatus(
     });
   }
 
-  // Sort: missing arrivals first (most chaseable), then by region_id, then name.
+  // Sort: people who need a time first, then the most to chase, then region_id, name.
   status.enrolments.sort((a, b) => {
-    const aMissing = (a.arrival === "missing" ? 2 : a.arrival === "draft" ? 1 : 0) +
-      (a.departure === "missing" ? 2 : a.departure === "draft" ? 1 : 0);
-    const bMissing = (b.arrival === "missing" ? 2 : b.arrival === "draft" ? 1 : 0) +
-      (b.departure === "missing" ? 2 : b.departure === "draft" ? 1 : 0);
+    const aTime = a.arrival === "needs_time" || a.departure === "needs_time";
+    const bTime = b.arrival === "needs_time" || b.departure === "needs_time";
+    if (aTime !== bTime) return aTime ? -1 : 1;
+    const aMissing = CHASE_WEIGHT[a.arrival] + CHASE_WEIGHT[a.departure];
+    const bMissing = CHASE_WEIGHT[b.arrival] + CHASE_WEIGHT[b.departure];
     if (aMissing !== bMissing) return bMissing - aMissing;
     const ar = a.region_id ?? "zz";
     const br = b.region_id ?? "zz";
