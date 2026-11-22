@@ -6,7 +6,7 @@ import { loadWhatsAppAutomations, loadWhatsAppFaqs } from "@/lib/whatsapp/automa
 import { WhatsAppSetup } from "@/components/admin/whatsapp/WhatsAppSetup";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 
-export const metadata: Metadata = { title: "WhatsApp setup" };
+export const metadata: Metadata = { title: "WhatsApp" };
 export const dynamic = "force-dynamic";
 
 // What GMC's WhatsApp does on its own, in one list an admin can work through.
@@ -15,7 +15,8 @@ const VIEW_ROLES = new Set(["super_admin", "regional_lead", "customer_service"])
 
 export default async function WhatsAppSetupPage() {
   const admin = await requireAdmin();
-  if (!VIEW_ROLES.has(admin.role)) redirect("/admin");
+  // Other roles can't change settings but can still read broadcasts.
+  if (!VIEW_ROLES.has(admin.role)) redirect("/admin/broadcasts");
 
   const service = createSupabaseServiceClient();
   const [settings, faqs] = await Promise.all([
@@ -26,7 +27,7 @@ export default async function WhatsAppSetupPage() {
 
   return (
     <div className="max-w-[760px]">
-      <CrumbLabel segment="whatsapp" label="WhatsApp setup" />
+      <CrumbLabel segment="whatsapp" label="WhatsApp" />
       <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
         <span className="w-5 h-px bg-current" />
         WhatsApp · 设置

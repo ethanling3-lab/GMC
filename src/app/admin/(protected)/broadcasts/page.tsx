@@ -66,8 +66,15 @@ export default async function BroadcastsIndexPage({ searchParams }: PageProps) {
       <div className="flex items-end justify-between gap-6 flex-wrap">
         <div>
           <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
-            <span className="w-5 h-px bg-current" />
-            Communication · 群发
+            <Link
+              href="/admin/whatsapp"
+              className="hover:text-[var(--cinnabar-deep)] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)]"
+              style={{ color: "var(--cinnabar)" }}
+            >
+              WhatsApp
+            </Link>
+            <span className="text-[var(--ink-faint)]">›</span>
+            Broadcasts · 群发
           </div>
           <h1 className="mt-4 font-display text-[36px] md:text-[40px] leading-[1.05] tracking-[-0.015em] text-[var(--ink)]">
             Reach the whole cohort, on cue.

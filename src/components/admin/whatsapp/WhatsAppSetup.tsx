@@ -29,7 +29,7 @@ export function WhatsAppSetup({
           detail="Official notices to event participants, and marketing to people who subscribed."
         >
           <Link href="/admin/broadcasts" className={setupBtn} style={{ color: "var(--paper-warm)" }}>
-            Set up · 设置
+            Open · 打开
           </Link>
         </Row>
       </div>

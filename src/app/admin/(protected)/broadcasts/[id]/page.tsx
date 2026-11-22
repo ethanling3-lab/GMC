@@ -137,6 +137,14 @@ export default async function BroadcastDetailPage({ params, searchParams }: Page
         <div className="min-w-0 flex-1">
           <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
             <Link
+              href="/admin/whatsapp"
+              className="hover:text-[var(--cinnabar-deep)] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)]"
+              style={{ color: "var(--cinnabar)" }}
+            >
+              WhatsApp
+            </Link>
+            <span className="text-[var(--ink-faint)]">›</span>
+            <Link
               href="/admin/broadcasts"
               className="hover:text-[var(--cinnabar-deep)]"
               style={{ color: "var(--cinnabar)" }}
