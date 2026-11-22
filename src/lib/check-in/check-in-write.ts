@@ -63,6 +63,8 @@ type WriteArgs = {
   enrollmentId?: string | null;
   allowUnpaid?: boolean;
   notes?: string | null;
+  /** One-scanner flow: a repeat scan is usually "going out", not a mistake. */
+  auditDuplicate?: boolean;
 };
 
 type EnrollmentRow = {
@@ -103,19 +105,23 @@ export async function performCheckIn(args: WriteArgs): Promise<CheckInResult> {
         .maybeSingle(),
       loadPerson(supabase, eventId, row.participant_id),
     ]);
-    await writeAuditLog({
-      actor_id: actorId,
-      action: "check_in.duplicate_attempt",
-      entity: "check_ins",
-      entity_id: existing?.id ?? row.id,
-      metadata: {
-        event_id: eventId,
-        check_in_date: checkInDate,
-        session,
-        method,
-        attempted_via: qrToken ? "qr" : "manual",
-      },
-    });
+    const isRepeat =
+      !!existing && Date.now() - Date.parse(existing.checked_in_at) < REPEAT_GUARD_MS;
+    if (args.auditDuplicate !== false || isRepeat) {
+      await writeAuditLog({
+        actor_id: actorId,
+        action: "check_in.duplicate_attempt",
+        entity: "check_ins",
+        entity_id: existing?.id ?? row.id,
+        metadata: {
+          event_id: eventId,
+          check_in_date: checkInDate,
+          session,
+          method,
+          attempted_via: qrToken ? "qr" : "manual",
+        },
+      });
+    }
     return {
       ok: false,
       error: "already_checked_in",
@@ -335,7 +341,7 @@ export async function undoCheckIn({
 
 // --- Out of class (课堂外出) --------------------------------------------------
 
-// A desk on Out/Back toggles the person out / back. One open exit per
+// A scan toggles a checked-in person out / back. One open exit per
 // enrollment (partial unique index on class_exits) makes two desks scanning
 // the same badge settle on a single "out".
 //
@@ -559,6 +565,49 @@ export async function performClassScan(args: {
   });
 
   return result("out", inserted as ExitRow, notCheckedIn);
+}
+
+// The desk's one scanner: what a badge scan does depends on the person.
+//   out of class now              → back
+//   not checked in this session   → check in
+//   checked in a minute+ ago      → out
+//   checked in under a minute ago → "already checked in" (the same badge
+//                                   still in front of the camera)
+export async function performDeskScan(
+  args: WriteArgs,
+): Promise<{ type: "check_in"; result: CheckInResult } | { type: "class"; result: ClassScanResult }> {
+  const { eventId, actorId, checkInDate: day, session, isTest, qrToken, enrollmentId } = args;
+  const classScan = async () => ({
+    type: "class" as const,
+    result: await performClassScan({ eventId, actorId, day, session, isTest, qrToken, enrollmentId }),
+  });
+
+  const supabase = createSupabaseServiceClient();
+  const resolved = await resolveEnrollment(supabase, eventId, qrToken, enrollmentId);
+  if ("error" in resolved) {
+    return { type: "check_in", result: { ok: false, error: resolved.error } };
+  }
+  const { data: open, error } = await supabase
+    .from("class_exits")
+    .select("id")
+    .eq("enrollment_id", resolved.row.id)
+    .eq("exit_date", day)
+    .eq("session", session)
+    .is("back_at", null)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (open) return classScan();
+
+  const result = await performCheckIn({ ...args, auditDuplicate: false });
+  if (
+    !result.ok &&
+    result.error === "already_checked_in" &&
+    result.checked_in_at &&
+    Date.now() - Date.parse(result.checked_in_at) >= REPEAT_GUARD_MS
+  ) {
+    return classScan();
+  }
+  return { type: "check_in", result };
 }
 
 // Close one open exit. Returns false when it was already closed (another

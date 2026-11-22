@@ -218,26 +218,17 @@ export type ClassAction = "out" | "back" | "already_out" | "already_back";
 /**
  * Out / back result. "Out" is the one to notice (they're leaving), so it
  * carries the warm colour; "back" is a quiet confirmation with the minutes.
- * Not checked in for this session → warning + one-tap check-in.
  */
 export function ClassScanCard({
   person,
   action,
   outAt,
   minutes,
-  notCheckedIn,
-  checkingIn,
-  onCheckInNow,
-  onDismiss,
 }: {
   person: DeskPerson;
   action: ClassAction;
   outAt: string | null;
   minutes: number | null;
-  notCheckedIn: boolean;
-  checkingIn: boolean;
-  onCheckInNow: () => void;
-  onDismiss: () => void;
 }) {
   const out = action === "out" || action === "already_out";
   const headline =
@@ -263,29 +254,6 @@ export function ClassScanCard({
       </div>
       <NameBlock person={person} />
       <GroupBlock person={person} />
-      {notCheckedIn ? (
-        <div className="mt-4 rounded-[14px] border border-[#A87A2A] bg-[#A87A2A]/10 px-4 py-3 text-left">
-          <div className="text-[13px] font-medium text-[var(--ink)]">
-            Not checked in this session · 本时段未签到
-          </div>
-          <div className="mt-0.5 text-[12px] leading-[1.5] text-[var(--ink-soft)]">
-            Their exit is logged anyway. Check them in if they were in class.
-          </div>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={onCheckInNow}
-              disabled={checkingIn}
-              className="inline-flex items-center justify-center h-10 px-4 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[13px] font-medium text-[var(--paper)] hover:bg-[var(--cinnabar-deep)] active:translate-y-px disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[background-color,transform] duration-[var(--dur-fast)]"
-            >
-              {checkingIn ? "Checking in…" : "Check in now · 立即签到"}
-            </button>
-            <button type="button" onClick={onDismiss} className={`${secondaryBtn} h-10`}>
-              Skip · 跳过
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

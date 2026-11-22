@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
-import { performCheckIn, performClassScan, undoCheckIn } from "@/lib/check-in/check-in-write";
+import {
+  performCheckIn,
+  performClassScan,
+  performDeskScan,
+  undoCheckIn,
+  type CheckInResult,
+} from "@/lib/check-in/check-in-write";
 import { loadDaySnapshot, loadStats } from "@/lib/check-in/check-in-query";
 import { isIsoDay, todayInEventTz } from "@/lib/check-in/day";
 import { resolveDeskContext } from "@/lib/check-in/gate";
@@ -22,8 +28,9 @@ export const runtime = "nodejs";
 //                   with the live mode, and the desk asks for a rescan.
 //   allow_unpaid  — the desk confirmed an approved-but-unpaid attendee after
 //                   the 402 `unpaid` response.
-//   scan          — "out_back" when the desk is on Out/Back; default check-in.
-//   intent        — Out/Back, manual list only: "out" or "back".
+//   scan          — "auto" from the camera: check in, out or back depending on
+//                   the person (performDeskScan). Otherwise a plain check-in.
+//   intent        — manual list: "out" or "back".
 //
 // Either way it lands on the session the organizer has live (gate.ts).
 // Outside the event dates with test mode off → 403 `locked`.
@@ -44,7 +51,7 @@ const Body = z
     method: z.enum(["qr", "manual", "face_match"]).optional(),
     allow_unpaid: z.boolean().optional(),
     mode: z.enum(CHECK_IN_MODES).optional(),
-    scan: z.enum(["check_in", "out_back"]).optional(),
+    scan: z.enum(["check_in", "auto"]).optional(),
     intent: z.enum(["out", "back"]).optional(),
   })
   .refine(
@@ -58,6 +65,19 @@ const ALLOWED_ROLES = new Set([
   "customer_service",
   "instructor",
 ]);
+
+function checkInResponse(result: CheckInResult) {
+  if (result.ok) return NextResponse.json(result);
+  const status =
+    result.error === "not_found"
+      ? 404
+      : result.error === "already_checked_in"
+        ? 409
+        : result.error === "unpaid"
+          ? 402
+          : 400;
+  return NextResponse.json(result, { status });
+}
 
 export async function POST(req: Request, { params }: RouteCtx) {
   const admin = await requireAdmin();
@@ -96,7 +116,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
       );
     }
 
-    if (body.scan === "out_back") {
+    if (body.intent) {
       const result = await performClassScan({
         eventId,
         actorId: admin.id,
@@ -114,7 +134,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
       return NextResponse.json({ kind: "class", ...result });
     }
 
-    const result = await performCheckIn({
+    const checkInArgs = {
       eventId,
       actorId: admin.id,
       method:
@@ -126,21 +146,21 @@ export async function POST(req: Request, { params }: RouteCtx) {
       enrollmentId: body.enrollment_id ?? null,
       allowUnpaid: body.allow_unpaid === true,
       notes: body.notes ?? null,
-    });
+    };
 
-    if (!result.ok) {
-      const status =
-        result.error === "not_found"
-          ? 404
-          : result.error === "already_checked_in"
-            ? 409
-            : result.error === "unpaid"
-              ? 402
-              : 400;
-      return NextResponse.json(result, { status });
+    if (body.scan === "auto" && !body.allow_unpaid) {
+      const scanned = await performDeskScan(checkInArgs);
+      if (scanned.type === "class") {
+        if (!scanned.result.ok) {
+          const status = scanned.result.error === "not_found" ? 404 : 400;
+          return NextResponse.json({ kind: "class", ...scanned.result }, { status });
+        }
+        return NextResponse.json({ kind: "class", ...scanned.result });
+      }
+      return checkInResponse(scanned.result);
     }
 
-    return NextResponse.json(result);
+    return checkInResponse(await performCheckIn(checkInArgs));
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     console.error("[check-in POST]", msg);

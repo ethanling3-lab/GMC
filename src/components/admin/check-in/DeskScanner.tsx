@@ -35,10 +35,9 @@ import {
 // is showing another day, the panel steps aside rather than let anyone
 // think they're checking people in for that day.
 //
-// The organizer sets which registration is on (desk.mode); each desk picks
-// what its scans do: Check in, or Out/Back for people leaving class. A desk
-// always opens on Check in and returns to it when the session changes, so an
-// arrival is never logged as leaving. Every POST carries the mode this desk
+// The organizer sets which registration is on (desk.mode). The camera is one
+// scanner: the server decides from the person whether a badge means check in,
+// out or back (performDeskScan). Every POST carries the mode this desk
 // is showing; if the organizer switched in between, the server refuses
 // (mode_changed) and the desk refreshes and asks for a rescan.
 
@@ -77,8 +76,6 @@ type FeedbackState =
       enrollmentId: string;
       outAt: string | null;
       minutes: number | null;
-      notCheckedIn: boolean;
-      checkingIn: boolean;
     }
   | { kind: "error"; message: string };
 
@@ -113,9 +110,6 @@ export function DeskScanner({
 }: Props) {
   const mode = desk.mode;
   const session = sessionOf(mode);
-  // Deliberately not remembered across reloads — see the note above.
-  const [deskAction, setDeskAction] = useState<"check_in" | "out_back">("check_in");
-  const classMode = deskAction === "out_back";
   const [feedback, setFeedback] = useState<FeedbackState>({ kind: "idle" });
   // Off until someone presses "Start scanning", so opening the page on a
   // laptop doesn't trigger a camera prompt. A desk device remembers it was
@@ -200,7 +194,6 @@ export function DeskScanner({
   useEffect(() => {
     if (shownModeRef.current === mode) return;
     shownModeRef.current = mode;
-    setDeskAction("check_in");
     setFeedback({ kind: "idle" });
     lastTokenRef.current = null;
     setSearchNonce((n) => n + 1);
@@ -228,7 +221,6 @@ export function DeskScanner({
       check_in?: { unpaid_override?: boolean };
       action?: ClassAction;
       exit?: { out_at: string; minutes: number | null };
-      not_checked_in?: boolean;
     } & DeskPerson;
     const person: DeskPerson = {
       participant: r.participant,
@@ -244,10 +236,8 @@ export function DeskScanner({
         enrollmentId: r.enrollment_id,
         outAt: r.exit?.out_at ?? null,
         minutes: r.exit?.minutes ?? null,
-        notCheckedIn: r.not_checked_in === true && r.action === "out",
-        checkingIn: false,
       });
-      if (r.action === "already_out" || r.action === "already_back" || r.not_checked_in) {
+      if (r.action === "already_out" || r.action === "already_back") {
         playWarn();
       } else {
         playSuccess();
@@ -301,9 +291,7 @@ export function DeskScanner({
     cooldownRef.current = window.setTimeout(() => {
       lastTokenRef.current = null;
       setFeedback((f) =>
-        f.kind === "success" ||
-        f.kind === "already" ||
-        (f.kind === "class" && !f.notCheckedIn)
+        f.kind === "success" || f.kind === "already" || f.kind === "class"
           ? { kind: "idle" }
           : f,
       );
@@ -341,32 +329,6 @@ export function DeskScanner({
     }
   };
 
-  // "Check in now" on an out-of-class card: register them for this session.
-  const checkInNow = async () => {
-    if (feedback.kind !== "class" || feedback.checkingIn) return;
-    const pending = feedback;
-    setFeedback({ ...pending, checkingIn: true });
-    try {
-      const res = await fetch(`/api/admin/events/${eventId}/check-in`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enrollment_id: pending.enrollmentId,
-          method: "manual",
-          mode,
-        }),
-      });
-      handleCheckInResponse(res.status, await res.json(), "manual");
-    } catch (err) {
-      setFeedback({
-        kind: "error",
-        message: err instanceof Error ? err.message : "Network error",
-      });
-    } finally {
-      scheduleClear();
-    }
-  };
-
   const performScan = useCallback(
     async (raw: string) => {
       if (postingToken) return;
@@ -379,7 +341,7 @@ export function DeskScanner({
         const res = await fetch(`/api/admin/events/${eventId}/check-in`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ qr_token: token, mode, ...(classMode ? { scan: "out_back" } : {}) }),
+          body: JSON.stringify({ qr_token: token, mode, scan: "auto" }),
         });
         const json = (await res.json()) as unknown;
         handleCheckInResponse(res.status, json, "qr");
@@ -392,7 +354,7 @@ export function DeskScanner({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [eventId, postingToken, mode, classMode],
+    [eventId, postingToken, mode],
   );
 
   const performManualCheckIn = useCallback(
@@ -418,7 +380,7 @@ export function DeskScanner({
             enrollment_id: row.enrollment_id,
             method: "manual",
             mode,
-            ...(intent ? { intent, scan: "out_back" } : row.paid ? {} : { allow_unpaid: true }),
+            ...(intent ? { intent } : row.paid ? { scan: "check_in" } : { scan: "check_in", allow_unpaid: true }),
           }),
         });
         const json = (await res.json()) as unknown;
@@ -492,39 +454,6 @@ export function DeskScanner({
 
   return (
     <div>
-      <div role="radiogroup" aria-label="What this desk's scans do" className="mb-3 inline-flex p-1 rounded-[var(--radius-pill)] bg-[var(--paper-deep)]">
-        {(
-          [
-            ["check_in", "Check in · 签到"],
-            ["out_back", "Out / Back · 外出"],
-          ] as const
-        ).map(([value, label]) => {
-          const on = deskAction === value;
-          return (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              onClick={() => {
-                if (on) return;
-                setDeskAction(value);
-                setFeedback({ kind: "idle" });
-                lastTokenRef.current = null;
-              }}
-              className={`h-10 px-5 rounded-[var(--radius-pill)] text-[13.5px] font-medium focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] active:translate-y-px transition-[background-color,color,transform] duration-[var(--dur-fast)] ${
-                on
-                  ? value === "out_back"
-                    ? "bg-[#A87A2A] text-[var(--paper)]"
-                    : "bg-[var(--cinnabar)] text-[var(--paper)]"
-                  : "text-[var(--ink-mute)] hover:text-[var(--ink)]"
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
       {/* Camera beside the manual list on wider screens; stacked on phones.
           The camera only has to frame a badge QR held up to it, so it stays
           a compact square rather than filling the page. */}
@@ -532,12 +461,8 @@ export function DeskScanner({
       {/* Camera card */}
       <section className="w-full max-w-[440px] mx-auto md:mx-0 bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] overflow-hidden shadow-[var(--shadow-paper)]">
         <div className="flex items-center justify-between px-5 pt-4">
-          <div
-            className={`text-[10.5px] tracking-[0.22em] uppercase ${
-              classMode ? "text-[var(--gold-deep,#A87A2A)]" : "text-[var(--cinnabar)]"
-            }`}
-          >
-            {classMode ? "Scan out / back · 外出扫码" : "Scan badge QR · 扫胸牌二维码"}
+          <div className="text-[10.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
+            Scan badge QR · 扫胸牌二维码
           </div>
           {cameraOn ? (
             <button
@@ -555,7 +480,6 @@ export function DeskScanner({
               onScan={(detected) => {
                 // Hold the camera while the desk decides something.
                 if (feedback.kind === "unpaid") return;
-                if (feedback.kind === "class" && feedback.notCheckedIn) return;
                 if (detected && detected.length > 0) {
                   void performScan(detected[0].rawValue);
                 }
@@ -613,10 +537,6 @@ export function DeskScanner({
                   action={feedback.action}
                   outAt={feedback.outAt}
                   minutes={feedback.minutes}
-                  notCheckedIn={feedback.notCheckedIn}
-                  checkingIn={feedback.checkingIn}
-                  onCheckInNow={() => void checkInNow()}
-                  onDismiss={dismissFeedback}
                 />
               ) : feedback.kind === "unpaid" ? (
                 <CheckInUnpaidCard
@@ -672,7 +592,6 @@ export function DeskScanner({
               <ManualRow
                 key={row.enrollment_id}
                 row={row}
-                classMode={classMode}
                 posting={postingId === row.enrollment_id}
                 onCheckIn={() => void performManualCheckIn(row)}
                 onOut={() => void performManualCheckIn(row, "out")}
@@ -707,7 +626,6 @@ function sessionLabel(session: Session): string {
 
 function ManualRow({
   row,
-  classMode,
   posting,
   onCheckIn,
   onOut,
@@ -715,7 +633,6 @@ function ManualRow({
   onUndo,
 }: {
   row: ManualSearchRow;
-  classMode: boolean;
   posting: boolean;
   onCheckIn: () => void;
   onOut: () => void;
@@ -723,47 +640,6 @@ function ManualRow({
   onUndo: () => void;
 }) {
   const isCheckedIn = row.checked_in_at !== null;
-  if (classMode) {
-    return (
-      <li className="px-5 py-2.5 flex items-center gap-3 hover:bg-[var(--paper)]/40 transition-colors">
-        <span
-          className="inline-flex items-center justify-center h-[22px] min-w-[44px] px-2 rounded-[var(--radius-pill)] bg-[var(--paper-deep)] text-[10.5px] tracking-[0.04em] font-medium text-[var(--ink-mute)] tabular-nums"
-          title="Region ID"
-        >
-          {row.region_id ?? "—"}
-        </span>
-        <div className="flex-1 min-w-0 leading-tight">
-          <div className="text-[13px] font-medium text-[var(--ink)] truncate">
-            {row.name_cn ?? row.name_en ?? "(unnamed)"}
-          </div>
-          <div className="text-[10.5px] text-[var(--ink-faint)] tabular-nums truncate">
-            {row.group_no !== null ? `${groupNumber(row).en} · ` : ""}
-            {isCheckedIn ? `In ${formatTime(row.checked_in_at!)}` : "Not checked in · 未签到"}
-          </div>
-        </div>
-        {row.out_since ? (
-          <button
-            type="button"
-            onClick={onBack}
-            disabled={posting}
-            title={`Out since ${formatTime(row.out_since)}`}
-            className="inline-flex items-center h-[28px] px-3 rounded-[var(--radius-pill)] bg-[#A87A2A] text-[var(--paper)] text-[11px] tracking-[0.06em] hover:opacity-90 active:translate-y-px disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[opacity,transform]"
-          >
-            {posting ? "…" : `Back · 回来 (out ${formatTime(row.out_since)})`}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onOut}
-            disabled={posting}
-            className="inline-flex items-center h-[28px] px-3 rounded-[var(--radius-pill)] border border-[#A87A2A] text-[var(--gold-deep,#A87A2A)] text-[11px] tracking-[0.06em] hover:bg-[#A87A2A]/15 active:translate-y-px disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[background-color,transform]"
-          >
-            {posting ? "…" : "Out · 外出"}
-          </button>
-        )}
-      </li>
-    );
-  }
   return (
     <li className="px-5 py-2.5 flex items-center gap-3 hover:bg-[var(--paper)]/40 transition-colors">
       <span
@@ -786,7 +662,18 @@ function ManualRow({
           {row.phone ?? ""}
         </div>
       </div>
-      {isCheckedIn ? (
+      {row.out_since ? (
+          <button
+            type="button"
+            onClick={onBack}
+            disabled={posting}
+            title={`Out since ${formatTime(row.out_since)}`}
+            className="inline-flex items-center h-[28px] px-3 rounded-[var(--radius-pill)] bg-[#A87A2A] text-[var(--paper)] text-[11px] tracking-[0.06em] hover:opacity-90 active:translate-y-px disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[opacity,transform]"
+          >
+            {posting ? "…" : `Back · 回来 (out ${formatTime(row.out_since)})`}
+          </button>
+      ) : isCheckedIn ? (
+        <div className="shrink-0 flex items-center gap-1.5">
         <button
           type="button"
           onClick={onUndo}
@@ -795,6 +682,15 @@ function ManualRow({
         >
           ✓ {formatTime(row.checked_in_at!)}
         </button>
+          <button
+            type="button"
+            onClick={onOut}
+            disabled={posting}
+            className="inline-flex items-center h-[28px] px-3 rounded-[var(--radius-pill)] border border-[#A87A2A] text-[var(--gold-deep,#A87A2A)] text-[11px] tracking-[0.06em] hover:bg-[#A87A2A]/15 active:translate-y-px disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[background-color,transform]"
+          >
+            {posting ? "…" : "Out · 外出"}
+          </button>
+        </div>
       ) : (
         <button
           type="button"
