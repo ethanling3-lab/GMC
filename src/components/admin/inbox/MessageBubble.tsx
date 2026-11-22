@@ -23,10 +23,15 @@ export function MessageBubble({
   showDaySeparator: boolean;
 }) {
   const isOutbound = m.direction === "outbound";
-  // The automatic welcome is a real message to the customer, unlike the
-  // staff-only system notes.
-  const isWelcome = m.ai_tags?.automation === "welcome";
-  const isSystem = m.sender_type === "system" && !isWelcome;
+  // Automatic messages really go to the customer, unlike staff-only system notes.
+  const automation = m.ai_tags?.automation;
+  const automationLabel =
+    automation === "welcome"
+      ? "Welcome message"
+      : automation === "consent"
+        ? "Subscription reply"
+        : null;
+  const isSystem = m.sender_type === "system" && !automationLabel;
 
   return (
     <>
@@ -53,9 +58,9 @@ export function MessageBubble({
               <span className="mb-1 text-[9.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
                 AI agent
               </span>
-            ) : isWelcome ? (
+            ) : automationLabel ? (
               <span className="mb-1 text-[9.5px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">
-                Welcome message
+                {automationLabel}
               </span>
             ) : null}
             <div

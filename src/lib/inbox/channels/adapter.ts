@@ -117,6 +117,13 @@ export type ParsedWebhookResult = {
     external_message_id: string;
     status: "sent" | "delivered" | "read" | "failed";
     error?: string;
+    /**
+     * The provider's NUMERIC error code (Meta: 131047 re-engagement, 131049
+     * frequency cap, 131050 opt-out). Parsed and then discarded until now,
+     * which forced finaliseMessage to classify failures by substring-matching
+     * a human-readable error string — a message Meta is free to reword.
+     */
+    error_code?: number | null;
     timestamp: string | null;
   }>;
 };

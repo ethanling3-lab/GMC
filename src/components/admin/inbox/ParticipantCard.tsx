@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ConversationListRow, EnrollmentSummary } from "@/lib/inbox/inbox-query";
 import { participantDisplay } from "@/lib/inbox/format";
 import { MergeLeadButton } from "./MergeLeadButton";
+import { MarketingStatusControl } from "./MarketingStatusControl";
 
 // Right-rail card for the thread view. Shows:
 //   - Participant identity (name, region_id, status chip, email, phone)
@@ -78,6 +79,13 @@ export function ParticipantCard({
             valueClass="uppercase tracking-[0.14em] text-[var(--ink-soft)] text-[11px]"
           />
         </dl>
+
+        <div className="mt-4 pt-4 border-t border-[var(--paper-shadow)]">
+          <MarketingStatusControl
+            participantId={participant.id}
+            status={participant.marketing_status}
+          />
+        </div>
 
         <div className="mt-4 pt-4 border-t border-[var(--paper-shadow)] flex flex-wrap gap-2">
           <Link

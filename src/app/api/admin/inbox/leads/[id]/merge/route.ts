@@ -3,6 +3,8 @@ import { z } from "zod";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { writeAuditLog } from "@/lib/audit";
+import { setMarketingStatus } from "@/lib/whatsapp/consent";
+import { mergedMarketingStatus, type MarketingStatus } from "@/lib/whatsapp/marketing-status";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -87,6 +89,23 @@ export async function POST(req: Request, { params }: RouteCtx) {
     );
   }
 
+  // Read before the merge, which removes the lead. A "stop" on either record
+  // must survive it.
+  const { data: consentRows, error: consentErr } = await service
+    .from("participants")
+    .select("id, marketing_status")
+    .in("id", [leadId, body.target_participant_id]);
+  if (consentErr) {
+    return NextResponse.json({ error: consentErr.message }, { status: 500 });
+  }
+  const consentOf = (id: string): MarketingStatus =>
+    ((consentRows ?? []).find((r) => r.id === id)?.marketing_status as MarketingStatus) ??
+    "not_asked";
+  const mergedConsent = mergedMarketingStatus(
+    consentOf(leadId),
+    consentOf(body.target_participant_id),
+  );
+
   const { data: rpcData, error: rpcErr } = await service.rpc("merge_lead_into_participant", {
     p_lead_id: leadId,
     p_target_id: body.target_participant_id,
@@ -97,6 +116,13 @@ export async function POST(req: Request, { params }: RouteCtx) {
       { status: 400 },
     );
   }
+
+  await setMarketingStatus(service, {
+    participantId: body.target_participant_id,
+    status: mergedConsent,
+    source: "merge",
+    actorId: admin.id,
+  }).catch((err) => console.error("[lead merge] marketing status not carried over", err));
 
   await writeAuditLog({
     actor_id: admin.id,

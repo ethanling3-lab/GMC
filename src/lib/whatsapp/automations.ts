@@ -24,6 +24,71 @@ export async function loadWhatsAppAutomations(
   return (data as WhatsAppAutomations | null) ?? null;
 }
 
+/**
+ * Sends one automatic text inside the 24-hour window and records it in the
+ * thread. sender_type "system" with no external id is a staff-only note, so
+ * the `automation` tag is what tells the thread to draw a real outbound bubble.
+ * Doesn't move the conversation cursor: only the caller knows whether this
+ * message actually answered the customer (see inbox/queue.ts).
+ */
+export async function sendAutomatedText(
+  service: SupabaseClient,
+  args: { conversationId: string; body: string; automation: "welcome" | "consent" },
+): Promise<"sent" | "pending" | "failed" | "skipped"> {
+  const { data: conv, error: convErr } = await service
+    .from("conversations")
+    .select(`id, channel, external_thread_id, ${WINDOW_COLUMNS}`)
+    .eq("id", args.conversationId)
+    .maybeSingle();
+  if (convErr || !conv) return "skipped";
+  const row = conv as unknown as ConversationWindowRow & {
+    channel: string;
+    external_thread_id: string;
+  };
+  if (row.channel !== "whatsapp") return "skipped";
+  if (!evaluateWindow(row.channel as WindowChannel, row).open) return "skipped";
+
+  const { data: pending, error: insertErr } = await service
+    .from("messages")
+    .insert({
+      conversation_id: args.conversationId,
+      direction: "outbound",
+      channel: row.channel,
+      sender_type: "system",
+      body_text: args.body,
+      ai_tags: { automation: args.automation },
+      delivery_status: "pending",
+    })
+    .select("id")
+    .single();
+  if (insertErr || !pending) {
+    console.warn("[automation] message insert failed: %s", insertErr?.message);
+    return "failed";
+  }
+
+  const adapter = getAdapter(row.channel as ChannelKey);
+  const result = await adapter
+    .sendMessage({ to: row.external_thread_id, body_text: args.body })
+    .catch((err) => ({
+      mocked: false,
+      error: err instanceof Error ? err.message : "send_threw",
+    }));
+  const success = !result.error && "external_message_id" in result;
+  const status = success ? "sent" : result.mocked ? "pending" : "failed";
+
+  await service
+    .from("messages")
+    .update({
+      delivery_status: status,
+      error_message: result.error ?? null,
+      ...(success && "external_message_id" in result
+        ? { external_message_id: result.external_message_id ?? null, sent_at: new Date().toISOString() }
+        : {}),
+    })
+    .eq("id", pending.id);
+  return status;
+}
+
 const CJK = /[㐀-鿿]/;
 
 // A message that only says hello. The welcome already answers it, so the AI
@@ -102,53 +167,18 @@ export async function sendWelcomeIfFirstContact(
       : row.participant?.language_fluency === "cn";
     const body = useChinese ? settings.welcome_zh : settings.welcome_en;
 
-    // sender_type "system" with no external id is a staff-only note, so the
-    // tag is what tells the thread to draw this as a real outbound bubble.
-    const { data: pending, error: insertErr } = await service
-      .from("messages")
-      .insert({
-        conversation_id: conversationId,
-        direction: "outbound",
-        channel: row.channel,
-        sender_type: "system",
-        body_text: body,
-        ai_tags: { automation: "welcome" },
-        delivery_status: "pending",
-      })
-      .select("id")
-      .single();
-    if (insertErr || !pending) {
-      console.warn("[welcome] message insert failed: %s", insertErr?.message);
-      return false;
-    }
-
-    const adapter = getAdapter(row.channel as ChannelKey);
-    const result = await adapter
-      .sendMessage({ to: row.external_thread_id, body_text: body })
-      .catch((err) => ({
-        mocked: false,
-        error: err instanceof Error ? err.message : "send_threw",
-      }));
-    const success = !result.error && "external_message_id" in result;
-    const status = success ? "sent" : result.mocked ? "pending" : "failed";
-
-    await service
-      .from("messages")
-      .update({
-        delivery_status: status,
-        error_message: result.error ?? null,
-        ...(success && "external_message_id" in result
-          ? { external_message_id: result.external_message_id ?? null, sent_at: new Date().toISOString() }
-          : {}),
-      })
-      .eq("id", pending.id);
+    const status = await sendAutomatedText(service, {
+      conversationId,
+      body,
+      automation: "welcome",
+    });
 
     await writeAuditLog({
       actor_id: null,
       action: "whatsapp.welcome_sent",
-      entity: "messages",
-      entity_id: pending.id as string,
-      metadata: { conversation_id: conversationId, status, language: useChinese ? "zh" : "en" },
+      entity: "conversations",
+      entity_id: conversationId,
+      metadata: { status, language: useChinese ? "zh" : "en" },
     });
 
     if (status !== "sent" || !isGreetingOnly(inboundText)) return false;

@@ -7,6 +7,8 @@ import type { ParsedInboundMessage, ParsedWebhookResult } from "./channels/adapt
 import { runTier1Reply } from "./ai/tier1";
 import { notifyAdmins } from "@/lib/notifications/admin-alerts";
 import { sendWelcomeIfFirstContact } from "@/lib/whatsapp/automations";
+import { handleConsentKeyword, unsubscribeFromFailedMessage } from "@/lib/whatsapp/consent";
+import { isMarketingOptOutError } from "./whatsapp-templates-types";
 
 // Channel-agnostic inbound pipeline. Call from each webhook route after
 // signature verification. Idempotent: the same webhook payload can be
@@ -241,19 +243,30 @@ async function processInboundMessage(
     },
   });
 
-  // 6c. First contact: the admin-configured welcome. True means it fully
+  // 6c. STOP / JOIN. Handled before anything else can reply to them.
+  const consentHandled =
+    storedAttachments.length === 0 &&
+    (await handleConsentKeyword(service, {
+      conversationId,
+      participantId: identity.participant_id,
+      text: msg.body_text,
+    }));
+
+  // 6d. First contact: the admin-configured welcome. True means it fully
   //     answered a bare "hello", so the AI doesn't send a second greeting.
-  const welcomed = await sendWelcomeIfFirstContact(service, {
-    conversationId,
-    inboundText: msg.body_text,
-  });
+  const welcomed =
+    !consentHandled &&
+    (await sendWelcomeIfFirstContact(service, {
+      conversationId,
+      inboundText: msg.body_text,
+    }));
 
   // 7. If AI is enabled on this conversation and the message is plain text
   //    (no attachments — Tier 1 doesn't handle media), fire the Tier 1
   //    responder. Runs inline — Meta's webhook timeout is generous enough
   //    for Claude to return within it. If AI calls handoff_to_human, the
   //    function will flip ai_enabled off itself.
-  if (!welcomed && storedAttachments.length === 0 && msg.body_text && msg.body_text.trim()) {
+  if (!consentHandled && !welcomed && storedAttachments.length === 0 && msg.body_text && msg.body_text.trim()) {
     const { data: conv } = await service
       .from("conversations")
       .select("ai_enabled, participant:participants(language_fluency, region)")
@@ -432,6 +445,7 @@ async function applyStatusUpdate(
     external_message_id: string;
     status: "sent" | "delivered" | "read" | "failed";
     error?: string;
+    error_code?: number | null;
     timestamp: string | null;
   },
 ): Promise<boolean> {
@@ -473,6 +487,15 @@ async function applyStatusUpdate(
     .select("id, conversation_id");
 
   const rows = (res.data ?? []) as Array<{ id: string; conversation_id: string }>;
+
+  // Meta usually reports an opt-out here, after accepting the send.
+  if (
+    s.status === "failed" &&
+    rows.length > 0 &&
+    (s.error_code === 131050 || isMarketingOptOutError(s.error))
+  ) {
+    await unsubscribeFromFailedMessage(service, rows[0].id);
+  }
 
   if (s.status === "failed" && !wasAlreadyFailed && rows.length > 0) {
     await notifyAdmins({

@@ -8,6 +8,7 @@ import {
   type ConversationWindowRow,
   type WindowChannel,
 } from "./window";
+import type { MarketingStatus } from "@/lib/whatsapp/marketing-status";
 import { INBOX_QUEUES, queueOf, type InboxQueue, type QueueFields } from "./queue";
 
 // Inbox list-query helper. URL-driven filters + role-scope + q-search, mirroring
@@ -59,6 +60,7 @@ export type ConversationListRow = {
     email: string | null;
     phone: string | null;
     language_fluency: string | null;
+    marketing_status: MarketingStatus;
   } | null;
   assigned_admin: {
     id: string;
@@ -169,7 +171,7 @@ export async function loadConversations(
   let query = supabase
     .from("conversations")
     .select(
-      "id, channel, status, subject, assigned_to, tags, last_message_at, last_inbound_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
+      "id, channel, status, subject, assigned_to, tags, last_message_at, last_inbound_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency, marketing_status), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
     )
     .order("last_message_at", { ascending: false, nullsFirst: false })
     // Lists are worked out below, so read past the display limit: an older
@@ -279,7 +281,7 @@ export async function loadConversationDetail(
   const { data: conv, error: convErr } = await supabase
     .from("conversations")
     .select(
-      `id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, ${WINDOW_COLUMNS}, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)`,
+      `id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, ${WINDOW_COLUMNS}, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency, marketing_status), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)`,
     )
     .eq("id", id)
     .maybeSingle();

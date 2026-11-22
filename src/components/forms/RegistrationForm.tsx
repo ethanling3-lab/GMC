@@ -80,6 +80,7 @@ type RegistrationFormValues = {
   language_other?: string;
   prefill_token?: string;
   facial_recognition_consent?: boolean;
+  marketing_opt_in?: boolean;
   answers: Record<string, unknown>;
 };
 
@@ -575,6 +576,18 @@ export function RegistrationForm({
                 I can withdraw consent any time by emailing the GMC team.
               </>
             )}
+          </span>
+        </label>
+        <label className="mt-4 flex items-start gap-3 cursor-pointer group">
+          <input
+            type="checkbox"
+            {...register("marketing_opt_in")}
+            className="mt-1 w-4 h-4 rounded border-[var(--paper-shadow)] text-[var(--cinnabar)] focus:ring-[var(--cinnabar)]/30 cursor-pointer"
+          />
+          <span className="text-[13.5px] leading-[1.7] text-[var(--ink-soft)] group-hover:text-[var(--ink)] transition-colors">
+            {locale === "zh"
+              ? "我希望通过 WhatsApp 接收 GMC 的最新消息和活动资讯。可随时回复“退订”取消。"
+              : "Send me GMC news and event updates on WhatsApp. I can reply STOP anytime."}
           </span>
         </label>
       </div>

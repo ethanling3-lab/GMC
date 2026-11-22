@@ -1,4 +1,5 @@
 import "server-only";
+import { unsubscribeFromFailedMessage } from "@/lib/whatsapp/consent";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
 import { assertNoUnresolvedTokens } from "@/lib/outbound-tokens";
@@ -645,6 +646,7 @@ async function finaliseMessage(
   if (updErr) {
     console.warn("[inbox.send] status update failed", updErr.message);
   }
+  if (errorCode === "opted_out") await unsubscribeFromFailedMessage(service, messageId);
 
   return {
     newStatus,

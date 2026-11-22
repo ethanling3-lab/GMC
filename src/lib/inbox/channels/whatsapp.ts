@@ -153,6 +153,7 @@ function parseWebhook(body: unknown): ParsedWebhookResult {
           external_message_id: s.id,
           status: s.status,
           error: s.errors?.[0]?.message,
+          error_code: s.errors?.[0]?.code ?? null,
           timestamp: s.timestamp ? new Date(Number(s.timestamp) * 1000).toISOString() : null,
         });
       }

@@ -63,7 +63,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
 
       {/* Thin header strip — identity left, actions right */}
       <header className="flex-none flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 border-b border-[var(--paper-shadow)] bg-[var(--paper-warm)]">
-        <div className="flex-1 min-w-0 flex items-center gap-3">
+        <div className="flex-1 basis-[260px] min-w-0 flex items-center gap-3">
           <div
             className="flex-none w-9 h-9 rounded-full bg-[var(--ink)] text-[var(--paper-warm)]
                        flex items-center justify-center text-[11px] tracking-[0.06em] font-medium
@@ -89,7 +89,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
                 </span>
               ) : null}
             </div>
-            <div className="mt-0.5 flex items-center gap-2 text-[10.5px] tracking-[0.04em] text-[var(--ink-mute)]">
+            <div className="mt-0.5 flex items-center gap-2 whitespace-nowrap overflow-hidden text-[10.5px] tracking-[0.04em] text-[var(--ink-mute)]">
               <span className="inline-flex items-center gap-1 text-[var(--ink-soft)]">
                 <ChannelGlyph channel={conversation.channel} size={10} />
                 {channelLabel(conversation.channel)}

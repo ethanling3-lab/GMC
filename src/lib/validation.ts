@@ -112,6 +112,9 @@ export function buildRegistrationSchemaFor(
     // participant row; absence is treated as "no consent."
     facial_recognition_consent: z.boolean().optional(),
 
+    // Separate from registering: unticked means "not asked", never "yes".
+    marketing_opt_in: z.boolean().optional(),
+
     answers: buildAnswersSchema(formSchema),
   });
 

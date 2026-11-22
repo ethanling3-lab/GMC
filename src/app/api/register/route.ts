@@ -14,6 +14,7 @@ import {
   type ParticipantInsertInput,
 } from "@/lib/participants-write";
 import { isEventFull } from "@/lib/event-capacity";
+import { setMarketingStatus } from "@/lib/whatsapp/consent";
 import { resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
 
 export const runtime = "nodejs";
@@ -283,6 +284,20 @@ export async function POST(req: NextRequest) {
       { error: "enroll_failed", detail: enrollErr?.message },
       { status: 500 },
     );
+  }
+
+  // Only a tick counts. Never fails a registration that has already succeeded.
+  if (input.marketing_opt_in === true) {
+    try {
+      await setMarketingStatus(supabase, {
+        participantId,
+        status: "subscribed",
+        source: "registration",
+        actorId: null,
+      });
+    } catch (err) {
+      console.warn("[/api/register] marketing opt-in failed", err);
+    }
   }
 
   // 4) Record the referrer note in the CS notes field so CS can follow up.
