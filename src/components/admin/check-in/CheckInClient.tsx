@@ -1,36 +1,40 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import type {
-  CheckInAbsentRow,
-  CheckInGroupRow,
-  CheckInRecent,
-  CheckInStats,
-} from "@/lib/check-in/types";
 import { UNGROUPED_GROUP_ID } from "@/lib/check-in/types";
 import { EVENT_TZ, dayLabel, shortDate, type DayOption } from "@/lib/check-in/day";
+import { SESSIONS, SESSION_LABEL, type Session } from "@/lib/check-in/mode";
 import type { CheckInSnapshot } from "@/lib/check-in/check-in-query";
 import { GroupCompletionCard } from "./GroupCompletionCard";
 import { AbsenteeRow } from "./AbsenteeRow";
 import { DeskScanner } from "./DeskScanner";
+import { ModeBar } from "./ModeBar";
+import { OutOfClassPanel } from "./OutOfClassPanel";
+import { CheckInSettings } from "./CheckInSettings";
 import { groupNumber } from "@/lib/group-number";
+import { useCenterSelected } from "@/lib/check-in/use-center-selected";
 
-// One-stop check-in page for ONE event day: the desk scanner (camera +
-// manual search) sits right under today's headcount, with the "who's still
-// missing, and in which group" view below it. Badges are pre-sorted into
-// group piles, so groups are listed in the order of the number on the pile.
-// Every desk can run this same page; it polls every 5s so desks see each
-// other's scans, and refreshes at once after its own.
+// One-stop check-in page for ONE event day: the organizer's mode bar, the
+// headcount for both registrations, the desk scanner (camera + manual
+// search), then "who's still missing, and in which group" for the session
+// being viewed, and the out-of-class log. Badges are pre-sorted into group
+// piles, so groups are listed in the order of the number on the pile.
+// Every desk runs this same page; it polls every 5s so desks see each
+// other's scans and the organizer's mode switches, and refreshes at once
+// after its own.
 
 type Props = {
   eventId: string;
   eventSlug: string;
   eventTitle: string;
   eventTitleCn: string | null;
+  /** "8–14 Apr" — shown when desks are locked outside the event dates. */
+  eventDatesLabel: string;
   days: DayOption[];
   day: string;
-  today: string;
+  /** super_admin / regional_lead: may switch mode and change settings. */
+  canRun: boolean;
   initial: CheckInSnapshot;
 };
 
@@ -41,39 +45,75 @@ export function CheckInClient({
   eventSlug,
   eventTitle,
   eventTitleCn,
+  eventDatesLabel,
   days,
   day,
-  today,
+  canRun,
   initial,
 }: Props) {
-  const [stats, setStats] = useState<CheckInStats>(initial.stats);
-  const [recent, setRecent] = useState<CheckInRecent[]>(initial.recent);
-  const [groups, setGroups] = useState<CheckInGroupRow[]>(initial.groups);
-  const [absent, setAbsent] = useState<CheckInAbsentRow[]>(initial.absent);
+  const [snap, setSnap] = useState<CheckInSnapshot>(initial);
+  const [viewSession, setViewSession] = useState<Session>(initial.session);
+  // Follow the desks: when the organizer moves into the other session, the
+  // panels follow — unless someone here picked a session by hand.
+  const pickedSessionRef = useRef(false);
+  const shownModeRef = useRef(initial.desk.mode);
+  const dayRowRef = useCenterSelected<HTMLElement>('[aria-current="page"]', day);
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
+  const { stats, recent, groups, absent, desk, bySession, outNow, exitTotals } = snap;
+  const today = desk.today;
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch(
-        `/api/admin/events/${eventId}/check-in?view=day&day=${day}`,
-        { cache: "no-store" },
-      );
-      if (!res.ok) return;
-      const json = (await res.json()) as CheckInSnapshot;
-      setStats(json.stats);
-      setRecent(json.recent);
-      setGroups(json.groups);
-      setAbsent(json.absent);
-    } catch {
-      // Silent — next poll retries.
-    }
-  }, [eventId, day]);
+  const refresh = useCallback(
+    async (session: Session = viewSession) => {
+      try {
+        const res = await fetch(
+          `/api/admin/events/${eventId}/check-in?view=day&day=${day}&session=${session}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const json = (await res.json()) as CheckInSnapshot;
+        const modeMoved = shownModeRef.current !== json.desk.mode;
+        shownModeRef.current = json.desk.mode;
+        setSnap(json);
+        // Organizer moved into the other session on the live day → follow.
+        const live = json.desk.mode.startsWith("pm")
+          ? "pm"
+          : json.desk.mode.startsWith("am")
+            ? "am"
+            : null;
+        if (
+          modeMoved &&
+          day === json.desk.today &&
+          !pickedSessionRef.current &&
+          live &&
+          live !== json.session
+        ) {
+          setViewSession(live);
+          void refreshRef.current(live);
+        }
+      } catch {
+        // Silent — next poll retries.
+      }
+    },
+    [eventId, day, viewSession],
+  );
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+  const refreshNow = useCallback(() => void refreshRef.current(), []);
 
   useEffect(() => {
-    const t = window.setInterval(refresh, POLL_MS);
+    const t = window.setInterval(() => void refreshRef.current(), POLL_MS);
     return () => window.clearInterval(t);
-  }, [refresh]);
+  }, []);
+
+  const pickSession = (s: Session) => {
+    pickedSessionRef.current = true;
+    setViewSession(s);
+    setGroupFilter(null);
+    void refresh(s);
+  };
 
   const pct =
     stats.total_eligible === 0
@@ -81,7 +121,10 @@ export function CheckInClient({
       : Math.round((stats.total_checked_in / stats.total_eligible) * 100);
   const remaining = Math.max(0, stats.total_eligible - stats.total_checked_in);
   const isToday = day === today;
-  const currentOption = days.find((d) => d.day === day) ?? { day, index: null };
+  const sessionL = SESSION_LABEL[stats.session ?? viewSession];
+  const longOut = outNow.filter(
+    (o) => Date.now() - Date.parse(o.out_at) > desk.longAbsenceMinutes * 60_000,
+  ).length;
 
   const realGroups = groups.filter((g) => g.group_id !== UNGROUPED_GROUP_ID);
   const groupsComplete = realGroups.filter(
@@ -128,7 +171,7 @@ export function CheckInClient({
 
       {/* Day switcher */}
       {days.length > 1 ? (
-        <nav aria-label="Event day" className="-mx-4 px-4 flex gap-2 overflow-x-auto pb-1 sm:mx-0 sm:px-0 sm:flex-wrap sm:overflow-visible">
+        <nav ref={dayRowRef} aria-label="Event day" className="-mx-4 px-4 flex gap-2 overflow-x-auto pb-1 sm:mx-0 sm:px-0 sm:flex-wrap sm:overflow-visible">
           {days.map((d) => {
             const active = d.day === day;
             return (
@@ -159,11 +202,41 @@ export function CheckInClient({
         </nav>
       ) : null}
 
+      {/* Test mode: everything recorded is a rehearsal */}
+      {desk.testMode ? (
+        <div
+          role="status"
+          className="rounded-[var(--radius-card)] border border-[var(--gold-deep,#A87A2A)]/50 px-5 py-3 text-[13px] text-[var(--ink)]"
+          style={{
+            background:
+              "repeating-linear-gradient(135deg, rgba(168,122,42,0.10) 0 10px, transparent 10px 20px)",
+          }}
+        >
+          <strong className="font-semibold tracking-[0.04em]">TEST MODE · 测试模式</strong>
+          <span className="text-[var(--ink-soft)]">
+            {" "}
+            — desks can scan on any day and every record is marked as test. Clear them in
+            Check-in settings before the event.
+          </span>
+        </div>
+      ) : null}
+
+      {/* Live desk mode */}
+      {isToday ? (
+        <ModeBar
+          eventId={eventId}
+          mode={desk.mode}
+          canRun={canRun}
+          outNowCount={outNow.length}
+          onChanged={refreshNow}
+        />
+      ) : null}
+
       {/* Headcount */}
       <section className="flex flex-wrap items-end gap-x-10 gap-y-4">
         <div>
           <div className="text-[12px] text-[var(--ink-mute)]">
-            Arrived {isToday ? "today" : `· ${dayLabel(currentOption)}`} · 已到场
+            {sessionL.en} arrived · {sessionL.cn}已到
           </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="font-display text-[56px] md:text-[64px] leading-none tracking-[-0.03em] text-[var(--ink)] tabular-nums">
@@ -177,7 +250,21 @@ export function CheckInClient({
             </span>
           </div>
         </div>
+        {SESSIONS.filter((s) => s !== stats.session).map((s) => (
+          <Figure
+            key={s}
+            label={`${SESSION_LABEL[s].en} · ${SESSION_LABEL[s].cn}`}
+            value={`${bySession[s].arrived} / ${bySession[s].expected}`}
+          />
+        ))}
         <Figure label="Not here yet · 未到" value={remaining} />
+        {isToday ? (
+          <Figure
+            label={longOut > 0 ? `Out now · ${longOut} over ${desk.longAbsenceMinutes} min` : "Out now · 目前在外"}
+            value={outNow.length}
+            tone={longOut > 0 ? "alert" : undefined}
+          />
+        ) : null}
         <Figure
           label="Groups complete · 小组到齐"
           value={`${groupsComplete} / ${realGroups.length}`}
@@ -190,10 +277,48 @@ export function CheckInClient({
       {/* Desk: camera + manual search. Only scans for today. */}
       <DeskScanner
         eventId={eventId}
+        desk={desk}
+        eventDatesLabel={eventDatesLabel}
         active={isToday}
         todayHref={`?day=${today}`}
-        onCheckedIn={refresh}
+        onCheckedIn={refreshNow}
       />
+
+      {canRun ? (
+        <CheckInSettings
+          key={`${desk.testMode}-${desk.longAbsenceMinutes}`}
+          eventId={eventId}
+          testMode={desk.testMode}
+          longAbsenceMinutes={desk.longAbsenceMinutes}
+          onChanged={refreshNow}
+        />
+      ) : null}
+
+      {/* Which registration the panels below are about */}
+      <div role="tablist" aria-label="Session" className="inline-flex self-start p-1 rounded-[var(--radius-pill)] bg-[var(--paper-deep)]">
+        {SESSIONS.map((s) => {
+          const active = s === viewSession;
+          return (
+            <button
+              key={s}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => pickSession(s)}
+              className={`inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)] text-[13px] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] active:translate-y-px transition-[background-color,color,transform] duration-[var(--dur-fast)] ${
+                active
+                  ? "bg-[var(--paper)] text-[var(--ink)] font-medium shadow-[var(--shadow-paper)]"
+                  : "text-[var(--ink-mute)] hover:text-[var(--ink)]"
+              }`}
+            >
+              {SESSION_LABEL[s].en} · {SESSION_LABEL[s].cn}
+              <span className="text-[11.5px] text-[var(--ink-faint)] tabular-nums">
+                {bySession[s].arrived}/{bySession[s].expected}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-6 items-start">
         {/* Groups */}
@@ -271,11 +396,19 @@ export function CheckInClient({
         </section>
       </div>
 
+      <OutOfClassPanel
+        outNow={outNow}
+        totals={exitTotals}
+        longAbsenceMinutes={desk.longAbsenceMinutes}
+        isToday={isToday}
+        exportHref={`/api/admin/events/${eventId}/check-in/export.xlsx?day=${day}`}
+      />
+
       {/* Recent */}
       <section className="bg-[var(--paper-warm)] border border-[var(--paper-deep)] rounded-[var(--radius-card)] shadow-[var(--shadow-paper)] overflow-hidden">
         <PanelHead title="Latest arrivals · 最新签到" meta={recent.length ? "Last 20" : ""} />
         {recent.length === 0 ? (
-          <Empty>No check-ins {isToday ? "today" : "on this day"} yet · 还没有签到</Empty>
+          <Empty>No {sessionL.en.toLowerCase()} check-ins yet · 还没有签到</Empty>
         ) : (
           <ul className="divide-y divide-[var(--paper-deep)]/70 border-t border-[var(--paper-deep)]/70">
             {recent.map((r) => (
@@ -316,14 +449,18 @@ function Figure({
 }: {
   label: string;
   value: number | string;
-  tone?: "warn";
+  tone?: "warn" | "alert";
 }) {
   return (
     <div>
       <div className="text-[12px] text-[var(--ink-mute)]">{label}</div>
       <div
         className={`mt-1 font-display text-[30px] leading-none tracking-[-0.02em] tabular-nums ${
-          tone === "warn" ? "text-[var(--gold-deep,#A87A2A)]" : "text-[var(--ink)]"
+          tone === "warn"
+            ? "text-[var(--gold-deep,#A87A2A)]"
+            : tone === "alert"
+              ? "text-[#B91C1C]"
+              : "text-[var(--ink)]"
         }`}
       >
         {value}

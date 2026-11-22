@@ -13,12 +13,20 @@ import {
   type CheckInMethod,
   type CheckInRecent,
   type CheckInStats,
+  type DeskState,
+  type ExitTotalRow,
+  type OutNowRow,
+  type SessionCounts,
 } from "./types";
 import { dayOptions, defaultDay, isIsoDay, todayInEventTz, type DayOption } from "./day";
+import { SESSIONS, isSession, sessionOf, type Session } from "./mode";
+import { EVENT_STATE_COLUMNS, deskContextFromRow, type EventStateRow } from "./gate";
+import { minutesBetween } from "./check-in-write";
 
 // Server-only loaders for the check-in dashboard (/admin/events/[id]/check-in)
-// and the scanner stations. Everything is scoped to ONE event day: a person
-// checked in on Day 1 is "not yet here" again on Day 2.
+// and the scanner stations. Everything is scoped to ONE event day and ONE
+// registration (Morning / Afternoon): a person checked in on Day 1 morning is
+// "not yet here" again that afternoon, and again on Day 2.
 //
 // "Expected" = paid attendees (see isPaidEnrollment), plus anyone the desk let
 // in that day on an unpaid override — otherwise an override would push a
@@ -26,7 +34,7 @@ import { dayOptions, defaultDay, isIsoDay, todayInEventTz, type DayOption } from
 
 type GroupNos = { group_no: number | null; table_no: number | null };
 
-type Seat = GroupNos & { group_id: string | null; seat_no: number | null };
+export type Seat = GroupNos & { group_id: string | null; seat_no: number | null };
 
 type EventMeta = {
   id: string;
@@ -36,13 +44,22 @@ type EventMeta = {
   start_date: string | null;
   end_date: string | null;
   check_in_method: "qr" | "face" | "both";
+  state: EventStateRow;
 };
 
 export type CheckInSnapshot = {
+  /** The registration the session-scoped parts below are for. */
+  session: Session;
   stats: CheckInStats;
   recent: CheckInRecent[];
   groups: CheckInGroupRow[];
   absent: CheckInAbsentRow[];
+  bySession: SessionCounts;
+  desk: DeskState;
+  /** Out of class right now (any session today; only on today's view). */
+  outNow: OutNowRow[];
+  /** Per-person out-of-class totals for the day, worst first. */
+  exitTotals: ExitTotalRow[];
 };
 
 export type CheckInPageData = CheckInSnapshot & {
@@ -57,7 +74,9 @@ async function loadEvent(
 ): Promise<EventMeta | null> {
   const { data, error } = await supabase
     .from("events")
-    .select("id, slug, title_en, title_cn, start_date, end_date, check_in_method")
+    .select(
+      `id, slug, title_en, title_cn, start_date, end_date, check_in_method, ${EVENT_STATE_COLUMNS}`,
+    )
     .eq("id", eventId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -71,6 +90,19 @@ async function loadEvent(
     end_date: (data.end_date as string | null) ?? null,
     check_in_method:
       (data.check_in_method as "qr" | "face" | "both" | null) ?? "face",
+    state: data as unknown as EventStateRow,
+  };
+}
+
+function deskState(state: EventStateRow): DeskState {
+  const ctx = deskContextFromRow(state);
+  return {
+    today: ctx.day,
+    mode: ctx.mode,
+    testMode: ctx.testMode,
+    locked: ctx.locked,
+    longAbsenceMinutes: ctx.longAbsenceMinutes,
+    modeSetAt: ctx.modeSetAt,
   };
 }
 
@@ -89,11 +121,13 @@ async function loadDaysWithCheckIns(
 
 /**
  * Event + day options + the snapshot for `requestedDay` (or the default day:
- * today during the event, else Day 1). Null when the event doesn't exist.
+ * today during the event, else Day 1) and `requestedSession` (or the session
+ * the desks are in now). Null when the event doesn't exist.
  */
 export async function loadCheckInPage(
   eventId: string,
   requestedDay?: string | null,
+  requestedSession?: string | null,
 ): Promise<CheckInPageData | null> {
   const supabase = createSupabaseServiceClient();
   const [event, withCheckIns] = await Promise.all([
@@ -102,18 +136,24 @@ export async function loadCheckInPage(
   ]);
   if (!event) return null;
 
-  const days = dayOptions(event.start_date, event.end_date, withCheckIns);
+  const desk = deskState(event.state);
+  const days = dayOptions(event.start_date, event.end_date, withCheckIns, desk.testMode);
   const day =
     requestedDay && isIsoDay(requestedDay) && days.some((d) => d.day === requestedDay)
       ? requestedDay
       : defaultDay(days, withCheckIns);
-  const snapshot = await loadDaySnapshot(eventId, day);
+  const session = isSession(requestedSession)
+    ? requestedSession
+    : day === desk.today
+      ? sessionOf(desk.mode) ?? "am"
+      : "am";
+  const snapshot = await loadDaySnapshot(eventId, day, session);
   return { event, days, day, ...snapshot };
 }
 
 // --- Day snapshot ------------------------------------------------------------
 
-type ExpectedRow = {
+export type ExpectedRow = {
   enrollment_id: string;
   participant_id: string;
   region_id: string | null;
@@ -122,20 +162,22 @@ type ExpectedRow = {
   phone: string | null;
 };
 
-type DayCheckIn = {
+export type DayCheckIn = {
   id: string;
   enrollment_id: string;
   participant_id: string;
+  session: Session;
   checked_in_at: string;
   method: CheckInMethod;
   unpaid_override: boolean;
+  is_test: boolean;
   region_id: string | null;
   name_cn: string | null;
   name_en: string | null;
   phone: string | null;
 };
 
-async function loadSeats(
+export async function loadSeats(
   supabase: SupabaseClient,
   eventId: string,
 ): Promise<Map<string, Seat>> {
@@ -164,7 +206,7 @@ async function loadSeats(
   return out;
 }
 
-async function loadPaid(
+export async function loadPaid(
   supabase: SupabaseClient,
   eventId: string,
 ): Promise<ExpectedRow[]> {
@@ -188,7 +230,7 @@ async function loadPaid(
   }));
 }
 
-async function loadDayCheckIns(
+export async function loadDayCheckIns(
   supabase: SupabaseClient,
   eventId: string,
   day: string,
@@ -196,7 +238,7 @@ async function loadDayCheckIns(
   const { data, error } = await supabase
     .from("check_ins")
     .select(
-      "id, enrollment_id, participant_id, checked_in_at, method, unpaid_override, " +
+      "id, enrollment_id, participant_id, session, checked_in_at, method, unpaid_override, is_test, " +
         "participants!inner(region_id, name_cn, name_en, phone)",
     )
     .eq("event_id", eventId)
@@ -210,7 +252,12 @@ async function loadDayCheckIns(
   >).map(({ participants, ...c }) => ({ ...c, ...participants }));
 }
 
-function countStats(day: string, paidCount: number, checkIns: DayCheckIn[]): CheckInStats {
+function countStats(
+  day: string,
+  session: Session,
+  paidCount: number,
+  checkIns: Pick<DayCheckIn, "method" | "unpaid_override">[],
+): CheckInStats {
   const by_method = { qr: 0, manual: 0, face_match: 0 };
   let unpaid_overrides = 0;
   for (const c of checkIns) {
@@ -219,6 +266,7 @@ function countStats(day: string, paidCount: number, checkIns: DayCheckIn[]): Che
   }
   return {
     day,
+    session,
     total_eligible: paidCount + unpaid_overrides,
     total_checked_in: checkIns.length,
     unpaid_overrides,
@@ -226,8 +274,12 @@ function countStats(day: string, paidCount: number, checkIns: DayCheckIn[]): Che
   };
 }
 
-/** Counter only — what the scanner stations poll every few seconds. */
-export async function loadStats(eventId: string, day: string): Promise<CheckInStats> {
+/** Counter only — the lightweight poll. */
+export async function loadStats(
+  eventId: string,
+  day: string,
+  session: Session,
+): Promise<CheckInStats> {
   const supabase = createSupabaseServiceClient();
   const [{ count, error }, { data: rows, error: cErr }] = await Promise.all([
     supabase
@@ -240,20 +292,29 @@ export async function loadStats(eventId: string, day: string): Promise<CheckInSt
       .from("check_ins")
       .select("method, unpaid_override")
       .eq("event_id", eventId)
-      .eq("check_in_date", day),
+      .eq("check_in_date", day)
+      .eq("session", session),
   ]);
   if (error) throw new Error(error.message);
   if (cErr) throw new Error(cErr.message);
-  return countStats(day, count ?? 0, (rows ?? []) as unknown as DayCheckIn[]);
+  return countStats(day, session, count ?? 0, (rows ?? []) as unknown as DayCheckIn[]);
 }
 
-/** Everything the dashboard shows for one day, from one consistent read. */
+/** Everything the dashboard shows for one day + session, from one read. */
 export async function loadDaySnapshot(
   eventId: string,
   day: string,
+  session: Session,
 ): Promise<CheckInSnapshot> {
   const supabase = createSupabaseServiceClient();
-  const [paid, checkIns, seats, { data: groupRows, error: gErr }] = await Promise.all([
+  const [
+    paid,
+    dayCheckIns,
+    seats,
+    { data: groupRows, error: gErr },
+    { data: eventRow, error: eErr },
+    exits,
+  ] = await Promise.all([
     loadPaid(supabase, eventId),
     loadDayCheckIns(supabase, eventId, day),
     loadSeats(supabase, eventId),
@@ -261,10 +322,27 @@ export async function loadDaySnapshot(
       .from("event_groups")
       .select("id, group_no, group_class, name_en, name_cn")
       .eq("event_id", eventId),
+    supabase
+      .from("events")
+      .select(`id, start_date, end_date, ${EVENT_STATE_COLUMNS}`)
+      .eq("id", eventId)
+      .maybeSingle(),
+    loadDayExits(supabase, eventId, day),
   ]);
   if (gErr) throw new Error(gErr.message);
+  if (eErr) throw new Error(eErr.message);
+  if (!eventRow) throw new Error("event_not_found");
+  const desk = deskState(eventRow as unknown as EventStateRow);
 
-  const stats = countStats(day, paid.length, checkIns);
+  const bySession = {} as SessionCounts;
+  for (const s of SESSIONS) {
+    const rows = dayCheckIns.filter((c) => c.session === s);
+    const overrides = rows.filter((c) => c.unpaid_override).length;
+    bySession[s] = { arrived: rows.length, expected: paid.length + overrides };
+  }
+
+  const checkIns = dayCheckIns.filter((c) => c.session === session);
+  const stats = countStats(day, session, paid.length, checkIns);
   const arrived = new Set(checkIns.map((c) => c.enrollment_id));
 
   // Expected people = paid + today's overrides (who aren't in `paid`).
@@ -366,13 +444,121 @@ export async function loadDaySnapshot(
     };
   });
 
-  return { stats, recent, groups, absent };
+  const { outNow, exitTotals } = summariseExits(
+    exits,
+    seats,
+    desk.longAbsenceMinutes,
+    // A still-open exit on a past day is a leftover — it'll close as
+    // no-return on the next mode switch; don't show it as "out now".
+    day === desk.today,
+  );
+
+  return { session, stats, recent, groups, absent, bySession, desk, outNow, exitTotals };
+}
+
+// --- Out of class ----------------------------------------------------------------
+
+export type DayExit = {
+  id: string;
+  enrollment_id: string;
+  participant_id: string;
+  session: Session;
+  out_at: string;
+  back_at: string | null;
+  closed_reason: "scanned_back" | "session_ended" | null;
+  not_checked_in: boolean;
+  is_test: boolean;
+  region_id: string | null;
+  name_cn: string | null;
+  name_en: string | null;
+};
+
+export async function loadDayExits(
+  supabase: SupabaseClient,
+  eventId: string,
+  day: string,
+): Promise<DayExit[]> {
+  const { data, error } = await supabase
+    .from("class_exits")
+    .select(
+      "id, enrollment_id, participant_id, session, out_at, back_at, closed_reason, not_checked_in, is_test, " +
+        "participants!inner(region_id, name_cn, name_en)",
+    )
+    .eq("event_id", eventId)
+    .eq("exit_date", day)
+    .order("out_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as Array<
+    Omit<DayExit, "region_id" | "name_cn" | "name_en"> & {
+      participants: Pick<DayExit, "region_id" | "name_cn" | "name_en">;
+    }
+  >).map(({ participants, ...e }) => ({ ...e, ...participants }));
+}
+
+function summariseExits(
+  exits: DayExit[],
+  seats: Map<string, Seat>,
+  longAbsenceMinutes: number,
+  isToday: boolean,
+  now: string = new Date().toISOString(),
+): { outNow: OutNowRow[]; exitTotals: ExitTotalRow[] } {
+  const outNow: OutNowRow[] = [];
+  const totals = new Map<string, ExitTotalRow>();
+
+  for (const e of exits) {
+    const seat = seats.get(e.participant_id);
+    const open = e.back_at === null;
+    if (open && isToday) {
+      outNow.push({
+        exit_id: e.id,
+        enrollment_id: e.enrollment_id,
+        region_id: e.region_id,
+        name_cn: e.name_cn,
+        name_en: e.name_en,
+        group_no: seat?.group_no ?? null,
+        table_no: seat?.table_no ?? null,
+        session: e.session,
+        out_at: e.out_at,
+        not_checked_in: e.not_checked_in,
+      });
+    }
+    const minutes = minutesBetween(e.out_at, e.back_at ?? now);
+    const t =
+      totals.get(e.enrollment_id) ??
+      ({
+        enrollment_id: e.enrollment_id,
+        region_id: e.region_id,
+        name_cn: e.name_cn,
+        name_en: e.name_en,
+        group_no: seat?.group_no ?? null,
+        table_no: seat?.table_no ?? null,
+        trips: 0,
+        total_minutes: 0,
+        longest_minutes: 0,
+        no_return: 0,
+        long_trips: 0,
+        still_out: false,
+      } satisfies ExitTotalRow);
+    t.trips += 1;
+    t.total_minutes += minutes;
+    t.longest_minutes = Math.max(t.longest_minutes, minutes);
+    if (e.closed_reason === "session_ended") t.no_return += 1;
+    if (minutes > longAbsenceMinutes) t.long_trips += 1;
+    if (open && isToday) t.still_out = true;
+    totals.set(e.enrollment_id, t);
+  }
+
+  // Longest out first — the people a trainer will ask about.
+  const exitTotals = [...totals.values()].sort(
+    (a, b) => b.total_minutes - a.total_minutes || b.trips - a.trips,
+  );
+  return { outNow, exitTotals };
 }
 
 // Order by the number staff actually see (table_no ?? group_no) — the number
 // on the badge pile — ungrouped last. A table number and an unplaced group's
 // own number can coincide; seated tables go first on a tie.
-function byDisplayNumber(a: GroupNos, b: GroupNos): number {
+export function byDisplayNumber(a: GroupNos, b: GroupNos): number {
   const ga = groupNumber(a);
   const gb = groupNumber(b);
   const na = ga.no ?? Number.POSITIVE_INFINITY;
@@ -405,8 +591,11 @@ export type ManualSearchRow = {
   table_no: number | null;
   seat_no: number | null;
   paid: boolean;
+  /** Check-in for the requested session. */
   checked_in_at: string | null;
   check_in_id: string | null;
+  /** Set while they're out of class (an open exit today). */
+  out_since: string | null;
 };
 
 const SEARCH_LIMIT = 30;
@@ -415,6 +604,7 @@ export async function searchEligibleForCheckIn(
   eventId: string,
   query: string,
   day: string,
+  session: Session,
 ): Promise<ManualSearchRow[]> {
   const supabase = createSupabaseServiceClient();
   const q = query.trim();
@@ -457,17 +647,36 @@ export async function searchEligibleForCheckIn(
 
   // Today's check-ins for the whole event rather than `.in(enrollment_id, …)`
   // over every match — a 500-id list would blow the request URL.
-  const [{ data, error }, { data: checkIns, error: cErr }, seats] = await Promise.all([
+  const [
+    { data, error },
+    { data: checkIns, error: cErr },
+    seats,
+    { data: openExits, error: xErr },
+  ] = await Promise.all([
     req,
     supabase
       .from("check_ins")
       .select("id, enrollment_id, checked_in_at")
       .eq("event_id", eventId)
-      .eq("check_in_date", day),
+      .eq("check_in_date", day)
+      .eq("session", session),
     loadSeats(supabase, eventId),
+    supabase
+      .from("class_exits")
+      .select("enrollment_id, out_at")
+      .eq("event_id", eventId)
+      .eq("exit_date", day)
+      .is("back_at", null),
   ]);
   if (error) throw new Error(error.message);
   if (cErr) throw new Error(cErr.message);
+  if (xErr) throw new Error(xErr.message);
+  const outSince = new Map(
+    ((openExits ?? []) as Array<{ enrollment_id: string; out_at: string }>).map((x) => [
+      x.enrollment_id,
+      x.out_at,
+    ]),
+  );
 
   const checkInByEnrolment = new Map(
     ((checkIns ?? []) as Array<{ id: string; enrollment_id: string; checked_in_at: string }>).map(
@@ -491,6 +700,7 @@ export async function searchEligibleForCheckIn(
       paid: isPaidEnrollment(row),
       checked_in_at: checkIn?.checked_in_at ?? null,
       check_in_id: checkIn?.id ?? null,
+      out_since: outSince.get(row.id) ?? null,
     };
   });
 
@@ -581,6 +791,7 @@ export async function loadTicketByToken(token: string): Promise<{
     .select("checked_in_at, method")
     .eq("enrollment_id", row.id)
     .eq("check_in_date", todayInEventTz())
+    .order("checked_in_at", { ascending: true })
     .limit(1)
     .maybeSingle();
 

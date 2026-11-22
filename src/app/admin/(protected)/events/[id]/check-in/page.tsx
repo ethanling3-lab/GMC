@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-guard";
 import { loadCheckInPage } from "@/lib/check-in/check-in-query";
-import { todayInEventTz } from "@/lib/check-in/day";
+import { eventDays, shortDate } from "@/lib/check-in/day";
+import { canRunEvent } from "@/lib/check-in/gate";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 import { CheckInClient } from "@/components/admin/check-in/CheckInClient";
 import { ServiceWorkerRegister } from "@/components/admin/check-in/ServiceWorkerRegister";
@@ -35,7 +36,7 @@ export async function generateMetadata({
 
 type PageProps = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ day?: string }>;
+  searchParams: Promise<{ day?: string; session?: string }>;
 };
 
 const ALLOWED_ROLES = new Set([
@@ -50,10 +51,21 @@ export default async function EventCheckInPage({ params, searchParams }: PagePro
   if (!ALLOWED_ROLES.has(admin.role)) {
     redirect("/admin");
   }
-  const [{ id }, { day: dayParam }] = await Promise.all([params, searchParams]);
+  const [{ id }, { day: dayParam, session: sessionParam }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
 
-  const data = await loadCheckInPage(id, dayParam ?? null);
+  const data = await loadCheckInPage(id, dayParam ?? null, sessionParam ?? null);
   if (!data) notFound();
+
+  const scheduled = eventDays(data.event.start_date, data.event.end_date);
+  const eventDatesLabel =
+    scheduled.length === 0
+      ? "not set"
+      : scheduled.length === 1
+        ? shortDate(scheduled[0])
+        : `${shortDate(scheduled[0])} – ${shortDate(scheduled[scheduled.length - 1])}`;
 
   const title = data.event.title_en || data.event.title_cn || data.event.slug;
   const crumb =
@@ -72,14 +84,20 @@ export default async function EventCheckInPage({ params, searchParams }: PagePro
         eventSlug={data.event.slug}
         eventTitle={title}
         eventTitleCn={data.event.title_cn}
+        eventDatesLabel={eventDatesLabel}
         days={data.days}
         day={data.day}
-        today={todayInEventTz()}
+        canRun={canRunEvent(admin.role)}
         initial={{
+          session: data.session,
           stats: data.stats,
           recent: data.recent,
           groups: data.groups,
           absent: data.absent,
+          bySession: data.bySession,
+          desk: data.desk,
+          outNow: data.outNow,
+          exitTotals: data.exitTotals,
         }}
       />
       <p className="mt-8 text-[12px] text-[var(--ink-faint)]">

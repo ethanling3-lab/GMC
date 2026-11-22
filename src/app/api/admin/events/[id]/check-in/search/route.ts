@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
 import { searchEligibleForCheckIn } from "@/lib/check-in/check-in-query";
 import { todayInEventTz } from "@/lib/check-in/day";
+import { isSession } from "@/lib/check-in/mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,8 +11,9 @@ export const runtime = "nodejs";
 //
 // Manual-search typeahead for the scanner page. Returns paid + approved
 // (unpaid → `paid: false`) enrolments matching region_id / name_cn / name_en /
-// phone (ILIKE), with each row's check-in status for TODAY so the UI can show
-// a "Check in" button or an "Already arrived" pill.
+// phone (ILIKE), with each row's check-in status for TODAY's `session`
+// (am | pm, default am) and whether they're out of class right now, so the
+// desk can show Check in / ✓ or Out / Back.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -30,9 +32,11 @@ export async function GET(req: Request, { params }: RouteCtx) {
   const { id: eventId } = await params;
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") ?? "").trim();
+  const sessionParam = url.searchParams.get("session");
+  const session = isSession(sessionParam) ? sessionParam : "am";
 
   try {
-    const rows = await searchEligibleForCheckIn(eventId, q, todayInEventTz());
+    const rows = await searchEligibleForCheckIn(eventId, q, todayInEventTz(), session);
     return NextResponse.json({ rows });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";

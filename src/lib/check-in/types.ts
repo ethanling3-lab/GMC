@@ -1,5 +1,7 @@
 // Shared types for the M7.1 on-site check-in flow. Server + client safe.
 
+import type { CheckInMode, Session } from "./mode";
+
 export type CheckInMethod = "qr" | "manual" | "face_match";
 
 // The expected list is PAID attendees — the same rule the badge PDF and the
@@ -59,6 +61,8 @@ export type CheckInRosterEntry = {
 export type CheckInStats = {
   /** The day these numbers are for (YYYY-MM-DD, event-local). */
   day: string;
+  /** Morning or Afternoon registration. */
+  session: Session;
   /** Paid attendees, plus anyone checked in on an unpaid override that day. */
   total_eligible: number;
   total_checked_in: number;
@@ -107,4 +111,53 @@ export type CheckInAbsentRow = {
   phone: string | null;
   group_no: number | null;
   table_no: number | null;
+};
+
+// --- Sessions + out of class (Phase 3) -----------------------------------------
+
+/** Arrived / expected for each registration of the day — the headcount row. */
+export type SessionCounts = Record<Session, { arrived: number; expected: number }>;
+
+/** The event's live desk state, polled by every desk. */
+export type DeskState = {
+  /** Today, event-local — the only day a desk writes to. */
+  today: string;
+  mode: CheckInMode;
+  testMode: boolean;
+  /** Today isn't an event date and test mode is off: desks can't scan. */
+  locked: boolean;
+  longAbsenceMinutes: number;
+  modeSetAt: string | null;
+};
+
+/** Someone out of class right now. */
+export type OutNowRow = {
+  exit_id: string;
+  enrollment_id: string;
+  region_id: string | null;
+  name_cn: string | null;
+  name_en: string | null;
+  group_no: number | null;
+  table_no: number | null;
+  session: Session;
+  out_at: string;
+  not_checked_in: boolean;
+};
+
+/** One person's out-of-class record for a day. Open trips count up to now. */
+export type ExitTotalRow = {
+  enrollment_id: string;
+  region_id: string | null;
+  name_cn: string | null;
+  name_en: string | null;
+  group_no: number | null;
+  table_no: number | null;
+  trips: number;
+  total_minutes: number;
+  longest_minutes: number;
+  /** Trips closed because the class ended before they scanned back. */
+  no_return: number;
+  /** Trips longer than the event's long-absence threshold. */
+  long_trips: number;
+  still_out: boolean;
 };

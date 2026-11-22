@@ -42,6 +42,11 @@ export function eventDays(start: string | null, end: string | null): string[] {
   return out;
 }
 
+/** Is `day` one of the event's scheduled dates? */
+export function isEventDay(start: string | null, end: string | null, day: string): boolean {
+  return eventDays(start, end).includes(day);
+}
+
 export type DayOption = {
   day: string;
   /** 1-based position within the event's dates; null for off-schedule days. */
@@ -50,18 +55,21 @@ export type DayOption = {
 
 /**
  * Days the check-in page offers: the event's own dates, any other date that
- * already has check-ins (a test scan, a pre-event registration desk) so those
- * arrivals are never invisible, and always today — the only day a desk can
- * scan for, so it must be reachable even before the event starts.
+ * already has check-ins (test-mode scans) so those records are never
+ * invisible, and — only in test mode — today, so a rehearsal outside the
+ * event dates has somewhere to scan to. Outside test mode desks are locked
+ * off-schedule, so an off-schedule "today" would only be an empty pill.
  */
 export function dayOptions(
   start: string | null,
   end: string | null,
   daysWithCheckIns: string[],
+  includeToday: boolean,
   today: string = todayInEventTz(),
 ): DayOption[] {
   const scheduled = eventDays(start, end);
-  const all = new Set([...scheduled, ...daysWithCheckIns.filter(isIsoDay), today]);
+  const all = new Set([...scheduled, ...daysWithCheckIns.filter(isIsoDay)]);
+  if (includeToday) all.add(today);
   return [...all].sort().map((day) => {
     const i = scheduled.indexOf(day);
     return { day, index: i === -1 ? null : i + 1 };
