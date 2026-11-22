@@ -12,15 +12,14 @@ import { BulkTagPicker } from "./BulkTagPicker";
 //   • Mark read     — POST /api/admin/inbox/:id/read
 //   • Apply tag     — POST /api/admin/inbox/:id/tags { slug }
 //   • Remove tag    — DELETE /api/admin/inbox/:id/tags/:slug
-//   • Close         — POST /api/admin/inbox/:id/status { status: "closed" }
-//   • Assign to me  — POST /api/admin/inbox/:id/assign { admin_id: "self" }
+//   • Mark done     — POST /api/admin/inbox/:id/status { status: "closed" }
 //
 // Selection state lives in SelectionContext (provided at inbox/layout).
 // The toolbar is conditional render — when count is 0, it returns null
 // rather than collapsing, so there's zero pushdown on a fresh inbox.
 
 type PickerMode = "apply" | "remove" | null;
-type BusyKind = "read" | "close" | "assign" | null;
+type BusyKind = "read" | "close" | null;
 
 export function InboxBulkToolbar({ compact }: { compact: boolean }) {
   const { selected, clear } = useSelection();
@@ -78,18 +77,6 @@ export function InboxBulkToolbar({ compact }: { compact: boolean }) {
     });
   }
 
-  function assignToMe() {
-    return runFanout("assign", async (id) => {
-      const res = await fetch(`/api/admin/inbox/${id}/assign`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ admin_id: "self" }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    });
-  }
-
   const wrapperBase =
     "z-20 border-b border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] gmc-toolbar-in";
   const wrapperLayout = compact
@@ -130,16 +117,9 @@ export function InboxBulkToolbar({ compact }: { compact: boolean }) {
             onClick={markRead}
           />
           <ActionButton
-            icon={<AssignIcon />}
-            label="Assign to me"
-            labelCn="分给我"
-            busy={busyKind === "assign"}
-            onClick={assignToMe}
-          />
-          <ActionButton
             icon={<CloseIcon />}
-            label="Close"
-            labelCn="关闭"
+            label="Mark done"
+            labelCn="完成"
             busy={busyKind === "close"}
             onClick={closeAll}
           />
@@ -342,28 +322,6 @@ function TagMinusIcon() {
       <circle cx="9.2" cy="4.4" r="0.8" fill="currentColor" stroke="none" />
       <circle cx="12.5" cy="12.5" r="3" fill="var(--paper-warm)" />
       <path d="M11 12.5h3" strokeWidth="1.6" />
-    </svg>
-  );
-}
-
-function AssignIcon() {
-  // Person silhouette with a small inward arrow → "assign to me". The
-  // arrow points at the avatar to imply ownership transfer.
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="10" cy="5.5" r="2.4" />
-      <path d="M5.5 14c0-2.5 2-4.4 4.5-4.4s4.5 1.9 4.5 4.4" />
-      <path d="M1.5 6.5h4M3.5 4.5l-2 2 2 2" />
     </svg>
   );
 }

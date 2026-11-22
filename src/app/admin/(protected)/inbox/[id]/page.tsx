@@ -3,23 +3,16 @@ import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { loadConversationDetail } from "@/lib/inbox/inbox-query";
-import {
-  CONVERSATION_STATUS_LABEL,
-  CONVERSATION_STATUS_TONE,
-  channelLabel,
-  participantDisplay,
-  toneClasses,
-} from "@/lib/inbox/format";
+import { channelLabel, participantDisplay } from "@/lib/inbox/format";
 import { ChannelGlyph } from "@/components/admin/inbox/ChannelGlyph";
 import { MessageBubble } from "@/components/admin/inbox/MessageBubble";
 import { MessageComposer } from "@/components/admin/inbox/MessageComposer";
 import { MarkReadOnMount } from "@/components/admin/inbox/MarkReadOnMount";
 import { ScrollAnchor } from "@/components/admin/inbox/ScrollAnchor";
-import { AiAssistantToggle } from "@/components/admin/inbox/AiAssistantToggle";
+import { ThreadStatusBar } from "@/components/admin/inbox/ThreadStatusBar";
 import { AiAssistPanel } from "@/components/admin/inbox/AiAssistPanel";
 import { ThreadRightRail } from "@/components/admin/inbox/ThreadRightRail";
 import { ConversationTagStrip } from "@/components/admin/inbox/ConversationTagStrip";
-import { loadFlightInfoForParticipant } from "@/lib/inbox/flight-info-query";
 import { loadSnippetContextForConversation } from "@/lib/inbox/snippets";
 import { listTags } from "@/lib/inbox/tags";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
@@ -37,7 +30,7 @@ type PageProps = {
 //   [ thread (scrolls) + composer (sticky bottom) | right rail (tabbed) ]
 //
 // No more boxed-in card framing; the inbox flow reads as one continuous
-// surface. Right rail is a single tabbed panel (Profile / Travel) instead
+// surface. Right rail is a single tabbed panel (Profile / Quick replies) instead
 // of two stacked cards.
 
 export default async function InboxThreadPage({ params }: PageProps) {
@@ -53,9 +46,6 @@ export default async function InboxThreadPage({ params }: PageProps) {
   if (!detail) notFound();
 
   const { conversation, messages, enrollments } = detail;
-  const flightRows = conversation.participant_id
-    ? await loadFlightInfoForParticipant(supabase, conversation.participant_id)
-    : [];
   const { context: snippetContext, preferredLanguage: snippetLanguage } =
     await loadSnippetContextForConversation(conversation.id);
   const allTags = await listTags();
@@ -65,9 +55,6 @@ export default async function InboxThreadPage({ params }: PageProps) {
   const p = conversation.participant;
   const displayName = participantDisplay(p);
   const hasRealName = Boolean((p?.name_en ?? p?.name_cn ?? "").trim());
-  const statusLabel =
-    CONVERSATION_STATUS_LABEL[conversation.status]?.en ?? conversation.status;
-  const statusTone = CONVERSATION_STATUS_TONE[conversation.status] ?? "neutral";
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -75,7 +62,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
       <MarkReadOnMount conversationId={conversation.id} />
 
       {/* Thin header strip — identity left, actions right */}
-      <header className="flex-none flex items-center justify-between gap-4 px-5 py-3 border-b border-[var(--paper-shadow)] bg-[var(--paper-warm)]">
+      <header className="flex-none flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 border-b border-[var(--paper-shadow)] bg-[var(--paper-warm)]">
         <div className="flex-1 min-w-0 flex items-center gap-3">
           <div
             className="flex-none w-9 h-9 rounded-full bg-[var(--ink)] text-[var(--paper-warm)]
@@ -117,18 +104,15 @@ export default async function InboxThreadPage({ params }: PageProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <AiAssistPanel conversationId={conversation.id} />
-          <AiAssistantToggle
+          <ThreadStatusBar
             conversationId={conversation.id}
-            initialEnabled={Boolean(conversation.ai_enabled)}
+            status={conversation.status}
+            aiEnabled={Boolean(conversation.ai_enabled)}
             channel={conversation.channel}
+            canWrite={canManageSnippets}
           />
-          <span
-            className={`inline-flex items-center h-8 px-3 rounded-[var(--radius-pill)] border text-[10.5px] tracking-[0.18em] uppercase ${toneClasses(statusTone)}`}
-          >
-            {statusLabel}
-          </span>
         </div>
       </header>
 
@@ -174,7 +158,7 @@ export default async function InboxThreadPage({ params }: PageProps) {
             disabled={conversation.status === "closed"}
             disabledReason={
               conversation.status === "closed"
-                ? "Thread is closed — reopen before replying"
+                ? "This chat is done. Press Reopen to reply."
                 : undefined
             }
             participantName={
@@ -193,9 +177,6 @@ export default async function InboxThreadPage({ params }: PageProps) {
             participant={p}
             enrollments={enrollments}
             conversationStatus={conversation.status}
-            assignedAdmin={conversation.assigned_admin}
-            conversationId={conversation.id}
-            flightRows={flightRows}
             canManageSnippets={canManageSnippets}
           />
         </aside>

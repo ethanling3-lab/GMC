@@ -1,8 +1,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
-  loadChannelCounts,
-  loadStatusCounts,
+  loadQueueCounts,
   parseFilters,
 } from "@/lib/inbox/inbox-query";
 import { listTags } from "@/lib/inbox/tags";
@@ -30,9 +29,8 @@ export default async function InboxSidebarSlot({ searchParams }: SlotProps) {
   const filters = parseFilters(admin, sp);
 
   const supabase = await createSupabaseServerClient();
-  const [scopeCounts, channelCounts, tags, savedViews] = await Promise.all([
-    loadStatusCounts(supabase, { admin_id: admin.id, channel: filters.channel }),
-    loadChannelCounts(supabase, { admin_id: admin.id, scope: filters.scope }),
+  const [counts, tags, savedViews] = await Promise.all([
+    loadQueueCounts(supabase),
     listTags(),
     listSavedViewsForAdmin(admin),
   ]);
@@ -41,12 +39,7 @@ export default async function InboxSidebarSlot({ searchParams }: SlotProps) {
     <div className="w-full h-full p-3 overflow-y-auto">
       <InboxSidebar
         filters={filters}
-        counts={{
-          mine: scopeCounts.mine,
-          unassigned: scopeCounts.unassigned,
-          all: scopeCounts.all,
-          channels: channelCounts,
-        }}
+        counts={counts}
         tags={tags}
         savedViews={savedViews}
       />

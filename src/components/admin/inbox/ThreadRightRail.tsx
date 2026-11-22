@@ -2,36 +2,27 @@
 
 import { useEffect, useState } from "react";
 import type { ConversationListRow, EnrollmentSummary } from "@/lib/inbox/inbox-query";
-import type { FlightInfoEnrollmentRow } from "@/lib/inbox/flight-info-query";
 import { ParticipantCard } from "./ParticipantCard";
-import { FlightInfoPanel } from "./FlightInfoPanel";
 import { SnippetsRailPanel } from "./SnippetsRailPanel";
 
-// Right rail on the thread view. Tabs three contexts into a single column:
+// Right rail on the thread view. Tabs two contexts into a single column:
 //   - Profile  : participant identity + enrolments
-//   - Travel   : flight info rows
 //   - Snippets : org-shared canned replies (manage from inside the thread).
 //
 // MessageComposer's slash menu dispatches "inbox-open-snippets-tab" when
 // admin clicks "Manage →"; we switch to the Snippets tab in response.
 
-type Tab = "profile" | "travel" | "snippets";
+type Tab = "profile" | "snippets";
 
 export function ThreadRightRail({
   participant,
   enrollments,
   conversationStatus,
-  assignedAdmin,
-  conversationId,
-  flightRows,
   canManageSnippets,
 }: {
   participant: ConversationListRow["participant"];
   enrollments: EnrollmentSummary[];
   conversationStatus: string;
-  assignedAdmin: ConversationListRow["assigned_admin"];
-  conversationId: string;
-  flightRows: FlightInfoEnrollmentRow[];
   canManageSnippets: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("profile");
@@ -59,17 +50,10 @@ export function ThreadRightRail({
           labelZh="资料"
         />
         <TabButton
-          active={tab === "travel"}
-          onClick={() => setTab("travel")}
-          label="Travel"
-          labelZh="行程"
-          badge={flightRows.length > 0 ? flightRows.length : undefined}
-        />
-        <TabButton
           active={tab === "snippets"}
           onClick={() => setTab("snippets")}
-          label="Snippets"
-          labelZh="短语"
+          label="Quick replies"
+          labelZh="快捷回复"
         />
       </div>
 
@@ -79,12 +63,6 @@ export function ThreadRightRail({
             participant={participant}
             enrollments={enrollments}
             conversationStatus={conversationStatus}
-            assignedAdmin={assignedAdmin}
-          />
-        ) : tab === "travel" ? (
-          <FlightInfoPanel
-            conversationId={conversationId}
-            rows={flightRows}
           />
         ) : (
           <SnippetsRailPanel canWrite={canManageSnippets} />
@@ -99,13 +77,11 @@ function TabButton({
   onClick,
   label,
   labelZh,
-  badge,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
   labelZh: string;
-  badge?: number;
 }) {
   return (
     <button
@@ -129,11 +105,6 @@ function TabButton({
       <span className="text-[9.5px] tracking-[0.18em] text-[var(--ink-faint)] hidden sm:inline">
         {labelZh}
       </span>
-      {badge !== undefined ? (
-        <span className="ml-0.5 tabular-nums text-[9.5px] tracking-[0.04em] text-[var(--ink-mute)] bg-[var(--paper-deep)] px-1.5 rounded-full">
-          {badge}
-        </span>
-      ) : null}
     </button>
   );
 }

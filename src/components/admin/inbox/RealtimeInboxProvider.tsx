@@ -34,6 +34,10 @@ import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 const REFRESH_DEBOUNCE_MS = 700;
 
+// A chat moves to Needs reply when the AI *hasn't* answered, and nothing
+// happens in the database at that moment for realtime to report.
+const QUEUE_RECHECK_MS = 30_000;
+
 export function RealtimeInboxProvider() {
   const router = useRouter();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,7 +86,12 @@ export function RealtimeInboxProvider() {
         }
       });
 
+    const recheck = setInterval(() => {
+      if (document.visibilityState === "visible") router.refresh();
+    }, QUEUE_RECHECK_MS);
+
     return () => {
+      clearInterval(recheck);
       if (timerRef.current) clearTimeout(timerRef.current);
       void supabase.removeChannel(channel);
     };

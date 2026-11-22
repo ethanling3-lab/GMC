@@ -16,6 +16,8 @@ export function InboxSearch({ initialQ }: { initialQ: string }) {
     const sp = new URLSearchParams(params?.toString() ?? "");
     if (next.trim()) sp.set("q", next.trim());
     else sp.delete("q");
+    // Search covers every chat; clearing it goes back to Needs reply.
+    sp.delete("queue");
     const qs = sp.toString();
     startTransition(() => {
       router.push(qs ? `/admin/inbox?${qs}` : "/admin/inbox");

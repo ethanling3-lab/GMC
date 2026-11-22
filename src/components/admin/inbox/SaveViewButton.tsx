@@ -83,7 +83,7 @@ export function SaveViewButton({ filters, compact }: { filters: SavedViewFilters
 // just hit Enter most of the time. E.g. "Unassigned · WhatsApp · #vip".
 function defaultNameFor(f: SavedViewFilters): string {
   const parts: string[] = [];
-  if (f.scope !== "mine") parts.push(capitalize(f.scope));
+  if (f.scope !== "all") parts.push(capitalize(f.scope));
   if (f.channel) parts.push(capitalize(f.channel));
   if (f.status) parts.push(capitalize(f.status));
   if (f.identity) parts.push(capitalize(f.identity));

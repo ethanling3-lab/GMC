@@ -2,9 +2,8 @@ import type { Metadata } from "next";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
-  loadChannelCounts,
   loadConversations,
-  loadStatusCounts,
+  loadQueueCounts,
   parseFilters,
 } from "@/lib/inbox/inbox-query";
 import { ConversationListView } from "@/components/admin/inbox/ConversationListView";
@@ -38,10 +37,9 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
   const filters = parseFilters(admin, sp);
 
   const supabase = await createSupabaseServerClient();
-  const [rows, scopeCounts, channelCounts, tags, savedViews] = await Promise.all([
+  const [rows, counts, tags, savedViews] = await Promise.all([
     loadConversations(supabase, filters),
-    loadStatusCounts(supabase, { admin_id: admin.id, channel: filters.channel }),
-    loadChannelCounts(supabase, { admin_id: admin.id, scope: filters.scope }),
+    loadQueueCounts(supabase),
     listTags(),
     listSavedViewsForAdmin(admin),
   ]);
@@ -63,7 +61,7 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
                 Inbox · 收件箱
               </div>
               <h1 className="mt-3 font-display text-[28px] md:text-[32px] leading-[1.05] tracking-[-0.015em] text-[var(--ink)]">
-                Every conversation, one place.
+                Who needs a reply?
               </h1>
             </div>
           </div>
@@ -72,12 +70,7 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
           <div className="lg:hidden mb-5">
             <InboxSidebar
               filters={filters}
-              counts={{
-                mine: scopeCounts.mine,
-                unassigned: scopeCounts.unassigned,
-                all: scopeCounts.all,
-                channels: channelCounts,
-              }}
+              counts={counts}
               tags={tags}
               savedViews={savedViews}
             />
@@ -93,7 +86,7 @@ export default async function InboxRootPage({ searchParams }: PageProps) {
 function ConversationPicker({ count }: { count: number }) {
   return (
     <div className="text-center px-8 max-w-[44ch]">
-      <div className="inline-flex items-center justify-center w-14 h-14 rounded-full border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--cinnabar)] shadow-[var(--shadow-paper-1)] mb-5">
+      <div className="flex items-center justify-center w-14 h-14 mx-auto rounded-full border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[var(--cinnabar)] shadow-[var(--shadow-paper-1)] mb-5">
         <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M3 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8l-4 4v-4H5a2 2 0 0 1-2-2z" />
         </svg>
@@ -103,12 +96,12 @@ function ConversationPicker({ count }: { count: number }) {
         Inbox · 收件箱
       </div>
       <h2 className="mt-3 font-display text-[24px] leading-[1.1] tracking-[-0.01em] text-[var(--ink)]">
-        Pick a conversation
+        Pick a chat
       </h2>
       <p className="mt-2 text-[13.5px] text-[var(--ink-soft)] leading-[1.65]">
         {count > 0
-          ? `${count.toLocaleString()} thread${count === 1 ? "" : "s"} in the current view — choose one on the left to open it here.`
-          : "Nothing in the current view. Adjust the sub-nav filters on the left, or wait for new conversations to land."}
+          ? `${count.toLocaleString()} chat${count === 1 ? "" : "s"} in this list. Choose one on the left to open it.`
+          : "Nothing in this list right now. New chats appear on their own."}
       </p>
     </div>
   );

@@ -5,7 +5,6 @@ import { MergeLeadButton } from "./MergeLeadButton";
 
 // Right-rail card for the thread view. Shows:
 //   - Participant identity (name, region_id, status chip, email, phone)
-//   - Assigned admin
 //   - Recent enrolments with status + amount_paid
 //
 // Kept as a server component — pure data render.
@@ -14,12 +13,10 @@ export function ParticipantCard({
   participant,
   enrollments,
   conversationStatus,
-  assignedAdmin,
 }: {
   participant: ConversationListRow["participant"];
   enrollments: EnrollmentSummary[];
   conversationStatus: string;
-  assignedAdmin: ConversationListRow["assigned_admin"];
 }) {
   if (!participant) {
     return (
@@ -79,14 +76,6 @@ export function ParticipantCard({
             label="Thread"
             value={conversationStatus}
             valueClass="uppercase tracking-[0.14em] text-[var(--ink-soft)] text-[11px]"
-          />
-          <MetaRow
-            label="Assigned"
-            value={
-              assignedAdmin?.name_en ??
-              assignedAdmin?.name_cn ??
-              "Unassigned"
-            }
           />
         </dl>
 

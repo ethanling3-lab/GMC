@@ -207,8 +207,6 @@ function CardedItem({
   const statusLabel = CONVERSATION_STATUS_LABEL[row.status]?.en ?? row.status;
   const statusTone = CONVERSATION_STATUS_TONE[row.status] ?? "neutral";
   const unread = isActive ? 0 : row.unread_count;
-  const assignedName =
-    row.assigned_admin?.name_en ?? row.assigned_admin?.name_cn ?? null;
 
   const stateClass = isSelected
     ? "border-[var(--cinnabar)]/55 bg-[var(--cinnabar-wash)] shadow-[var(--shadow-paper-2)]"
@@ -285,15 +283,6 @@ function CardedItem({
           >
             {statusLabel}
           </span>
-          {assignedName ? (
-            <span className="text-[10px] tracking-[0.08em] text-[var(--ink-faint)] truncate max-w-[110px]">
-              {assignedName}
-            </span>
-          ) : (
-            <span className="text-[10px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
-              Unassigned
-            </span>
-          )}
         </div>
       </Link>
     </li>

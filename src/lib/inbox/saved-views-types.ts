@@ -7,7 +7,10 @@ import type { InboxListFilters } from "./inbox-query";
 /** The serialized filter shape stored in `inbox_saved_views.filters`.
  *  Mirror of InboxListFilters minus `admin_id` (caller identity, not a
  *  filter) — what the URL preserves between page loads. */
-export type SavedViewFilters = Omit<InboxListFilters, "admin_id">;
+export type SavedViewFilters = Omit<InboxListFilters, "admin_id" | "queue"> & {
+  /** Absent on views saved before the staff lists existed: they show all chats. */
+  queue?: InboxListFilters["queue"];
+};
 
 export type SavedView = {
   id: string;
@@ -34,7 +37,7 @@ export function validateSavedViewName(name: string): string | null {
  *  whether to render. */
 export function hasActiveFilters(f: SavedViewFilters): boolean {
   return (
-    f.scope !== "mine" ||
+    f.scope !== "all" ||
     f.channel !== null ||
     f.status !== null ||
     f.identity !== null ||
@@ -48,7 +51,9 @@ export function hasActiveFilters(f: SavedViewFilters): boolean {
  *  sidebar's saved-view links land on the same canonical href. */
 export function savedViewHref(f: SavedViewFilters): string {
   const params = new URLSearchParams();
-  if (f.scope !== "mine") params.set("scope", f.scope);
+  const queue = f.queue ?? "all";
+  if (queue !== "needs_reply") params.set("queue", queue);
+  if (f.scope !== "all") params.set("scope", f.scope);
   if (f.channel) params.set("channel", f.channel);
   if (f.status) params.set("status", f.status);
   if (f.identity) params.set("identity", f.identity);

@@ -7,6 +7,7 @@ import { InboxListItem } from "./InboxListItem";
 import { InboxSearch } from "./InboxSearch";
 import { SelectionShell } from "./selection/SelectionShell";
 import { SaveViewButton } from "./SaveViewButton";
+import { QUEUE_LABEL } from "@/lib/inbox/queue";
 
 // Conversation list pane — used in TWO places:
 //   1. `inbox/@list/default.tsx` (the persistent xl+ middle column, rendered
@@ -49,20 +50,10 @@ export function ConversationListView({
       // the width: names, timestamps and the identity chip were all rendered,
       // just off-screen. Removing this reintroduces the clipping.
       <div className="flex flex-col h-full w-full min-w-0">
-        {/* Sticky toolbar: status tabs + active-filter strip only.
+        {/* Sticky toolbar: which list this is + active-filter strip.
             Search lives INSIDE the scroll below (WhatsApp pattern). */}
         <div className="flex-none px-3 pt-2.5 pb-2 border-b border-[var(--paper-shadow)] bg-[var(--paper-warm)]">
-          <div
-            role="tablist"
-            aria-label="Status"
-            className="-mx-1 flex items-center gap-0.5 overflow-x-auto"
-          >
-            <StatusTab filters={filters} code={null} label="Any" />
-            <StatusTab filters={filters} code="open" label="Open" />
-            <StatusTab filters={filters} code="pending" label="Pending" />
-            <StatusTab filters={filters} code="snoozed" label="Snoozed" />
-            <StatusTab filters={filters} code="closed" label="Closed" />
-          </div>
+          <ListTitle filters={filters} count={rows.length} />
           <ActiveFilterStrip filters={filters} count={rows.length} compact />
         </div>
 
@@ -98,14 +89,8 @@ export function ConversationListView({
   return (
     <div className="min-w-0">
       <div className="rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] p-4 mb-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <FilterLabel>Status · 状态</FilterLabel>
-          <StatusFilter filters={filters} code={null} label="Any" />
-          <StatusFilter filters={filters} code="open" label="Open" />
-          <StatusFilter filters={filters} code="pending" label="Pending" />
-          <StatusFilter filters={filters} code="snoozed" label="Snoozed" />
-          <StatusFilter filters={filters} code="closed" label="Closed" />
-          <span aria-hidden="true" className="flex-1" />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <ListTitle filters={filters} count={rows.length} />
           <InboxSearch initialQ={filters.q} />
         </div>
         <ActiveFilterStrip filters={filters} count={rows.length} />
@@ -135,71 +120,20 @@ export function ConversationListView({
 // Internal primitives (moved from inbox/page.tsx so both render paths share)
 // -----------------------------------------------------------------------------
 
-function FilterLabel({ children }: { children: React.ReactNode }) {
+function ListTitle({ filters, count }: { filters: InboxListFilters; count: number }) {
+  const label =
+    filters.queue === "all"
+      ? filters.q
+        ? { en: "Search results", cn: "搜索结果" }
+        : { en: "All chats", cn: "全部对话" }
+      : QUEUE_LABEL[filters.queue];
   return (
-    <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)] mr-1">
-      {children}
-    </span>
-  );
-}
-
-function StatusFilter({
-  filters,
-  code,
-  label,
-}: {
-  filters: InboxListFilters;
-  code: InboxListFilters["status"] | null;
-  label: string;
-}) {
-  const active = filters.status === code;
-  const href = makeHref(filters, { status: code });
-  return (
-    <Link
-      href={href}
-      aria-current={active ? "page" : undefined}
-      className={[
-        "inline-flex items-center rounded-[var(--radius-pill)] border tracking-[0.04em] h-7 px-2.5 text-[11px]",
-        "transition-[background-color,border-color,color] duration-[var(--dur-fast)]",
-        active
-          ? "border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
-          : "border-[var(--paper-shadow)] bg-transparent text-[var(--ink-mute)] hover:text-[var(--ink)] hover:border-[var(--cinnabar)]/20",
-      ].join(" ")}
-    >
-      {label}
-    </Link>
-  );
-}
-
-// Text-only tab variant — compact-mode equivalent. WhatsApp-style: no border,
-// underline + cinnabar text when active. Sits in an overflow-x scroll row so
-// it never breaks the column width.
-function StatusTab({
-  filters,
-  code,
-  label,
-}: {
-  filters: InboxListFilters;
-  code: InboxListFilters["status"] | null;
-  label: string;
-}) {
-  const active = filters.status === code;
-  const href = makeHref(filters, { status: code });
-  return (
-    <Link
-      href={href}
-      role="tab"
-      aria-selected={active}
-      className={[
-        "flex-none inline-flex items-center h-7 px-2 text-[11.5px] tracking-[-0.005em]",
-        "transition-[color,box-shadow] duration-[var(--dur-fast)]",
-        active
-          ? "text-[var(--cinnabar-deep)] shadow-[inset_0_-2px_0_var(--cinnabar)]"
-          : "text-[var(--ink-mute)] hover:text-[var(--ink)]",
-      ].join(" ")}
-    >
-      {label}
-    </Link>
+    <h2 className="flex items-baseline gap-2 font-display text-[16px] leading-tight tracking-[-0.01em] text-[var(--ink)]">
+      {label.en} · {label.cn}
+      <span className="font-sans text-[12px] tabular-nums text-[var(--ink-faint)]">
+        {count.toLocaleString()}
+      </span>
+    </h2>
   );
 }
 
@@ -235,24 +169,11 @@ function ActiveFilterStrip({
   if (filters.q) {
     chips.push({
       label: compact ? `"${filters.q}"` : `Search: "${filters.q}"`,
-      href: makeHref(filters, { q: "" }),
+      href: makeHref(filters, { q: "", queue: "needs_reply" }),
     });
   }
 
-  if (chips.length === 0) {
-    return (
-      <div
-        className={
-          compact
-            ? "mt-1.5 text-[10px] tracking-[0.1em] uppercase text-[var(--ink-faint)] tabular-nums"
-            : "mt-2 text-[10.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]"
-        }
-      >
-        {count.toLocaleString()} thread{count === 1 ? "" : "s"}
-        {compact ? "" : ` · scope · ${filters.scope}`}
-      </div>
-    );
-  }
+  if (chips.length === 0) return null;
 
   return (
     <div className={compact ? "mt-2 flex flex-wrap items-center gap-1" : "mt-3 flex flex-wrap items-center gap-1.5"}>
@@ -291,6 +212,7 @@ function ActiveFilterStrip({
       <SaveViewButton
         compact={compact}
         filters={{
+          queue: filters.queue,
           scope: filters.scope,
           channel: filters.channel,
           status: filters.status,
@@ -308,15 +230,16 @@ function ActiveFilterStrip({
  *
  * Split out of makeHref because two different base paths need it: the filter
  * links (/admin/inbox) and the per-thread links (/admin/inbox/<id>). The thread
- * links used to be built bare, so opening a thread from ?scope=all dropped the
- * query and the list silently reverted to "Mine" — parseFilters defaults an
- * absent scope to "mine", and the @list slot reads the URL on every navigation.
+ * links used to be built bare, so opening a thread from another list dropped the
+ * query and the list silently reverted to the default — the @list slot reads
+ * the URL on every navigation.
  */
 export function filtersToQuery(
   filters: InboxListFilters,
-  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "identity" | "tag" | "q">> = {},
+  patch: Partial<Pick<InboxListFilters, "queue" | "scope" | "channel" | "status" | "identity" | "tag" | "q">> = {},
 ): string {
   const next = {
+    queue: filters.queue,
     scope: filters.scope,
     channel: filters.channel,
     status: filters.status,
@@ -326,7 +249,8 @@ export function filtersToQuery(
     ...patch,
   };
   const params = new URLSearchParams();
-  if (next.scope !== "mine") params.set("scope", next.scope);
+  if (next.queue !== "needs_reply" && !next.q) params.set("queue", next.queue);
+  if (next.scope !== "all") params.set("scope", next.scope);
   if (next.channel) params.set("channel", next.channel);
   if (next.status) params.set("status", next.status);
   if (next.identity) params.set("identity", next.identity);
@@ -338,7 +262,7 @@ export function filtersToQuery(
 
 function makeHref(
   filters: InboxListFilters,
-  patch: Partial<Pick<InboxListFilters, "scope" | "channel" | "status" | "identity" | "tag" | "q">>,
+  patch: Partial<Pick<InboxListFilters, "queue" | "scope" | "channel" | "status" | "identity" | "tag" | "q">>,
 ): string {
   return `/admin/inbox${filtersToQuery(filters, patch)}`;
 }
@@ -350,18 +274,19 @@ function EmptyState({
   filters: InboxListFilters;
   compact: boolean;
 }) {
-  const reason =
-    filters.q
-      ? `No conversations match "${filters.q}".`
-      : filters.identity
-        ? `No conversations from participants with status "${filters.identity}".`
-        : filters.channel
-          ? `No ${filters.channel} conversations in this scope.`
-          : filters.scope === "mine"
-            ? "No conversations assigned to you yet."
-            : filters.scope === "unassigned"
-              ? "Nothing in the unassigned queue."
-              : "No conversations yet. Once WhatsApp or LINE is wired to the webhooks, threads will land here.";
+  const reason = filters.q
+    ? `No chats match "${filters.q}".`
+    : filters.identity || filters.tag || filters.channel
+      ? "No chats match these filters. Remove a filter to see more."
+      : filters.queue === "needs_reply"
+        ? "All caught up. Chats that need a person will appear here."
+        : filters.queue === "ai"
+          ? "The AI isn't handling any chats right now."
+          : filters.queue === "waiting"
+            ? "No chats are waiting on a customer."
+            : filters.queue === "done"
+              ? "Chats you mark as done will appear here."
+              : "No chats yet. New WhatsApp messages will appear here.";
   return (
     <div
       className={

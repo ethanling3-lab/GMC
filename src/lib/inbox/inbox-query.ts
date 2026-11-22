@@ -8,6 +8,7 @@ import {
   type ConversationWindowRow,
   type WindowChannel,
 } from "./window";
+import { INBOX_QUEUES, queueOf, type InboxQueue, type QueueFields } from "./queue";
 
 // Inbox list-query helper. URL-driven filters + role-scope + q-search, mirroring
 // the pattern from `src/lib/participants-query.ts` (per feedback_list_query_pattern).
@@ -23,6 +24,8 @@ export const IDENTITY_CONFIDENCE_VALUES: readonly IdentityConfidence[] = [
 ] as const;
 
 export type InboxListFilters = {
+  /** A staff list, or "all" for every chat (search, older saved views). */
+  queue: InboxQueue | "all";
   scope: "mine" | "unassigned" | "all";
   channel: "whatsapp" | "email" | null;
   status: "open" | "pending" | "snoozed" | "closed" | null;
@@ -40,6 +43,7 @@ export type ConversationListRow = {
   assigned_to: string | null;
   tags: string[];
   last_message_at: string | null;
+  last_inbound_at: string | null;
   last_message_preview: string | null;
   participant_id: string;
   ai_enabled: boolean;
@@ -63,13 +67,15 @@ export type ConversationListRow = {
   } | null;
 };
 
+const LIST_LIMIT = 200;
+
 export function parseFilters(
   admin: AdminContext,
   sp: Record<string, string | string[] | undefined>,
 ): InboxListFilters {
-  const scopeRaw = typeof sp.scope === "string" ? sp.scope : "mine";
+  const scopeRaw = typeof sp.scope === "string" ? sp.scope : "all";
   const scope: InboxListFilters["scope"] =
-    scopeRaw === "unassigned" || scopeRaw === "all" ? scopeRaw : "mine";
+    scopeRaw === "unassigned" || scopeRaw === "mine" ? scopeRaw : "all";
 
   const channelRaw = typeof sp.channel === "string" ? sp.channel : "";
   const channel =
@@ -96,7 +102,17 @@ export function parseFilters(
 
   const q = (typeof sp.q === "string" ? sp.q : "").trim().slice(0, 120);
 
-  return { scope, channel, status, identity, tag, q, admin_id: admin.id };
+  // Search looks through every chat, whichever list it was typed in.
+  const queueRaw = typeof sp.queue === "string" ? sp.queue : "";
+  const queue: InboxListFilters["queue"] = q
+    ? "all"
+    : queueRaw === "all"
+      ? "all"
+      : (INBOX_QUEUES as readonly string[]).includes(queueRaw)
+        ? (queueRaw as InboxQueue)
+        : "needs_reply";
+
+  return { queue, scope, channel, status, identity, tag, q, admin_id: admin.id };
 }
 
 export async function loadConversations(
@@ -153,10 +169,12 @@ export async function loadConversations(
   let query = supabase
     .from("conversations")
     .select(
-      "id, channel, status, subject, assigned_to, tags, last_message_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
+      "id, channel, status, subject, assigned_to, tags, last_message_at, last_inbound_at, last_message_preview, participant_id, ai_enabled, participant:participants(id, region_id, name_en, name_cn, region, identity_confidence, email, phone, language_fluency), assigned_admin:admins!conversations_assigned_to_fkey(id, name_en, name_cn)",
     )
     .order("last_message_at", { ascending: false, nullsFirst: false })
-    .limit(200);
+    // Lists are worked out below, so read past the display limit: an older
+    // chat still waiting for a reply must not fall off the end.
+    .limit(filters.queue === "all" || filters.queue === "done" ? LIST_LIMIT : 2000);
 
   if (filters.scope === "mine") {
     query = query.eq("assigned_to", filters.admin_id);
@@ -167,14 +185,26 @@ export async function loadConversations(
 
   if (filters.channel) query = query.eq("channel", filters.channel);
   if (filters.status) query = query.eq("status", filters.status);
+  if (filters.queue === "done") query = query.eq("status", "closed");
+  else if (filters.queue !== "all") query = query.neq("status", "closed");
   if (filters.tag) query = query.contains("tags", [filters.tag]);
   if (participantIds) query = query.in("participant_id", participantIds);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const rows = (data ?? []) as unknown as ConversationListRow[];
-  return attachUnreadCounts(supabase, rows);
+  let rows = (data ?? []) as unknown as ConversationListRow[];
+  if (filters.queue !== "all") {
+    const now = Date.now();
+    rows = rows.filter((r) => queueOf(r, now) === filters.queue);
+  }
+  // Longest-waiting customer first.
+  if (filters.queue === "needs_reply") {
+    rows = [...rows].sort((a, b) =>
+      (a.last_inbound_at ?? "").localeCompare(b.last_inbound_at ?? ""),
+    );
+  }
+  return attachUnreadCounts(supabase, rows.slice(0, LIST_LIMIT));
 }
 
 /**
@@ -216,43 +246,19 @@ async function attachUnreadCounts(
   return rows.map((r) => ({ ...r, unread_count: byId.get(r.id) ?? 0 }));
 }
 
-export async function loadStatusCounts(
+/** How many chats are in each list, for the sidebar. */
+export async function loadQueueCounts(
   supabase: SupabaseClient,
-  filters: Pick<InboxListFilters, "channel" | "admin_id">,
-): Promise<{ mine: number; unassigned: number; all: number }> {
-  // Three lightweight head-count queries. Channel filter carries so the
-  // counts match whatever channel pill the admin has active.
-  const base = () => {
-    let q = supabase.from("conversations").select("id", { count: "exact", head: true });
-    if (filters.channel) q = q.eq("channel", filters.channel);
-    return q;
-  };
-  const [mine, unassigned, all] = await Promise.all([
-    base().eq("assigned_to", filters.admin_id),
-    base().is("assigned_to", null),
-    base(),
-  ]);
-  return {
-    mine: mine.count ?? 0,
-    unassigned: unassigned.count ?? 0,
-    all: all.count ?? 0,
-  };
-}
-
-export async function loadChannelCounts(
-  supabase: SupabaseClient,
-  filters: Pick<InboxListFilters, "scope" | "admin_id">,
-): Promise<{ whatsapp: number }> {
-  // Channel counts respect the active scope so the sidebar reads consistently
-  // with whatever scope tab is selected.
-  const base = () => {
-    let q = supabase.from("conversations").select("id", { count: "exact", head: true });
-    if (filters.scope === "mine") q = q.eq("assigned_to", filters.admin_id);
-    else if (filters.scope === "unassigned") q = q.is("assigned_to", null);
-    return q;
-  };
-  const [wa] = await Promise.all([base().eq("channel", "whatsapp")]);
-  return { whatsapp: wa.count ?? 0 };
+): Promise<Record<InboxQueue, number>> {
+  const counts: Record<InboxQueue, number> = { needs_reply: 0, ai: 0, waiting: 0, done: 0 };
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("status, ai_enabled, last_inbound_at, last_message_at")
+    .limit(5000);
+  if (error) throw new Error(error.message);
+  const now = Date.now();
+  for (const row of (data ?? []) as QueueFields[]) counts[queueOf(row, now)] += 1;
+  return counts;
 }
 
 export async function loadConversationDetail(
