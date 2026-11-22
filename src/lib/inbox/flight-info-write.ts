@@ -3,6 +3,8 @@ import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
 import { CUSTOM_HOTEL_PREFIX, MAX_HOTEL_NAME, customHotelName } from "@/lib/transfer/hotels";
 import { syncFlightToTransferList, type TransferSync } from "@/lib/transfer/regenerate";
+import { recordFlightChange, recordVipRequest, snapshotOf } from "@/lib/transfer/flight-flags";
+import type { AdminContext } from "@/lib/admin-guard";
 
 // Shared upsert/delete helper for flight_info, used by both the inbox
 // thread panel and the transfer-list "Add flight" dialog.
@@ -28,14 +30,24 @@ export type UpsertFlightInfoArgs = {
   fields: FlightInfoFields;
   confirm: boolean;
   actor_id: string;
+  /** Customer service changes are flagged, and their VIP choice becomes a request. */
+  actor_role: AdminContext["role"];
   /** Originating conversation if fired from the inbox panel. */
   conversation_id?: string;
   /** Source label for audit metadata (e.g. "inbox_panel" | "transfer_list_dialog"). */
   via: string;
 };
 
+export type FlightReviewResult = {
+  /** The change now waits in the admin's review list. */
+  flagged?: boolean;
+  vip_requested?: boolean;
+  /** The save worked but the admin couldn't be flagged. */
+  flag_failed?: boolean;
+};
+
 export type UpsertFlightInfoResult =
-  | { ok: true; id: string; confirmed_at: string | null; transfer: TransferSync }
+  | ({ ok: true; id: string; confirmed_at: string | null; transfer: TransferSync } & FlightReviewResult)
   | { ok: false; error: string };
 
 // A flight with no time can't be put in a vehicle, so it can't be confirmed.
@@ -72,6 +84,7 @@ export async function upsertFlightInfo(
   }
 
   const service = createSupabaseServiceClient();
+  const isCustomerService = args.actor_role === "customer_service";
 
   const { data: enrollment, error: enrErr } = await service
     .from("enrollments")
@@ -100,8 +113,26 @@ export async function upsertFlightInfo(
     scheduled_at: scheduledAt,
     terminal: emptyToNull(args.fields.terminal),
     hotel_key: hotelKey,
-    is_vip: args.fields.is_vip ?? false,
+    is_vip: isCustomerService
+      ? (existing?.is_vip ?? false)
+      : (args.fields.is_vip ?? false),
     source: existing?.source ?? "manual",
+  };
+
+  const vipRequested =
+    isCustomerService &&
+    args.fields.is_vip !== undefined &&
+    args.fields.is_vip !== (existing?.is_vip ?? false);
+  const requestVip = async (): Promise<FlightReviewResult> => {
+    if (!vipRequested) return {};
+    const saved = await recordVipRequest({
+      eventId: enrollment.event_id,
+      enrollmentId: args.enrollment_id,
+      direction: args.direction,
+      requestedVip: args.fields.is_vip as boolean,
+      actorId: args.actor_id,
+    });
+    return saved ? { vip_requested: true } : { flag_failed: true };
   };
 
   // These decide who can share a vehicle. A typo fix elsewhere keeps the seat.
@@ -127,6 +158,7 @@ export async function upsertFlightInfo(
       id: existing.id,
       confirmed_at: existing.confirmed_at,
       transfer: { list: "unchanged" },
+      ...(await requestVip()),
     };
   }
 
@@ -174,13 +206,45 @@ export async function upsertFlightInfo(
         })
       : { list: "none" };
 
-  return { ok: true, id: upserted.id, confirmed_at: upserted.confirmed_at, transfer };
+  // A flight on file means they do need transport after all.
+  await service
+    .from("flight_followups")
+    .update({
+      [`${args.direction}_not_needed`]: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("enrollment_id", args.enrollment_id)
+    .eq(`${args.direction}_not_needed`, true);
+
+  const review: FlightReviewResult = await requestVip();
+  if (isCustomerService && existing?.confirmed_at) {
+    const saved = await recordFlightChange({
+      eventId: enrollment.event_id,
+      enrollmentId: args.enrollment_id,
+      direction: args.direction,
+      kind: "changed",
+      before: snapshotOf(existing),
+      after: snapshotOf(payload),
+      actorId: args.actor_id,
+    });
+    if (saved) review.flagged = true;
+    else review.flag_failed = true;
+  }
+
+  return {
+    ok: true,
+    id: upserted.id,
+    confirmed_at: upserted.confirmed_at,
+    transfer,
+    ...review,
+  };
 }
 
 export type DeleteFlightInfoArgs = {
   enrollment_id: string;
   direction: "arrival" | "departure";
   actor_id: string;
+  actor_role: AdminContext["role"];
   conversation_id?: string;
   via: string;
 };
@@ -188,13 +252,15 @@ export type DeleteFlightInfoArgs = {
 export async function deleteFlightInfo(
   args: DeleteFlightInfoArgs,
 ): Promise<
-  | { ok: true; deleted: boolean; transfer?: TransferSync }
+  | ({ ok: true; deleted: boolean; transfer?: TransferSync } & FlightReviewResult)
   | { ok: false; error: string }
 > {
   const service = createSupabaseServiceClient();
   const { data: existing } = await service
     .from("flight_info")
-    .select("id, confirmed_at, enrollment:enrollments!inner(event_id)")
+    .select(
+      "id, confirmed_at, flight_number, airline, origin_airport, destination_airport, scheduled_at, terminal, hotel_key, is_vip, enrollment:enrollments!inner(event_id)",
+    )
     .eq("enrollment_id", args.enrollment_id)
     .eq("direction", args.direction)
     .maybeSingle();
@@ -231,5 +297,20 @@ export async function deleteFlightInfo(
       })
     : undefined;
 
-  return { ok: true, deleted: true, transfer };
+  const review: FlightReviewResult = {};
+  if (args.actor_role === "customer_service") {
+    const saved = await recordFlightChange({
+      eventId,
+      enrollmentId: args.enrollment_id,
+      direction: args.direction,
+      kind: "deleted",
+      before: snapshotOf(existing),
+      after: null,
+      actorId: args.actor_id,
+    });
+    if (saved) review.flagged = true;
+    else review.flag_failed = true;
+  }
+
+  return { ok: true, deleted: true, transfer, ...review };
 }

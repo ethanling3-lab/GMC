@@ -107,6 +107,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
     },
     confirm: Boolean(body.confirm),
     actor_id: admin.id,
+    actor_role: admin.role,
     conversation_id: conversationId,
     via: "inbox_panel",
   });
@@ -135,6 +136,9 @@ export async function POST(req: Request, { params }: RouteCtx) {
     id: result.id,
     confirmed_at: result.confirmed_at,
     transfer: result.transfer,
+    flagged: result.flagged,
+    vip_requested: result.vip_requested,
+    flag_failed: result.flag_failed,
   });
 }
 
@@ -159,6 +163,7 @@ export async function DELETE(req: Request, { params }: RouteCtx) {
     enrollment_id,
     direction,
     actor_id: admin.id,
+    actor_role: admin.role,
     conversation_id: conversationId,
     via: "inbox_panel",
   });

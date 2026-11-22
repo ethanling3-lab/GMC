@@ -17,7 +17,14 @@ export type DeleteFlightInitial = {
   flight_summary: string;
 };
 
-export function DeleteFlightButton({ initial }: { initial: DeleteFlightInitial }) {
+export function DeleteFlightButton({
+  initial,
+  flagsAdmin = false,
+}: {
+  initial: DeleteFlightInitial;
+  /** Customer service deletes are flagged for an admin to review. */
+  flagsAdmin?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -134,6 +141,7 @@ export function DeleteFlightButton({ initial }: { initial: DeleteFlightInitial }
                 takes them off a draft transfer list right away. A final list
                 stays as it is until you move it back to draft. This cannot be
                 undone.
+                {flagsAdmin ? " An admin will be asked to review this." : ""}
               </div>
               {error ? (
                 <div className="mt-3 text-[11.5px] text-[var(--cinnabar-deep)] leading-[1.5]">

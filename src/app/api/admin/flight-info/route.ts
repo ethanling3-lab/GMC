@@ -82,6 +82,7 @@ export async function POST(req: Request) {
     },
     confirm: Boolean(body.confirm),
     actor_id: admin.id,
+    actor_role: admin.role,
     via: "transfer_list_dialog",
   });
 
@@ -109,6 +110,9 @@ export async function POST(req: Request) {
     id: result.id,
     confirmed_at: result.confirmed_at,
     transfer: result.transfer,
+    flagged: result.flagged,
+    vip_requested: result.vip_requested,
+    flag_failed: result.flag_failed,
   });
 }
 
@@ -132,10 +136,17 @@ export async function DELETE(req: Request) {
     enrollment_id,
     direction,
     actor_id: admin.id,
+    actor_role: admin.role,
     via: "transfer_list_dialog",
   });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, missing: !result.deleted, transfer: result.transfer });
+  return NextResponse.json({
+    ok: true,
+    missing: !result.deleted,
+    transfer: result.transfer,
+    flagged: result.flagged,
+    flag_failed: result.flag_failed,
+  });
 }

@@ -1,5 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createSupabaseServiceClient } from "@/lib/supabase";
+import { normalizePhone } from "@/lib/whatsapp/phone";
 import { TRANSFER_ELIGIBLE_OR, TRANSFER_EXCLUDED_STATUSES } from "./eligibility";
 
 // Loader for "who has submitted their flight info, who hasn't" — feeds the
@@ -10,15 +12,17 @@ import { TRANSFER_ELIGIBLE_OR, TRANSFER_EXCLUDED_STATUSES } from "./eligibility"
 // generator actually uses. A draft flight (entered but not confirmed) is
 // surfaced separately so admin can chase the confirmation, not a brand-new
 // submission. "needs_time" is a confirmed flight with no scheduled time: the
-// generator can't place it, so it must not count as ready.
+// generator can't place it, so it must not count as ready. "not_needed" is
+// someone staff marked as not needing this transfer; a saved flight overrides it.
 
-export type FlightStatus = "confirmed" | "needs_time" | "draft" | "missing";
+export type FlightStatus = "confirmed" | "needs_time" | "draft" | "missing" | "not_needed";
 
 const CHASE_WEIGHT: Record<FlightStatus, number> = {
   needs_time: 3,
   missing: 2,
   draft: 1,
   confirmed: 0,
+  not_needed: 0,
 };
 
 export type EnrolmentSubmission = {
@@ -28,6 +32,11 @@ export type EnrolmentSubmission = {
   name: string;
   arrival: FlightStatus;
   departure: FlightStatus;
+  /** Valid international number for a WhatsApp link, or null. */
+  phone_e164: string | null;
+  contacted_at: string | null;
+  contacted_by: string | null;
+  contact_note: string | null;
 };
 
 export type FlightSubmissionStatus = {
@@ -42,9 +51,20 @@ type EnrolRow = {
   participant: {
     id: string;
     region_id: string | null;
+    region: string | null;
+    phone: string | null;
     name_en: string | null;
     name_cn: string | null;
   } | null;
+};
+
+type FollowupRow = {
+  enrollment_id: string;
+  contacted_at: string | null;
+  contacted_by: string | null;
+  contact_note: string | null;
+  arrival_not_needed: boolean;
+  departure_not_needed: boolean;
 };
 
 type FlightRow = {
@@ -61,7 +81,7 @@ export async function loadFlightSubmissionStatus(
   const { data: enrolRows } = await supabase
     .from("enrollments")
     .select(
-      "id, participant:participants!inner(id, region_id, name_en, name_cn)",
+      "id, participant:participants!inner(id, region_id, region, phone, name_en, name_cn)",
     )
     .eq("event_id", eventId)
     .or(TRANSFER_ELIGIBLE_OR)
@@ -87,16 +107,51 @@ export async function loadFlightSubmissionStatus(
     }
   }
 
+  // Follow-ups are staff-only and read on the server, after the page's role check.
+  const followups = new Map<string, FollowupRow>();
+  const staffNames = new Map<string, string>();
+  if (enrollmentIds.length > 0) {
+    const service = createSupabaseServiceClient();
+    const { data: followupRows } = await service
+      .from("flight_followups")
+      .select(
+        "enrollment_id, contacted_at, contacted_by, contact_note, arrival_not_needed, departure_not_needed",
+      )
+      .in("enrollment_id", enrollmentIds)
+      .returns<FollowupRow[]>();
+    for (const f of followupRows ?? []) followups.set(f.enrollment_id, f);
+    const staffIds = [
+      ...new Set(
+        (followupRows ?? [])
+          .map((f) => f.contacted_by)
+          .filter((x): x is string => Boolean(x)),
+      ),
+    ];
+    if (staffIds.length > 0) {
+      const { data: staff } = await service
+        .from("admins")
+        .select("id, name_en, name_cn")
+        .in("id", staffIds);
+      for (const a of staff ?? []) staffNames.set(a.id, a.name_en || a.name_cn || "Staff");
+    }
+  }
+
   const status: FlightSubmissionStatus = {
     total_enrolled: enrolments.length,
-    arrival: { confirmed: 0, needs_time: 0, draft: 0, missing: 0 },
-    departure: { confirmed: 0, needs_time: 0, draft: 0, missing: 0 },
+    arrival: { confirmed: 0, needs_time: 0, draft: 0, missing: 0, not_needed: 0 },
+    departure: { confirmed: 0, needs_time: 0, draft: 0, missing: 0, not_needed: 0 },
     enrolments: [],
   };
 
   for (const e of enrolments) {
-    const arrival = flightByEnrolDir.get(`${e.id}:arrival`) ?? "missing";
-    const departure = flightByEnrolDir.get(`${e.id}:departure`) ?? "missing";
+    const followup = followups.get(e.id);
+    const arrival =
+      flightByEnrolDir.get(`${e.id}:arrival`) ??
+      (followup?.arrival_not_needed ? "not_needed" : "missing");
+    const departure =
+      flightByEnrolDir.get(`${e.id}:departure`) ??
+      (followup?.departure_not_needed ? "not_needed" : "missing");
+    const phone = normalizePhone(e.participant?.phone, e.participant?.region);
     status.arrival[arrival] += 1;
     status.departure[departure] += 1;
     status.enrolments.push({
@@ -109,6 +164,12 @@ export async function loadFlightSubmissionStatus(
         e.id.slice(0, 8),
       arrival,
       departure,
+      phone_e164: phone.ok ? phone.e164 : null,
+      contacted_at: followup?.contacted_at ?? null,
+      contacted_by: followup?.contacted_by
+        ? (staffNames.get(followup.contacted_by) ?? "Staff")
+        : null,
+      contact_note: followup?.contact_note ?? null,
     });
   }
 

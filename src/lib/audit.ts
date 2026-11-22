@@ -49,6 +49,8 @@ export type AuditAction =
   | "inbox.conversation_status_changed"
   | "inbox.flight_info_extracted"
   | "inbox.flight_info_confirmed"
+  | "transfer.flight_followup"
+  | "transfer.flight_flag_resolved"
   | "inbox.snippet_created"
   | "inbox.snippet_updated"
   | "inbox.snippet_deleted"

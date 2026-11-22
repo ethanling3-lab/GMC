@@ -229,12 +229,20 @@ function SlotForm({
           }),
         },
       );
-      const json = (await res.json()) as { error?: string; detail?: string };
+      const json = (await res.json()) as {
+        error?: string;
+        detail?: string;
+        vip_requested?: boolean;
+      };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? "Save failed");
         return;
       }
       startTransition(() => router.refresh());
+      if (json.vip_requested) {
+        setError("Saved. VIP isn't applied until an admin approves your request.");
+        return;
+      }
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");

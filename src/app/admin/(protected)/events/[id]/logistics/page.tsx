@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
   loadTransferDetail,
@@ -29,7 +29,9 @@ import {
   MovePassengerDialog,
   type MoveTargetOption,
 } from "@/components/admin/transfer/MovePassengerDialog";
-import { PendingFlightsPanel } from "@/components/admin/transfer/PendingFlightsPanel";
+import { FlightWorklist } from "@/components/admin/transfer/FlightWorklist";
+import { FlightFlagsPanel, type ReviewFlag } from "@/components/admin/transfer/FlightFlagsPanel";
+import { loadOpenFlightFlags } from "@/lib/transfer/flight-flags";
 import { loadFlightSubmissionStatus } from "@/lib/transfer/flight-status";
 import {
   TRANSFER_ELIGIBLE_OR,
@@ -59,6 +61,7 @@ export default async function EventLogisticsPage({
   if (
     admin.role !== "super_admin" &&
     admin.role !== "regional_lead" &&
+    admin.role !== "customer_service" &&
     admin.role !== "instructor"
   ) {
     redirect("/admin/events");
@@ -68,15 +71,21 @@ export default async function EventLogisticsPage({
   const sp = await searchParams;
   const dir: "arrival" | "departure" = sp.dir === "departure" ? "departure" : "arrival";
 
-  const supabase = await createSupabaseServerClient();
-  const [detail, submissionStatus] = await Promise.all([
+  // Customer service covers every region on this page only, so it reads on the
+  // server after the role check instead of widening their access across the CRM.
+  const isCustomerService = admin.role === "customer_service";
+  const supabase = isCustomerService
+    ? createSupabaseServiceClient()
+    : await createSupabaseServerClient();
+  const [detail, submissionStatus, openFlags] = await Promise.all([
     loadTransferDetail(supabase, eventId),
     loadFlightSubmissionStatus(supabase, eventId),
+    admin.role === "instructor" ? Promise.resolve([]) : loadOpenFlightFlags(eventId),
   ]);
   if (!detail) notFound();
 
   // Look up the most recent inbox conversation per participant so the
-  // "Chase" link in PendingFlightsPanel jumps straight into the thread.
+  // "Inbox" link in FlightWorklist jumps straight into the thread.
   const participantIds = submissionStatus.enrolments
     .map((e) => e.participant_id)
     .filter((id): id is string => Boolean(id));
@@ -113,6 +122,7 @@ export default async function EventLogisticsPage({
   const active = dir === "arrival" ? detail.arrival : detail.departure;
   const isReadOnly =
     admin.role !== "super_admin" && admin.role !== "regional_lead";
+  const canFixFlights = !isReadOnly || isCustomerService;
   const designatedHotelEntries = Object.entries(
     (ev as unknown as { designated_hotels?: Record<string, string> })
       .designated_hotels ?? {},
@@ -182,6 +192,18 @@ export default async function EventLogisticsPage({
   const designatedHotels =
     (ev as unknown as { designated_hotels?: Record<string, string> })
       .designated_hotels ?? {};
+
+  // Only show flags for people this admin can see (regional leads see their region).
+  const labelByEnrolment = new Map(
+    submissionStatus.enrolments.map((e) => [
+      e.enrollment_id,
+      e.region_id ? `${e.name} · ${e.region_id}` : e.name,
+    ]),
+  );
+  const reviewFlags: ReviewFlag[] = openFlags.flatMap((f) => {
+    const participant_label = labelByEnrolment.get(f.enrollment_id);
+    return participant_label ? [{ ...f, participant_label }] : [];
+  });
 
   return (
     <div>
@@ -259,10 +281,24 @@ export default async function EventLogisticsPage({
         </div>
       ) : null}
 
+      {reviewFlags.length > 0 ? (
+        <div className="mt-6">
+          <FlightFlagsPanel
+            flags={reviewFlags}
+            canReview={!isReadOnly}
+            mainVenueName={ev.main_venue_hotel_name}
+            designatedHotels={designatedHotels}
+          />
+        </div>
+      ) : null}
+
       <div className="mt-6">
-        <PendingFlightsPanel
+        <FlightWorklist
           status={submissionStatus}
           inboxByParticipant={inboxByParticipant}
+          eventTitle={ev.title_en || ev.title_cn || ev.slug}
+          canWork={canFixFlights}
+          defaultOpen={isCustomerService}
         />
       </div>
 
@@ -291,6 +327,8 @@ export default async function EventLogisticsPage({
         state={active}
         readOnly={isReadOnly}
         canEditRows={!isReadOnly}
+        canFixFlights={canFixFlights}
+        isCustomerService={isCustomerService}
         enrolments={enrolments}
         mainVenueName={ev.main_venue_hotel_name}
         designatedHotels={designatedHotels}
@@ -375,6 +413,8 @@ function DirectionPanel({
   state,
   readOnly,
   canEditRows,
+  canFixFlights,
+  isCustomerService,
   enrolments,
   mainVenueName,
   designatedHotels,
@@ -390,6 +430,8 @@ function DirectionPanel({
   state: TransferDetailDirection;
   readOnly: boolean;
   canEditRows: boolean;
+  canFixFlights: boolean;
+  isCustomerService: boolean;
   enrolments: EnrolmentOption[];
   mainVenueName: string | null;
   designatedHotels: Record<string, string>;
@@ -519,11 +561,6 @@ function DirectionPanel({
               leftOut={leftOut}
               editedCount={state.rows.filter((r) => r.admin_edited).length}
             />
-            <FlightEditorDialog
-              enrolments={enrolments}
-              mainVenueName={mainVenueName}
-              designatedHotels={designatedHotels}
-            />
             {state.list ? (
               <>
                 <AddManualRowDialog listId={state.list.id} direction={dir} />
@@ -544,6 +581,14 @@ function DirectionPanel({
             ) : null}
           </div>
         ) : null}
+        {canFixFlights ? (
+          <FlightEditorDialog
+            enrolments={enrolments}
+            mainVenueName={mainVenueName}
+            designatedHotels={designatedHotels}
+            canSetVip={!isCustomerService}
+          />
+        ) : null}
       </div>
 
       {ruleChanges.length > 0 ? (
@@ -553,9 +598,11 @@ function DirectionPanel({
         >
           <strong className="font-semibold">Changed since this list was generated:</strong>{" "}
           {ruleChanges.join(", ")}.{" "}
-          {state.list?.status === "final"
-            ? "Move it back to draft, then regenerate to apply them."
-            : "Regenerate to apply them."}
+          {readOnly
+            ? "An admin needs to regenerate this list."
+            : state.list?.status === "final"
+              ? "Move it back to draft, then regenerate to apply them."
+              : "Regenerate to apply them."}
         </div>
       ) : null}
 
@@ -579,8 +626,8 @@ function DirectionPanel({
           <strong className="font-semibold">
             {leftOut.length} {leftOut.length === 1 ? "person has" : "people have"} no vehicle
           </strong>{" "}
-          because their flight has no time: {leftOut.join(", ")}. Add the time,
-          then regenerate this list.
+          because their flight has no time: {leftOut.join(", ")}. Add the time
+          {readOnly ? " in the worklist." : ", then regenerate this list."}
         </div>
       ) : null}
 
@@ -629,6 +676,8 @@ function DirectionPanel({
                   dir={dir}
                   listId={state.list?.id ?? ""}
                   canEdit={canEditRows && Boolean(state.list)}
+                  canFixFlights={canFixFlights}
+                  isCustomerService={isCustomerService}
                   moveTargets={moveTargets}
                 />
               ))}
@@ -667,12 +716,16 @@ function RowGroup({
   dir,
   listId,
   canEdit,
+  canFixFlights,
+  isCustomerService,
   moveTargets,
 }: {
   row: TransferDetailRow;
   dir: "arrival" | "departure";
   listId: string;
   canEdit: boolean;
+  canFixFlights: boolean;
+  isCustomerService: boolean;
   moveTargets: MoveTargetOption[];
 }) {
   // Compact label of THIS row, used as the "currently on:" sub-line in the
@@ -814,7 +867,7 @@ function RowGroup({
                 {ln.kind === "real" ? (
                   <>
                     <FlightLine flight={ln.flight} />
-                    {canEdit ? (
+                    {canFixFlights ? (
                       <span className="inline-flex items-center gap-0.5 opacity-40 hover:opacity-100 transition-opacity">
                         <EditFlightButton
                           enrollment_id={ln.flight.enrollment_id}
@@ -832,19 +885,22 @@ function RowGroup({
                             confirmed: true,
                           }}
                         />
-                        <MovePassengerDialog
-                          listId={listId}
-                          sourceRowId={row.id}
-                          sourceLabel={sourceLabel}
-                          direction={dir}
-                          subject={{
-                            kind: "real",
-                            flight_info_id: ln.flight.id,
-                            label: `${participantLabel(ln.flight)} · ${flightSummary(ln.flight)}`,
-                          }}
-                          targets={moveTargets}
-                        />
+                        {canEdit ? (
+                          <MovePassengerDialog
+                            listId={listId}
+                            sourceRowId={row.id}
+                            sourceLabel={sourceLabel}
+                            direction={dir}
+                            subject={{
+                              kind: "real",
+                              flight_info_id: ln.flight.id,
+                              label: `${participantLabel(ln.flight)} · ${flightSummary(ln.flight)}`,
+                            }}
+                            targets={moveTargets}
+                          />
+                        ) : null}
                         <DeleteFlightButton
+                          flagsAdmin={isCustomerService}
                           initial={{
                             enrollment_id: ln.flight.enrollment_id,
                             direction: dir,

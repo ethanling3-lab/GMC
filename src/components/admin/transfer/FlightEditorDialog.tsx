@@ -37,7 +37,7 @@ type EditFlightDetail = {
   enrollment_id: string;
   direction: Direction;
   participant_label: string;
-  flight: FlightDetails;
+  flight: FlightDetails | null;
 };
 
 const EDIT_FLIGHT_EVENT = "gmc:edit-flight";
@@ -113,13 +113,27 @@ function transferNotice(name: string, t: TransferResult | undefined): string {
   }
 }
 
+export function openFlightEditor(detail: EditFlightDetail) {
+  window.dispatchEvent(new CustomEvent(EDIT_FLIGHT_EVENT, { detail }));
+}
+
+function reviewNotice(r: {
+  flagged?: boolean;
+  vip_requested?: boolean;
+  flag_failed?: boolean;
+}): string {
+  if (r.flag_failed) return " The admin couldn't be flagged, so please tell them directly.";
+  if (r.vip_requested && r.flagged) return " Change flagged and VIP request sent to an admin.";
+  if (r.vip_requested) return " VIP request sent to an admin.";
+  if (r.flagged) return " Change flagged for an admin.";
+  return "";
+}
+
 export function EditFlightButton(detail: EditFlightDetail) {
   return (
     <button
       type="button"
-      onClick={() =>
-        window.dispatchEvent(new CustomEvent(EDIT_FLIGHT_EVENT, { detail }))
-      }
+      onClick={() => openFlightEditor(detail)}
       title="Edit flight"
       aria-label={`Edit flight for ${detail.participant_label}`}
       className="inline-flex items-center justify-center w-5 h-5 rounded-[var(--radius-sm)] text-[var(--ink-faint)] hover:text-[var(--cinnabar-deep)] hover:bg-[var(--paper-deep)]/60 focus-visible:shadow-[var(--shadow-focus)] active:scale-95 transition-[background-color,color,transform]"
@@ -133,10 +147,13 @@ export function FlightEditorDialog({
   enrolments,
   mainVenueName,
   designatedHotels,
+  canSetVip = true,
 }: {
   enrolments: EnrolmentOption[];
   mainVenueName: string | null;
   designatedHotels: Record<string, string>;
+  /** Without this, ticking VIP asks an admin to approve it. */
+  canSetVip?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -195,7 +212,8 @@ export function FlightEditorDialog({
       );
       setEnrolment(d.enrollment_id);
       setDirection(d.direction);
-      setForm(formFrom(flightOf(known, d.direction) ?? d.flight));
+      const saved = flightOf(known, d.direction) ?? d.flight;
+      setForm(saved ? formFrom(saved) : BLANK);
       setError(null);
       setOpen(true);
     }
@@ -289,6 +307,9 @@ export function FlightEditorDialog({
         error?: string;
         detail?: string;
         transfer?: TransferResult;
+        flagged?: boolean;
+        vip_requested?: boolean;
+        flag_failed?: boolean;
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? "Save failed");
@@ -299,7 +320,7 @@ export function FlightEditorDialog({
         transferNotice(
           (selected?.participant_label ?? "Passenger").split(" · ")[0],
           json.transfer,
-        ),
+        ) + reviewNotice(json),
       );
       closeAndReset();
       router.refresh();
@@ -503,7 +524,7 @@ export function FlightEditorDialog({
                   onChange={(e) => set("vip", e.target.checked)}
                   className="accent-[var(--cinnabar)]"
                 />
-                VIP — private Alphard
+                {canSetVip ? "VIP — private Alphard" : "Request VIP — an admin must approve"}
               </label>
               {error ? (
                 <div role="alert" className="text-[11.5px] text-[var(--cinnabar-deep)] leading-[1.5]">
