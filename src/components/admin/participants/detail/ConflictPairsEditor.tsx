@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 // Self-contained chip + typeahead editor for participant_conflict_pairs.
 // Mirrors the family-pair pattern from RelationshipsEditor but lives
-// inside EnrichmentEditor's "Grouping signals" section.
+// inside the Relationships card.
 //
 // Controlled component — parent owns the list state. Saves happen via
 // parent's PATCH (conflict_member_ids: string[] in the body); this

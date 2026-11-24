@@ -69,6 +69,8 @@ Optimise for:
 6. **Pin respect.** If pinned_group_no is set, the participant MUST land in that exact group_no, even if it pulls them across class. Pin overrides everything.
 7. **Energy mix (soft).** Each participant has energy_profile (high / medium / quiet / null). Try to spread energy across groups — avoid all-high or all-quiet tables. Don't break a hard constraint to satisfy this.
 8. **Language fluency (soft).** Each participant has language_fluency (en / cn / both / null). When the wider enrolment includes BOTH cn-fluent and en-fluent participants, every group should have at least one person who can converse in each language. Treat "both" as covering both. Soft — don't break hard constraints to satisfy.
+9. **Caution spread (soft).** Participants with sells_products=true are flagged as possibly here to recruit others into insurance / direct sales / MLM. Spread them across groups — avoid two or more in the same group where possible, so no table becomes a sales pitch. Don't break a hard constraint to satisfy this.
+10. **Motivation mix (soft).** Each participant lists motivations[] — why they are attending (networking / spiritual / business / family / other; index 0 = main reason; motivation_other holds the free-text reason when "other" is listed). Use it as a light profiling signal: mix reasons within a group rather than clustering one reason, and mention it in the rationale only when it drove a decision.
 
 # Hard constraints (assignment rejected if violated)
 
@@ -242,7 +244,9 @@ export async function runLlmGrouping(
     is_priority: isPriority(p),
     financial: p.financial_score,
     influence: p.influence_score,
-    motivation_tag: p.motivation_tag,
+    motivations: p.motivations,
+    motivation_other: p.motivation_other,
+    sells_products: p.sells_products,
     is_old_student: p.is_old_student,
     goal_dimensions: p.goal_dimensions,
     // Union legacy single-edge column with the multi-edge join table
@@ -567,7 +571,9 @@ function mergeLlmOutputWithSeeds(
         overall_score: null,
         influence_score: null,
         financial_score: null,
-        motivation_tag: null,
+        motivations: [],
+        motivation_other: null,
+        sells_products: false,
         is_old_student: false,
         family_of_participant_id: null,
         family_member_ids: [],

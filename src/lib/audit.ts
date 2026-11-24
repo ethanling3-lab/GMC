@@ -123,6 +123,7 @@ export type AuditAction =
   | "participant.energy_profile_changed"
   | "participant.language_fluency_changed"
   | "participant.conflict_pairs_changed"
+  | "participant.suggested_leaders_changed"
   | "profile_deck.exported"
   | "badges.background_uploaded"
   | "badges.exported"

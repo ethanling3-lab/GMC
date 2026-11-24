@@ -15,7 +15,7 @@ import type {
   ZuZhangTier,
 } from "@/lib/grouping/types";
 import { CardShell } from "./CardShell";
-import { LabelRow } from "./FormControls";
+import { LabelRow, Toggle } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
 
 // Per-participant 组长 profile.
@@ -49,7 +49,7 @@ export type ZuZhangProfileData = {
 };
 
 const TIER_OPTIONS: Array<{ value: ZuZhangTier | ""; label: string }> = [
-  { value: "", label: "— Not eligible / 非组长" },
+  { value: "", label: "— Pick a tier · 请选择" },
   { value: "key_recruitment", label: "重点感召型 · Key Recruitment" },
   { value: "recruitment", label: "感召型 · Recruitment" },
   { value: "maintenance", label: "维护型 · Maintenance" },
@@ -111,15 +111,41 @@ export function ZuZhangProfileEditor({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ZuZhangProfileData>(initial);
+  // The "Group leader · 组长" switch. A person is a leader when a tier is
+  // set; the switch can be on before a tier is picked (while editing).
+  const [leaderOn, setLeaderOn] = useState<boolean>(!!initial.zu_zhang_tier);
   const { saving, error, setError, patch } = useParticipantPatch(participantId);
+  const isLeader = !!initial.zu_zhang_tier;
 
   function cancel() {
     setDraft(initial);
+    setLeaderOn(!!initial.zu_zhang_tier);
     setEditing(false);
     setError(null);
   }
 
+  function switchLeader(on: boolean) {
+    setError(null);
+    setLeaderOn(on);
+    if (on) {
+      setEditing(true);
+    } else {
+      // Off clears the whole profile on save.
+      setDraft({
+        ...draft,
+        zu_zhang_tier: null,
+        zu_zhang_grade: null,
+        zu_zhang_dimensions: [],
+        zu_zhang_core_traits: [],
+      });
+    }
+  }
+
   async function save() {
+    if (leaderOn && !draft.zu_zhang_tier) {
+      setError("Pick a tier, or switch Group leader off · 请选择组长等级");
+      return;
+    }
     // Tier=null wipes grade — an ungraded leader's queue position is
     // tier-relative, so a null tier has nowhere to put a grade.
     const payload: Record<string, unknown> = {
@@ -173,7 +199,8 @@ export function ZuZhangProfileEditor({
     <CardShell
       eyebrow="Group Leader Profile"
       eyebrowZh="组长档案"
-      title="Group leader curation"
+      title={isLeader || editing ? "Group leader curation" : "Not a group leader"}
+      editable={isLeader || editing}
       editing={editing}
       saving={saving}
       error={error}
@@ -183,7 +210,15 @@ export function ZuZhangProfileEditor({
     >
       {editing ? (
         <div className="flex flex-col gap-7">
-          {/* Tier — always visible. Everything below it gates on tier set. */}
+          <LabelRow label="Group leader · 组长">
+            <Toggle
+              value={leaderOn}
+              onChange={switchLeader}
+              labels={{ on: "Yes · 是", off: "No · 否" }}
+            />
+          </LabelRow>
+
+          {leaderOn ? (
           <LabelRow label="Tier · 组长等级">
             <select
               value={draft.zu_zhang_tier ?? ""}
@@ -202,6 +237,7 @@ export function ZuZhangProfileEditor({
               ))}
             </select>
           </LabelRow>
+          ) : null}
 
           {hint ? (
             <div className="rounded-[var(--radius-md)] border border-[var(--gold)]/30 bg-[var(--gold-soft)]/40 px-4 py-3 text-[12px] leading-[1.6] text-[var(--ink-mute)]">
@@ -314,11 +350,26 @@ export function ZuZhangProfileEditor({
             </>
           ) : null}
 
-          <div className="text-[11px] text-[var(--ink-faint)]">
-            带组次数 · Times led groups:{" "}
-            <span className="text-[var(--ink)]">{initial.times_led_groups}</span>{" "}
-            (auto-maintained from zu_zhang_history)
-          </div>
+          {leaderOn ? (
+            <div className="text-[11px] text-[var(--ink-faint)]">
+              带组次数 · Times led groups:{" "}
+              <span className="text-[var(--ink)]">{initial.times_led_groups}</span>{" "}
+              (auto-maintained from zu_zhang_history)
+            </div>
+          ) : null}
+        </div>
+      ) : !isLeader ? (
+        // Slim view — not a leader. Only the switch; turning it on opens
+        // the full profile in edit mode.
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[13px] text-[var(--ink-mute)]">
+            Group leader · 组长
+          </span>
+          <Toggle
+            value={false}
+            onChange={switchLeader}
+            labels={{ on: "Yes · 是", off: "No · 否" }}
+          />
         </div>
       ) : (
         <div className="flex flex-col gap-5">
@@ -327,7 +378,7 @@ export function ZuZhangProfileEditor({
             value={
               initial.zu_zhang_tier
                 ? `${ZU_ZHANG_TIER_LABEL[initial.zu_zhang_tier].cn} · ${ZU_ZHANG_TIER_LABEL[initial.zu_zhang_tier].en}`
-                : "Not eligible · 非组长"
+                : "—"
             }
           />
 

@@ -65,7 +65,8 @@ const EMPTY_ROW: ExtractedRow = {
   birth_date: null,
   occupation: null,
   industry: null,
-  motivation_tag: null,
+  motivations: null,
+  sells_products: null,
   is_old_student: null,
   notes: null,
 };
@@ -748,9 +749,10 @@ function ReviewStep({
                 <th scope="col" className="px-3 py-3 font-medium">Gender</th>
                 <th scope="col" className="px-3 py-3 font-medium">Language</th>
                 <th scope="col" className="px-3 py-3 font-medium">Birth</th>
-                <th scope="col" className="px-3 py-3 font-medium">Motivation</th>
+                <th scope="col" className="px-3 py-3 font-medium">Main reason</th>
                 <th scope="col" className="px-3 py-3 font-medium">Occupation</th>
                 <th scope="col" className="px-3 py-3 font-medium">Industry</th>
+                <th scope="col" className="px-3 py-3 font-medium">Caution?</th>
                 <th scope="col" className="px-3 py-3 font-medium">Old?</th>
                 <th scope="col" className="w-12 px-3 py-3"></th>
               </tr>
@@ -758,7 +760,7 @@ function ReviewStep({
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="px-6 py-14 text-center text-[13px] text-[var(--ink-mute)]">
+                  <td colSpan={16} className="px-6 py-14 text-center text-[13px] text-[var(--ink-mute)]">
                     No rows. Add one manually or go back and re-extract.
                   </td>
                 </tr>
@@ -866,11 +868,14 @@ function ReviewStep({
                       </td>
                       <td className="px-2 py-1.5">
                         <CellSelect
-                          value={r.motivation_tag}
+                          value={r.motivations?.[0] ?? null}
                           onChange={(v) =>
                             onUpdate(i, {
-                              motivation_tag:
-                                v as ExtractedRow["motivation_tag"],
+                              // Review picks the MAIN reason; keep any
+                              // extra reasons the AI found after it.
+                              motivations: v
+                                ? [v, ...(r.motivations ?? []).filter((m) => m !== v)]
+                                : (r.motivations ?? []).slice(1),
                             })
                           }
                           options={MOTIVATIONS}
@@ -889,6 +894,12 @@ function ReviewStep({
                           value={r.industry}
                           onChange={(v) => onUpdate(i, { industry: v })}
                           width={120}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <BoolToggle
+                          value={r.sells_products}
+                          onChange={(v) => onUpdate(i, { sells_products: v })}
                         />
                       </td>
                       <td className="px-2 py-1.5">

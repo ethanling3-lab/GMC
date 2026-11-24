@@ -10,12 +10,8 @@ export type AdminRole =
 /** See migration 053 — replaced the `participant_status` lifecycle enum. */
 export type IdentityConfidence = "unverified" | "verified";
 
-export type MotivationTag =
-  | "clean"
-  | "insurance"
-  | "direct_sales"
-  | "spiritual"
-  | "other";
+export type { MotivationTag } from "@/lib/participants/motivations";
+import type { MotivationTag } from "@/lib/participants/motivations";
 
 export type EventType =
   | "retreat"
@@ -65,12 +61,13 @@ export interface Participant {
   financial_score: number | null;
   influence_score: number | null;
   overall_score: number | null;
-  motivation_tag: MotivationTag | null;
+  motivations: MotivationTag[];
+  motivation_other: string | null;
+  sells_products: boolean;
   is_old_student: boolean;
   family_of_participant_id: string | null;
   referrer_id: string | null;
   personality: string | null;
-  face_type: string | null;
   parameter_framework: string | null;
   front_photo_url: string | null;
   assigned_region_lead_id: string | null;

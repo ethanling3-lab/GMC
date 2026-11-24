@@ -27,7 +27,6 @@
     "@react-email/render": "^2.0.7",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
-    "@vladmandic/face-api": "^1.7.15",
     "@yudiel/react-qr-scanner": "^2.5.1",
     "jspdf": "^4.2.1",
     "next": "16.2.4",

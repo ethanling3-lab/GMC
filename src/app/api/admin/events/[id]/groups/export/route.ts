@@ -1,3 +1,4 @@
+import { motivationsLabel } from "@/lib/participants/motivations";
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { createSupabaseServerClient } from "@/lib/supabase";
@@ -93,7 +94,8 @@ export async function GET(_req: Request, { params }: RouteCtx) {
         Financial: m.financial_score ?? "",
         Influence: m.influence_score ?? "",
         Qualification: qualLabel,
-        Motivation: m.motivation_tag ?? "",
+        Motivation: motivationsLabel(m.motivations, m.motivation_other),
+        "Caution (may recruit)": m.sells_products ? "Yes" : "",
         Old: m.is_old_student ? "Yes" : "",
         "Primary Goal": primaryGoal ? GROWTH_DIMENSION_LABEL[primaryGoal].cn : "",
         "Secondary Goal": secondaryGoal ? GROWTH_DIMENSION_LABEL[secondaryGoal].cn : "",
@@ -128,6 +130,7 @@ export async function GET(_req: Request, { params }: RouteCtx) {
       "Influence",
       "Qualification",
       "Motivation",
+      "Caution (may recruit)",
       "Old",
       "Primary Goal",
       "Secondary Goal",

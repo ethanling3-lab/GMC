@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { MOTIVATIONS, type MotivationTag } from "@/lib/participants/motivations";
 
 /**
  * Replaces the old `participant_status` lifecycle enum (dropped in migration
@@ -9,12 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 export type IdentityConfidence = "unverified" | "verified";
 
-export type MotivationTag =
-  | "clean"
-  | "insurance"
-  | "direct_sales"
-  | "spiritual"
-  | "other";
+export type { MotivationTag };
 
 export type ParticipantFilters = {
   q?: string;
@@ -37,13 +33,7 @@ export const DEFAULT_PAGE_SIZE = 50;
 
 const IDENTITY_VALUES: IdentityConfidence[] = ["unverified", "verified"];
 
-const MOTIVATION_VALUES: MotivationTag[] = [
-  "clean",
-  "insurance",
-  "direct_sales",
-  "spiritual",
-  "other",
-];
+const MOTIVATION_VALUES: readonly MotivationTag[] = MOTIVATIONS;
 
 const REGION_VALUES = ["MY", "SG", "TW", "HK", "CN"] as const;
 
@@ -115,7 +105,7 @@ type QueryBuilder = ReturnType<SupabaseClient["from"]>;
  * Pass the *select* builder, not a raw .from() — caller controls which columns.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any; order: any; is: any; not: any }>(
+export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any; order: any; is: any; not: any; contains: any }>(
   query: T,
   filters: ParticipantFilters,
 ): T {
@@ -150,7 +140,7 @@ export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any
     // someone who has only ever WhatsApp'd us is still someone we can reach.
     q = q.eq("identity_confidence", "verified");
   }
-  if (filters.motivation) q = q.eq("motivation_tag", filters.motivation);
+  if (filters.motivation) q = q.contains("motivations", [filters.motivation]);
 
   // Archived scope — default excludes archived.
   const archivedMode = filters.archived ?? "active";

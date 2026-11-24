@@ -119,11 +119,15 @@ export const ParticipantUpdateSchema = z
     financial_score: score,
     influence_score: score,
     overall_score: legacyOverallScore,
-    motivation_tag: z.union([z.enum(MOTIVATIONS), z.null()]).optional(),
+    motivations: z.array(z.enum(MOTIVATIONS)).max(MOTIVATIONS.length).optional(),
+    motivation_other: z
+      .union([z.string().trim().max(200), z.null()])
+      .optional()
+      .transform((v) => (v === "" ? null : v)),
+    sells_products: z.boolean().optional(),
     is_old_student: z.boolean().optional(),
 
     personality: optionalString,
-    face_type: optionalString,
     parameter_framework: optionalString,
     cs_notes: z
       .union([z.string().max(20_000), z.null()])
@@ -189,6 +193,9 @@ export const ParticipantUpdateSchema = z
     // Conflict pairs — same shape as family_member_ids: full desired
     // set; PATCH route reconciles vs participant_conflict_pairs.
     conflict_member_ids: z.array(z.string().uuid()).max(50).optional(),
+    // Suggested 组长 (migration 072) — ordered, first = preferred, max 2.
+    // Reconciled against participant_suggested_leaders, not a column.
+    suggested_leader_ids: z.array(z.string().uuid()).max(2).optional(),
 
     // M7.1c facial-recognition consent. Admin can flip on a participant's
     // behalf if they later say yes verbally; defaults to whatever the
@@ -223,10 +230,11 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "industry",
   "financial_score",
   "influence_score",
-  "motivation_tag",
+  "motivations",
+  "motivation_other",
+  "sells_products",
   "is_old_student",
   "personality",
-  "face_type",
   "parameter_framework",
   "cs_notes",
   "zu_zhang_tier",
@@ -260,5 +268,6 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "energy_profile",
   "language_fluency",
   "conflict_member_ids",
+  "suggested_leader_ids",
   "facial_recognition_consent",
 ];

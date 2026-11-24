@@ -20,7 +20,7 @@ export type ParticipantRow = {
   financial_score: number | null;
   influence_score: number | null;
   student_qualification: StudentQualification | null;
-  motivation_tag: string | null;
+  motivations: string[] | null;
   archived_at: string | null;
   created_at: string;
 };

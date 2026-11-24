@@ -30,7 +30,7 @@ const ALL_DIMENSIONS = ["financial", "relationship", "health", "inner_peace"];
 
 function buildSynthetic(n) {
   const regions = ["MY", "SG", "TW", "HK", "CN"];
-  const motivations = ["growth", "network", "discovery", "skill"];
+  const motivations = ["networking", "spiritual", "business", "family"];
   // Cycle length 7 (coprime with the 5-step qualification cycle) so energy
   // scatters across all classes — otherwise every basic-tier member would
   // inherit the same energy bucket.
@@ -52,7 +52,9 @@ function buildSynthetic(n) {
       overall_score: null,
       influence_score: influence,
       financial_score: financial,
-      motivation_tag: motivations[i % motivations.length],
+      motivations: [motivations[i % motivations.length]],
+      motivation_other: null,
+      sells_products: i % 7 === 0,
       is_old_student: i % 5 === 0,
       family_of_participant_id: null,
       family_member_ids: [],

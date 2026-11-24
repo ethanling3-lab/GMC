@@ -13,6 +13,7 @@ import {
   type ParticipantFilters,
 } from "@/lib/participants-query";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
+import { MOTIVATION_LABEL } from "@/lib/participants/motivations";
 
 // Audience resolver — returns the (participant × channel) leaves the
 // fan-out will deliver to. Two modes; both end at the same Recipient shape.
@@ -224,7 +225,7 @@ async function loadParticipantMaster(
   let query = service
     .from("participants")
     .select(
-      "id, name_cn, name_en, region_id, region, email, phone, language_fluency, is_old_student, archived_at, assigned_cs_id, motivation_tag, financial_score, influence_score",
+      "id, name_cn, name_en, region_id, region, email, phone, language_fluency, is_old_student, archived_at, assigned_cs_id, motivations, financial_score, influence_score",
     )
     .limit(5000);
   query = applyParticipantFilters(query, pf);
@@ -353,7 +354,7 @@ export function buildAudienceSummary(filter: AudienceFilter, eventTitle?: string
   const pieces: string[] = [];
   if (filter.region) pieces.push(filter.region);
   if (filter.include_archived) pieces.push("incl. archived");
-  if (filter.motivation) pieces.push(filter.motivation);
+  if (filter.motivation) pieces.push(MOTIVATION_LABEL[filter.motivation]?.en ?? filter.motivation);
   if (filter.programme_tier) pieces.push(filter.programme_tier);
   if (filter.is_old_student === true) pieces.push("old students");
   if (filter.is_old_student === false) pieces.push("new students");

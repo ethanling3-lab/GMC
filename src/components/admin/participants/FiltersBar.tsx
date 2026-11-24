@@ -2,6 +2,10 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
+import {
+  MOTIVATIONS as MOTIVATION_CODES,
+  MOTIVATION_LABEL,
+} from "@/lib/participants/motivations";
 
 const REGIONS = [
   { code: "", label: "All regions" },
@@ -21,11 +25,10 @@ const IDENTITY = [
 
 const MOTIVATIONS = [
   { code: "", label: "Any motivation" },
-  { code: "clean", label: "Clean · 纯粹" },
-  { code: "insurance", label: "Insurance · 保险" },
-  { code: "direct_sales", label: "Direct sales · 直销" },
-  { code: "spiritual", label: "Spiritual · 灵性" },
-  { code: "other", label: "Other · 其他" },
+  ...MOTIVATION_CODES.map((m) => ({
+    code: m,
+    label: `${MOTIVATION_LABEL[m].en} · ${MOTIVATION_LABEL[m].cn}`,
+  })),
 ];
 
 const SORTS = [

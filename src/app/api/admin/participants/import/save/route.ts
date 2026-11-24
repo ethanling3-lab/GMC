@@ -45,7 +45,8 @@ function columnsFrom(r: ExtractedRow) {
     birth_date: r.birth_date,
     occupation: r.occupation,
     industry: r.industry,
-    motivation_tag: r.motivation_tag,
+    motivations: r.motivations ?? [],
+    sells_products: r.sells_products ?? false,
     is_old_student: r.is_old_student ?? false,
   };
 }

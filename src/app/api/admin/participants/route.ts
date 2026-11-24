@@ -124,9 +124,20 @@ export async function POST(req: Request) {
   // role insert via the registration form, so the regular admin session gets blocked.
   const supabase = createSupabaseServiceClient();
 
+  // Relation fields live in join tables, not columns — never insert them.
+  const {
+    family_member_ids: _family,
+    conflict_member_ids: _conflict,
+    suggested_leader_ids: _suggested,
+    ...columnFields
+  } = fields as Record<string, unknown>;
+  void _family;
+  void _conflict;
+  void _suggested;
+
   const { data: created, error: insertErr } = await supabase
     .from("participants")
-    .insert({ ...fields, identity_confidence: "verified" })
+    .insert({ ...columnFields, identity_confidence: "verified" })
     .select("id, region_id")
     .maybeSingle();
 

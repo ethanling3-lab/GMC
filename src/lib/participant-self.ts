@@ -3,10 +3,10 @@ import { createSupabaseServiceClient } from "@/lib/supabase";
 
 // Scoped read path for the /me portal. Explicitly enumerates the
 // participant-safe fields — EXCLUDES every admin-internal column:
-//   financial_score, influence_score, zu_zhang_*, face_archetype_suggested,
-//   face_type, parameter_framework, cs_notes, cs_evaluation,
+//   financial_score, influence_score, zu_zhang_*, face_*,
+//   parameter_framework, cs_notes, cs_evaluation,
 //   recommended_courses, forbidden_courses, interaction_notes,
-//   suggested_group_leader_notes, course_needs, motivation_tag,
+//   suggested_group_leader_notes, course_needs, motivations, sells_products,
 //   energy_profile, health_status, family_situation, sub_region,
 //   has_special_contribution, times_led_groups, conflict pairs etc.
 //

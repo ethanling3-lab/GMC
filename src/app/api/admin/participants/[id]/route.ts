@@ -85,7 +85,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   // Pull join-table fields out of the column-level patch — they're
   // reconciled against their respective adjacency tables below, not
   // stored as columns. Everything else flows straight to UPDATE.
-  const { family_member_ids, conflict_member_ids, ...columnRest } = patch;
+  const { family_member_ids, conflict_member_ids, suggested_leader_ids, ...columnRest } = patch;
   const columnPatch: Record<string, unknown> = { ...columnRest };
 
   // Keep phone_e164 in step with phone (migration 052). Editing either the
@@ -313,6 +313,76 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         before: { conflict_member_ids: [...currentOthers] },
         after: { conflict_member_ids: [...desiredOthers] },
         metadata: { added: toAdd, removed: toRemove },
+      });
+    }
+  }
+
+  // Suggested 组长 (migration 072). Full ordered list in (first =
+  // preferred, max 2); replace the stored set. Each pick must be a current
+  // group leader (zu_zhang_tier set) and not the participant themselves.
+  if (suggested_leader_ids !== undefined) {
+    const desired = [...new Set(suggested_leader_ids)].filter((l) => l !== id);
+    if (desired.length > 0) {
+      const { data: leaders, error: leadErr } = await service
+        .from("participants")
+        .select("id")
+        .in("id", desired)
+        .not("zu_zhang_tier", "is", null);
+      if (leadErr) {
+        return NextResponse.json({ error: leadErr.message }, { status: 500 });
+      }
+      const ok = new Set((leaders ?? []).map((r) => r.id as string));
+      const bad = desired.filter((l) => !ok.has(l));
+      if (bad.length > 0) {
+        return NextResponse.json(
+          { error: "Suggested 组长 must be a group leader in the CRM", detail: bad },
+          { status: 400 },
+        );
+      }
+    }
+
+    const { data: currentRows, error: curErr } = await service
+      .from("participant_suggested_leaders")
+      .select("leader_id, position")
+      .eq("participant_id", id)
+      .order("position");
+    if (curErr) {
+      return NextResponse.json({ error: curErr.message }, { status: 500 });
+    }
+    const current = (currentRows ?? []).map((r) => r.leader_id as string);
+    const changed =
+      current.length !== desired.length || current.some((l, i) => l !== desired[i]);
+
+    if (changed) {
+      const { error: delErr } = await service
+        .from("participant_suggested_leaders")
+        .delete()
+        .eq("participant_id", id);
+      if (delErr) {
+        return NextResponse.json({ error: delErr.message }, { status: 500 });
+      }
+      if (desired.length > 0) {
+        const { error: insErr } = await service
+          .from("participant_suggested_leaders")
+          .insert(
+            desired.map((leader_id, i) => ({
+              participant_id: id,
+              leader_id,
+              position: i + 1,
+              created_by: admin.id,
+            })),
+          );
+        if (insErr) {
+          return NextResponse.json({ error: insErr.message }, { status: 500 });
+        }
+      }
+      await writeAuditLog({
+        actor_id: admin.id,
+        action: "participant.suggested_leaders_changed",
+        entity: "participants",
+        entity_id: id,
+        before: { suggested_leader_ids: current },
+        after: { suggested_leader_ids: desired },
       });
     }
   }

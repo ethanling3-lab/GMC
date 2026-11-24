@@ -79,6 +79,43 @@ export async function loadProfileDeck(
     (parts ?? []).map((p) => [p.id as string, p]),
   );
 
+  // ---- Suggested 组长 (migration 072) -----------------------------------
+  // Deck line "建议在谁的小组" = picked leader names, then the free-text
+  // note. Non-fatal: a missing table just leaves the note on its own.
+  const suggestedNamesById = new Map<string, string[]>();
+  {
+    const { data: links, error: linkErr } = await supabase
+      .from("participant_suggested_leaders")
+      .select("participant_id, leader_id, position")
+      .in("participant_id", participantIds)
+      .order("position");
+    if (!linkErr && links && links.length > 0) {
+      const leaderIds = [...new Set(links.map((l) => l.leader_id as string))];
+      const { data: leaderRows } = await supabase
+        .from("participants")
+        .select("id, name_en, name_cn")
+        .in("id", leaderIds);
+      const nameById = new Map(
+        (leaderRows ?? []).map((r) => [
+          r.id as string,
+          ((r.name_cn as string | null)?.trim() || (r.name_en as string | null)?.trim() || "—"),
+        ]),
+      );
+      for (const l of links) {
+        const pid = l.participant_id as string;
+        const list = suggestedNamesById.get(pid) ?? [];
+        list.push(nameById.get(l.leader_id as string) ?? "—");
+        suggestedNamesById.set(pid, list);
+      }
+    }
+  }
+  const suggestedLine = (pid: string, note: string | null): string | null => {
+    const names = (suggestedNamesById.get(pid) ?? []).join(" / ");
+    const n = note?.trim() || "";
+    if (names && n) return `${names} — ${n}`;
+    return names || n || null;
+  };
+
   // ---- Seat assignments (group_no via event_groups join) ----------------
   const { data: seats, error: sErr } = await supabase
     .from("event_seat_assignments")
@@ -199,7 +236,10 @@ export async function loadProfileDeck(
       dietary_needs: p?.dietary_needs ?? null,
       interaction_notes: p?.interaction_notes ?? null,
       course_needs: p?.course_needs ?? null,
-      suggested_group_leader_notes: p?.suggested_group_leader_notes ?? null,
+      suggested_group_leader_notes: suggestedLine(
+        e.participant_id,
+        (p?.suggested_group_leader_notes as string | null) ?? null,
+      ),
       recommended_courses: p?.recommended_courses ?? null,
       forbidden_courses: p?.forbidden_courses ?? null,
       cs_evaluation: p?.cs_evaluation ?? null,

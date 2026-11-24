@@ -58,7 +58,9 @@ type EnrolmentRow = {
     overall_score: number | null;
     influence_score: number | null;
     financial_score: number | null;
-    motivation_tag: string | null;
+    motivations: string[] | null;
+    motivation_other: string | null;
+    sells_products: boolean | null;
     is_old_student: boolean;
     family_of_participant_id: string | null;
     region: string | null;
@@ -92,7 +94,7 @@ export async function loadGroupingInputs(
        zu_zhang_grade_for_event,
        participant:participants!inner(
          id, region_id,
-         overall_score, influence_score, financial_score, motivation_tag,
+         overall_score, influence_score, financial_score, motivations, motivation_other, sells_products,
          is_old_student, family_of_participant_id, region,
          goal_dimensions, student_qualification,
          zu_zhang_tier, zu_zhang_grade, zu_zhang_dimensions, zu_zhang_core_traits,
@@ -214,7 +216,9 @@ export async function loadGroupingInputs(
     overall_score: e.participant!.overall_score,
     influence_score: e.participant!.influence_score,
     financial_score: e.participant!.financial_score,
-    motivation_tag: e.participant!.motivation_tag,
+    motivations: e.participant!.motivations ?? [],
+    motivation_other: e.participant!.motivation_other ?? null,
+    sells_products: e.participant!.sells_products ?? false,
     is_old_student: e.participant!.is_old_student,
     family_of_participant_id: e.participant!.family_of_participant_id,
     family_member_ids: Array.from(familyByPid.get(e.participant!.id) ?? []),

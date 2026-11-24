@@ -1,5 +1,6 @@
 "use client";
 
+import { motivationCn } from "@/lib/participants/motivations";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
@@ -87,7 +88,9 @@ function memberFromUnassigned(
     qualification_override: null,
     qualification_computed: null,
     effective_class: u.effective_class,
-    motivation_tag: null,
+    motivations: [],
+    motivation_other: null,
+    sells_products: false,
     has_special_contribution: false,
     times_led_groups: 0,
     family_partner_region_ids: [],
@@ -2731,8 +2734,15 @@ function MemberDetail({ member }: { member: GroupBuilderMember }) {
         )}
       </DetailRow>
       <DetailRow label="Motivation · 动机">
-        {member.motivation_tag ? (
-          <span className="text-[var(--ink)]">{member.motivation_tag}</span>
+        {member.motivations.length > 0 || member.sells_products ? (
+          <span className="text-[var(--ink)]">
+            {member.motivations.map((m) => motivationCn(m, member.motivation_other)).join(" · ")}
+            {member.sells_products ? (
+              <span className="ml-1.5 text-[var(--ink-mute)]">
+                {member.motivations.length > 0 ? "· " : ""}⚠ 可能拉保险/直销/传销
+              </span>
+            ) : null}
+          </span>
         ) : (
           <span className="text-[var(--ink-faint)]">—</span>
         )}

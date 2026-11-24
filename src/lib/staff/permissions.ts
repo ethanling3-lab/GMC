@@ -26,10 +26,9 @@ const FINANCE_PAGES: readonly RegExp[] = [
 
 const CS_API: readonly ApiRule[] = [
   { path: /^\/api\/admin\/participants\/search$/, methods: READ },
+  { path: /^\/api\/admin\/participants\/leaders\/search$/, methods: READ },
   { path: new RegExp(`^/api/admin/participants/${ID}$`), methods: ["PATCH"] },
   { path: new RegExp(`^/api/admin/participants/${ID}/photo$`), methods: WRITE },
-  { path: new RegExp(`^/api/admin/participants/${ID}/face-embedding$`), methods: WRITE },
-  { path: new RegExp(`^/api/admin/participants/${ID}/face-reading$`), methods: ["POST", "PATCH"] },
   { path: /^\/api\/admin\/flight-info$/, methods: ["POST", "DELETE"] },
   { path: /^\/api\/admin\/flight-followups$/, methods: ["PATCH"] },
   { path: new RegExp(`^/api/admin/events/${ID}/check-in$`), methods: ["GET", "POST", "DELETE"] },

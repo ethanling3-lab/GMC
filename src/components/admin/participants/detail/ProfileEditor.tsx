@@ -5,6 +5,11 @@ import { CardShell } from "./CardShell";
 import { Empty } from "./Field";
 import { LabelRow, TextInput, Textarea } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
+import {
+  SuggestedLeadersDisplay,
+  SuggestedLeadersPicker,
+  type SuggestedLeader,
+} from "./SuggestedLeadersPicker";
 
 // M6.8 Profile card — what shows up on the per-participant briefing deck.
 // Owns ONLY deck-rendered fields. Identity facts (region / dharma /
@@ -18,7 +23,7 @@ import { useParticipantPatch } from "./useParticipantPatch";
 //   客服建议  · course needs + recommendations + evaluation
 //   Course history + Internal notes round it off.
 //
-// Three qualitative briefing notes (personality / face_type /
+// Two qualitative briefing notes (personality /
 // parameter_framework) were moved here from EnrichmentEditor — they're
 // admin-readable briefing context, not algorithm input.
 
@@ -37,12 +42,13 @@ export type ProfileData = {
   // CS recommendations
   course_needs: string | null;
   suggested_group_leader_notes: string | null;
+  // Linked 组长 picks (migration 072), ordered, first = preferred.
+  suggested_leaders: SuggestedLeader[];
   recommended_courses: string | null;
   forbidden_courses: string | null;
   cs_evaluation: string | null;
   // Qualitative briefing notes (moved in from EnrichmentEditor)
   personality: string | null;
-  face_type: string | null;
   parameter_framework: string | null;
   // Course history
   attended_courses: AttendedCourse[];
@@ -86,11 +92,11 @@ export function ProfileEditor({
       interaction_notes: trim(draft.interaction_notes),
       course_needs: trim(draft.course_needs),
       suggested_group_leader_notes: trim(draft.suggested_group_leader_notes),
+      suggested_leader_ids: draft.suggested_leaders.map((l) => l.id),
       recommended_courses: trim(draft.recommended_courses),
       forbidden_courses: trim(draft.forbidden_courses),
       cs_evaluation: trim(draft.cs_evaluation),
       personality: trim(draft.personality),
-      face_type: trim(draft.face_type),
       parameter_framework: trim(draft.parameter_framework),
       attended_courses: cleaned,
       cs_notes: trim(draft.cs_notes),
@@ -194,14 +200,27 @@ export function ProfileEditor({
               />
             </LabelRow>
             <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
-              <LabelRow label="Suggested 组长 · 建议在谁的小组">
-                <TextInput
-                  value={draft.suggested_group_leader_notes ?? ""}
-                  onChange={(v) =>
-                    setDraft({ ...draft, suggested_group_leader_notes: v })
+              <LabelRow
+                group
+                label="Suggested 组长 · 建议在谁的小组"
+                hint="Pick from the CRM's group leaders (up to 2, first = preferred). Grouping places them with this leader when the leader serves at the event and leads their group type."
+              >
+                <SuggestedLeadersPicker
+                  participantId={participantId}
+                  leaders={draft.suggested_leaders}
+                  onChange={(next) =>
+                    setDraft({ ...draft, suggested_leaders: next })
                   }
-                  placeholder="李鳳鏑 / 周佩娴"
                 />
+                <div className="mt-2">
+                  <TextInput
+                    value={draft.suggested_group_leader_notes ?? ""}
+                    onChange={(v) =>
+                      setDraft({ ...draft, suggested_group_leader_notes: v })
+                    }
+                    placeholder="Why this leader? (optional) · 原因（选填）"
+                  />
+                </div>
               </LabelRow>
               <LabelRow label="Recommend courses · 引导报名什么课程">
                 <TextInput
@@ -238,21 +257,14 @@ export function ProfileEditor({
           {/* Section: Qualitative notes (moved from EnrichmentEditor) */}
           <SectionDivider
             title="Qualitative notes"
-            titleZh="性格 · 面相 · 框架"
+            titleZh="性格 · 框架"
           />
-          <div className="grid md:grid-cols-3 gap-x-6 gap-y-5">
+          <div className="grid md:grid-cols-2 gap-x-6 gap-y-5">
             <LabelRow label="Personality · 性格">
               <TextInput
                 value={draft.personality ?? ""}
                 onChange={(v) => setDraft({ ...draft, personality: v })}
                 placeholder="随和 / 严谨 / ..."
-              />
-            </LabelRow>
-            <LabelRow label="Face type · 面相">
-              <TextInput
-                value={draft.face_type ?? ""}
-                onChange={(v) => setDraft({ ...draft, face_type: v })}
-                placeholder="—"
               />
             </LabelRow>
             <LabelRow label="Parameter framework · 框架">
@@ -376,7 +388,19 @@ export function ProfileEditor({
             </ReadField>
             <dl className="grid md:grid-cols-2 gap-x-8 gap-y-5">
               <ReadField label="Suggested 组长" labelZh="建议在谁的小组">
-                {textOrEmpty(initial.suggested_group_leader_notes)}
+                {initial.suggested_leaders.length === 0 &&
+                !initial.suggested_group_leader_notes?.trim() ? (
+                  textOrEmpty(null)
+                ) : (
+                  <span className="flex flex-col gap-1.5">
+                    <SuggestedLeadersDisplay leaders={initial.suggested_leaders} />
+                    {initial.suggested_group_leader_notes?.trim() ? (
+                      <span className="text-[12.5px] text-[var(--ink-mute)]">
+                        {initial.suggested_group_leader_notes}
+                      </span>
+                    ) : null}
+                  </span>
+                )}
               </ReadField>
               <ReadField label="Recommend courses" labelZh="引导报名什么课程">
                 {textOrEmpty(initial.recommended_courses)}
@@ -399,14 +423,11 @@ export function ProfileEditor({
           {/* Section: Qualitative notes (read) */}
           <SectionDivider
             title="Qualitative notes"
-            titleZh="性格 · 面相 · 框架"
+            titleZh="性格 · 框架"
           />
-          <dl className="grid md:grid-cols-3 gap-x-6 gap-y-5">
+          <dl className="grid md:grid-cols-2 gap-x-6 gap-y-5">
             <ReadField label="Personality" labelZh="性格">
               {textOrEmpty(initial.personality)}
-            </ReadField>
-            <ReadField label="Face type" labelZh="面相">
-              {textOrEmpty(initial.face_type)}
             </ReadField>
             <ReadField label="Parameter framework" labelZh="框架">
               {textOrEmpty(initial.parameter_framework)}

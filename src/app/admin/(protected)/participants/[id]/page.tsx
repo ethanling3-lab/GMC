@@ -14,12 +14,10 @@ import { loadParticipantHistory } from "@/lib/participants/history";
 import { ParticipantHistory } from "@/components/admin/participants/detail/ParticipantHistory";
 import { IdentityEditor } from "@/components/admin/participants/detail/IdentityEditor";
 import { ProfileEditor } from "@/components/admin/participants/detail/ProfileEditor";
+import type { SuggestedLeader } from "@/components/admin/participants/detail/SuggestedLeadersPicker";
 import type { AttendedCourse } from "@/components/admin/participants/detail/ProfileEditor";
 import { ScoringEditor } from "@/components/admin/participants/detail/ScoringEditor";
 import { ZuZhangProfileEditor } from "@/components/admin/participants/detail/ZuZhangProfileEditor";
-import { EnrichmentEditor } from "@/components/admin/participants/detail/EnrichmentEditor";
-import { FaceReadingCard } from "@/components/admin/participants/detail/FaceReadingCard";
-import type { FaceMeasurements } from "@/lib/face-reading/archetypes";
 import type {
   GrowthDimension,
   StudentQualification,
@@ -56,7 +54,9 @@ type Participant = {
   financial_score: number | null;
   influence_score: number | null;
   overall_score: number | null;
-  motivation_tag: MotivationTag | null;
+  motivations: MotivationTag[] | null;
+  motivation_other: string | null;
+  sells_products: boolean | null;
   zu_zhang_tier: ZuZhangTier | null;
   zu_zhang_grade: number | null;
   zu_zhang_dimensions: GrowthDimension[];
@@ -90,22 +90,8 @@ type Participant = {
   family_of_participant_id: string | null;
   referrer_id: string | null;
   personality: string | null;
-  face_type: string | null;
   parameter_framework: string | null;
   front_photo_url: string | null;
-  facial_recognition_consent: boolean;
-  face_embedding: number[] | null;
-  face_embedding_at: string | null;
-  face_embedding_error: string | null;
-  face_archetype: string | null;
-  face_archetype_suggested: string | null;
-  face_measurements:
-    | FaceMeasurements
-    | { error?: string; diagTips?: string[] }
-    | null;
-  face_skin_tone_override: string | null;
-  face_analyzed_at: string | null;
-  face_analysis_error: string | null;
   assigned_region_lead_id: string | null;
   assigned_cs_id: string | null;
   cs_notes: string | null;
@@ -262,6 +248,33 @@ export default async function ParticipantDetailPage({ params }: Props) {
       .select("id, region_id, name_en, name_cn")
       .in("id", Array.from(conflictPartnerIds));
     conflictPartners = (rows ?? []) as RelatedParticipant[];
+  }
+
+  // Suggested 组长 (migration 072). Service client with fixed fields —
+  // the leaders are usually outside a CS's assigned scope. Non-fatal: if
+  // the table is missing or the read fails, show no picks rather than
+  // breaking the page.
+  let suggestedLeaders: SuggestedLeader[] = [];
+  {
+    const svc = createSupabaseServiceClient();
+    const { data: links, error: linkErr } = await svc
+      .from("participant_suggested_leaders")
+      .select("leader_id, position")
+      .eq("participant_id", p.id)
+      .order("position");
+    if (!linkErr && links && links.length > 0) {
+      const ids = links.map((l) => l.leader_id as string);
+      const { data: leaderRows } = await svc
+        .from("participants")
+        .select("id, region_id, name_en, name_cn, zu_zhang_tier, zu_zhang_dimensions")
+        .in("id", ids);
+      const byId = new Map(
+        ((leaderRows ?? []) as SuggestedLeader[]).map((r) => [r.id, r]),
+      );
+      suggestedLeaders = ids
+        .map((id) => byId.get(id))
+        .filter((r): r is SuggestedLeader => Boolean(r));
+    }
   }
 
   const referrer = referrerRes.data as RelatedParticipant | null;
@@ -438,6 +451,11 @@ export default async function ParticipantDetailPage({ params }: Props) {
               programme_expires_at: p.programme_expires_at,
               upgrade_potential: p.upgrade_potential,
               has_special_contribution: p.has_special_contribution ?? false,
+              motivations: p.motivations ?? [],
+              motivation_other: p.motivation_other ?? null,
+              sells_products: p.sells_products ?? false,
+              goal_dimensions: p.goal_dimensions ?? [],
+              energy_profile: p.energy_profile ?? null,
             }}
           />
 
@@ -463,36 +481,14 @@ export default async function ParticipantDetailPage({ params }: Props) {
               interaction_notes: p.interaction_notes,
               course_needs: p.course_needs,
               suggested_group_leader_notes: p.suggested_group_leader_notes,
+              suggested_leaders: suggestedLeaders,
               recommended_courses: p.recommended_courses,
               forbidden_courses: p.forbidden_courses,
               cs_evaluation: p.cs_evaluation,
               personality: p.personality,
-              face_type: p.face_type,
               parameter_framework: p.parameter_framework,
               attended_courses: p.attended_courses ?? [],
               cs_notes: p.cs_notes,
-            }}
-          />
-
-          <EnrichmentEditor
-            participantId={p.id}
-            initial={{
-              motivation_tag: p.motivation_tag,
-              goal_dimensions: p.goal_dimensions ?? [],
-              energy_profile: p.energy_profile ?? null,
-            }}
-          />
-
-          <FaceReadingCard
-            participantId={p.id}
-            initial={{
-              front_photo_url: p.front_photo_url,
-              face_archetype: p.face_archetype,
-              face_archetype_suggested: p.face_archetype_suggested,
-              face_measurements: p.face_measurements,
-              face_skin_tone_override: p.face_skin_tone_override,
-              face_analyzed_at: p.face_analyzed_at,
-              face_analysis_error: p.face_analysis_error,
             }}
           />
 
@@ -517,17 +513,6 @@ export default async function ParticipantDetailPage({ params }: Props) {
             participantId={p.id}
             initialUrl={p.front_photo_url}
             initials={initials(p)}
-            consent={p.facial_recognition_consent}
-            initialEmbeddingState={
-              !p.facial_recognition_consent
-                ? "skipped_no_consent"
-                : p.face_embedding && p.face_embedding.length > 0
-                  ? "computed"
-                  : p.face_embedding_error
-                    ? "failed"
-                    : "idle"
-            }
-            initialEmbeddingDetail={p.face_embedding_error}
           />
 
           {isSuper ? (

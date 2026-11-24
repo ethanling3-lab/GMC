@@ -1,3 +1,4 @@
+import { MOTIVATIONS } from "@/lib/participants/motivations";
 import { z } from "zod";
 
 // Shared zod schemas for the broadcast API routes — kept in one place so
@@ -15,13 +16,7 @@ const LanguageFluencyZ = z.enum(["en", "cn", "both"]);
 
 const ChannelZ = z.enum(["whatsapp", "email"]);
 
-const MotivationZ = z.enum([
-  "clean",
-  "insurance",
-  "direct_sales",
-  "spiritual",
-  "other",
-]);
+const MotivationZ = z.enum(MOTIVATIONS);
 
 // Programme membership filter value — a programme SLUG (dynamic, from the
 // admin-managed programmes table). The 4 original tiers keep their slugs

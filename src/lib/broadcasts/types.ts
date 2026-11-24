@@ -4,9 +4,7 @@
 // composer + list/detail UI can import without dragging server symbols
 // through Turbopack's bundler boundary.
 
-import type {
-  MotivationTag,
-} from "@/lib/participants-query";
+import type { MotivationTag } from "@/lib/participants/motivations";
 
 export type BroadcastStatus =
   | "draft"

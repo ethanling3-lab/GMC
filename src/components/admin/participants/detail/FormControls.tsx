@@ -8,17 +8,28 @@ export function LabelRow({
   trailing,
   hint,
   children,
+  group = false,
 }: {
   label: string;
   labelZh?: string;
+  /**
+   * Render as a <div role="group"> instead of a <label>. Use for rows of
+   * buttons/chips: a <label> forwards its :active state to the FIRST
+   * button inside it, so pressing any chip made the first one "bounce".
+   */
+  group?: boolean;
   /** Optional inline trailing element (e.g. a "feeds groupBuilder" chip). */
   trailing?: ReactNode;
   /** Optional helper text displayed below the input. */
   hint?: ReactNode;
   children: ReactNode;
 }) {
+  const Wrapper = group ? "div" : "label";
   return (
-    <label className="flex flex-col gap-1.5">
+    <Wrapper
+      className="flex flex-col gap-1.5"
+      {...(group ? { role: "group", "aria-label": labelZh ? `${label} ${labelZh}` : label } : {})}
+    >
       <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
         {label}
         {labelZh ? (
@@ -34,7 +45,7 @@ export function LabelRow({
           {hint}
         </span>
       ) : null}
-    </label>
+    </Wrapper>
   );
 }
 

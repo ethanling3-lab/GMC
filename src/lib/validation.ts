@@ -108,10 +108,6 @@ export function buildRegistrationSchemaFor(
 
     prefill_token: z.string().max(200).optional(),
 
-    // M7.1c — opt-in for face-recognition check-in. Stored on the
-    // participant row; absence is treated as "no consent."
-    facial_recognition_consent: z.boolean().optional(),
-
     // Separate from registering: unticked means "not asked", never "yes".
     marketing_opt_in: z.boolean().optional(),
 

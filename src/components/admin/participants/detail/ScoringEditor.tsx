@@ -14,6 +14,11 @@ import { CardShell } from "./CardShell";
 import { ScoreBar } from "./ScoreBar";
 import { LabelRow, NumberInput, Toggle } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
+import {
+  AlgorithmSignalsEdit,
+  AlgorithmSignalsRead,
+  type AlgorithmSignalsData,
+} from "./AlgorithmSignals";
 
 // The active programmes (+ the participant's current one even if since
 // deactivated) passed from the server parent for the dropdown + display.
@@ -46,7 +51,22 @@ export type ScoringData = {
   // Migration 022 — moved here from ZuZhangProfileEditor since it's a
   // scoring-shaped signal (not a leader-role attribute).
   has_special_contribution: boolean;
-};
+} & AlgorithmSignalsData;
+
+// Sub-heading for the grouping-signals section inside this card.
+function SignalsHeading() {
+  return (
+    <div className="flex items-center gap-3 mb-5">
+      <span aria-hidden="true" className="h-px w-6 bg-[var(--cinnabar)]/70" />
+      <span className="text-[11px] tracking-[0.28em] uppercase text-[var(--cinnabar)] font-medium">
+        Grouping signals
+      </span>
+      <span className="text-[13px] font-display tracking-[-0.005em] text-[var(--ink)]">
+        分组信号
+      </span>
+    </div>
+  );
+}
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -132,6 +152,13 @@ export function ScoringEditor({
       programme_started_at: draft.programme_started_at,
       upgrade_potential: draft.upgrade_potential,
       has_special_contribution: draft.has_special_contribution,
+      motivations: draft.motivations,
+      motivation_other: draft.motivations.includes("other")
+        ? draft.motivation_other?.trim() || null
+        : null,
+      sells_products: draft.sells_products,
+      goal_dimensions: draft.goal_dimensions,
+      energy_profile: draft.energy_profile,
     });
     if (ok) setEditing(false);
   }
@@ -153,7 +180,7 @@ export function ScoringEditor({
     <CardShell
       eyebrow="Programme & Scoring"
       eyebrowZh="课程与评分"
-      title="Programme tier · financial / influence · qualification"
+      title="Programme tier · scores · grouping signals"
       editing={editing}
       saving={saving}
       error={error}
@@ -321,6 +348,20 @@ export function ScoringEditor({
               />
             </LabelRow>
           </div>
+
+          <div className="mt-6 pt-6 border-t border-[var(--paper-shadow)]">
+            <SignalsHeading />
+            <AlgorithmSignalsEdit
+              value={{
+                motivations: draft.motivations,
+                motivation_other: draft.motivation_other,
+                sells_products: draft.sells_products,
+                goal_dimensions: draft.goal_dimensions,
+                energy_profile: draft.energy_profile,
+              }}
+              onChange={(s) => setDraft({ ...draft, ...s })}
+            />
+          </div>
         </>
       ) : (
         <>
@@ -408,6 +449,19 @@ export function ScoringEditor({
               <span className="text-[var(--ink-mute)]">特殊贡献</span>
             </div>
           ) : null}
+
+          <div className="mt-6 pt-6 border-t border-[var(--paper-shadow)]">
+            <SignalsHeading />
+            <AlgorithmSignalsRead
+              value={{
+                motivations: initial.motivations,
+                motivation_other: initial.motivation_other,
+                sells_products: initial.sells_products,
+                goal_dimensions: initial.goal_dimensions,
+                energy_profile: initial.energy_profile,
+              }}
+            />
+          </div>
         </>
       )}
     </CardShell>

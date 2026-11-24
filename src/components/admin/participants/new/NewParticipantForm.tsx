@@ -15,10 +15,13 @@ import type { AdminOption } from "@/components/admin/participants/detail/Assignm
 import {
   GENDERS,
   LANGUAGES,
-  MOTIVATIONS,
   REGIONS,
 } from "@/lib/participant-import-schema";
-import type { MotivationTag } from "@/lib/participants-query";
+import {
+  MOTIVATIONS,
+  MOTIVATION_LABEL,
+  type MotivationTag,
+} from "@/lib/participants/motivations";
 
 type FormState = {
   region_id: string;
@@ -34,10 +37,10 @@ type FormState = {
   industry: string;
   financial_score: number | null;
   influence_score: number | null;
-  motivation_tag: MotivationTag | "";
+  main_motivation: MotivationTag | "";
+  sells_products: boolean;
   is_old_student: boolean;
   personality: string;
-  face_type: string;
   parameter_framework: string;
   cs_notes: string;
   assigned_region_lead_id: string;
@@ -58,10 +61,10 @@ const EMPTY: FormState = {
   industry: "",
   financial_score: null,
   influence_score: null,
-  motivation_tag: "",
+  main_motivation: "",
+  sells_products: false,
   is_old_student: false,
   personality: "",
-  face_type: "",
   parameter_framework: "",
   cs_notes: "",
   assigned_region_lead_id: "",
@@ -85,16 +88,9 @@ const GENDER_OPTIONS = GENDERS.map((g) => ({
 }));
 const LANGUAGE_OPTIONS = LANGUAGES.map((l) => ({ value: l, label: l }));
 
-const MOTIVATION_LABEL: Record<MotivationTag, string> = {
-  clean: "Clean · 纯粹",
-  insurance: "Insurance · 保险",
-  direct_sales: "Direct sales · 直销",
-  spiritual: "Spiritual · 灵性",
-  other: "Other · 其他",
-};
 const MOTIVATION_OPTIONS = MOTIVATIONS.map((m) => ({
   value: m,
-  label: MOTIVATION_LABEL[m],
+  label: `${MOTIVATION_LABEL[m].en} · ${MOTIVATION_LABEL[m].cn}`,
 }));
 
 const MAX_PHOTO_MB = 5;
@@ -179,10 +175,10 @@ export function NewParticipantForm({
       payload.industry = emptyToNull(form.industry);
       payload.financial_score = form.financial_score;
       payload.influence_score = form.influence_score;
-      payload.motivation_tag = form.motivation_tag || null;
+      payload.motivations = form.main_motivation ? [form.main_motivation] : [];
+      payload.sells_products = form.sells_products;
       payload.is_old_student = form.is_old_student;
       payload.personality = emptyToNull(form.personality);
-      payload.face_type = emptyToNull(form.face_type);
       payload.parameter_framework = emptyToNull(form.parameter_framework);
       payload.cs_notes = emptyToNull(form.cs_notes);
       payload.assigned_region_lead_id = form.assigned_region_lead_id || null;
@@ -426,16 +422,22 @@ export function NewParticipantForm({
       >
         <div className="flex flex-col gap-5">
           <div className="grid md:grid-cols-2 gap-x-8 gap-y-5">
-            <LabelRow label="Motivation" labelZh="动机">
+            <LabelRow label="Main reason for attending" labelZh="报名动机">
               <Select
-                value={form.motivation_tag || null}
+                value={form.main_motivation || null}
                 onChange={(v) =>
                   setField(
-                    "motivation_tag",
-                    (v ?? "") as FormState["motivation_tag"],
+                    "main_motivation",
+                    (v ?? "") as FormState["main_motivation"],
                   )
                 }
                 options={MOTIVATION_OPTIONS}
+              />
+            </LabelRow>
+            <LabelRow label="Caution: may recruit (insurance / direct sales / MLM)" labelZh="注意：可能拉保险/直销/传销">
+              <Toggle
+                value={form.sells_products}
+                onChange={(v) => setField("sells_products", v)}
               />
             </LabelRow>
             <LabelRow label="Old student" labelZh="老学员">
@@ -451,14 +453,6 @@ export function NewParticipantForm({
               value={form.personality}
               onChange={(v) => setField("personality", v)}
               placeholder="Observations on temperament, decision style, energy…"
-            />
-          </LabelRow>
-          <LabelRow label="Face type" labelZh="面相">
-            <Textarea
-              rows={3}
-              value={form.face_type}
-              onChange={(v) => setField("face_type", v)}
-              placeholder="Qualitative notes per Dr Wu's framework"
             />
           </LabelRow>
           <LabelRow label="Parameter framework" labelZh="参数体系">

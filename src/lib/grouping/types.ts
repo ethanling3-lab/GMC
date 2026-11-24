@@ -90,7 +90,9 @@ export type GroupingParticipant = {
   overall_score: number | null;
   influence_score: number | null;
   financial_score: number | null;
-  motivation_tag: string | null;
+  motivations: string[];
+  motivation_other: string | null;
+  sells_products: boolean;
   is_old_student: boolean;
   // Family link points at another participant's id (legacy single
   // edge — kept for back-compat during the transition to the multi-

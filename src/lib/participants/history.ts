@@ -42,6 +42,7 @@ export async function logParticipantChange(args: {
 const EVENT_LABEL: Record<string, string> = {
   "participant.family_links_changed": "Family links changed",
   "participant.conflict_pairs_changed": "Conflict pairs changed",
+  "participant.suggested_leaders_changed": "Suggested 组长 changed",
   "participant.face_embedding_computed": "Face match updated",
   "participant.face_embedding_failed": "Face match failed",
   "participant.facial_recognition_consent_changed": "Face recognition consent changed",

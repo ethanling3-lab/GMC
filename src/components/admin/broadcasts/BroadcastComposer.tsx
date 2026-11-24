@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  MOTIVATIONS as MOTIVATION_CODES,
+  MOTIVATION_LABEL,
+} from "@/lib/participants/motivations";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -55,13 +59,12 @@ const ENROLLMENT_STATUSES: Array<{ value: EnrollmentStatusForBroadcast; label_en
 
 const REGIONS = ["MY", "SG", "TW", "HK", "CN"] as const;
 
-const MOTIVATIONS: Array<{ value: string; label_en: string; label_cn: string }> = [
-  { value: "clean", label_en: "Clean", label_cn: "干净" },
-  { value: "insurance", label_en: "Insurance", label_cn: "保险" },
-  { value: "direct_sales", label_en: "Direct sales", label_cn: "直销" },
-  { value: "spiritual", label_en: "Spiritual", label_cn: "灵性" },
-  { value: "other", label_en: "Other", label_cn: "其他" },
-];
+const MOTIVATIONS: Array<{ value: string; label_en: string; label_cn: string }> =
+  MOTIVATION_CODES.map((m) => ({
+    value: m,
+    label_en: MOTIVATION_LABEL[m].en,
+    label_cn: MOTIVATION_LABEL[m].cn,
+  }));
 
 // When present, the composer edits an existing draft/scheduled broadcast
 // (PATCH) instead of creating a new one (POST). Populated by the edit page.

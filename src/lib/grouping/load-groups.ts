@@ -94,7 +94,9 @@ export type GroupBuilderMember = {
   effective_class: GroupClass;
 
   // Pass 1 detail-row fields.
-  motivation_tag: MotivationTag | null;
+  motivations: MotivationTag[];
+  motivation_other: string | null;
+  sells_products: boolean;
   has_special_contribution: boolean;
   times_led_groups: number;
   // Region IDs of family-link partners enrolled in the same event
@@ -259,7 +261,9 @@ type ParticipantRow = {
   zu_zhang_core_traits: string[] | null;
   goal_dimensions: GrowthDimension[] | null;
   student_qualification: StudentQualification | null;
-  motivation_tag: MotivationTag | null;
+  motivations: MotivationTag[] | null;
+  motivation_other: string | null;
+  sells_products: boolean | null;
   has_special_contribution: boolean | null;
   times_led_groups: number | null;
   family_of_participant_id: string | null;
@@ -358,7 +362,7 @@ export async function loadGroupBuilder(
          zu_zhang_tier, zu_zhang_grade,
          zu_zhang_dimensions, zu_zhang_core_traits,
          goal_dimensions, student_qualification,
-         motivation_tag, has_special_contribution, times_led_groups,
+         motivations, motivation_other, sells_products, has_special_contribution, times_led_groups,
          family_of_participant_id,
          energy_profile, language_fluency,
          phone, email`,
@@ -519,7 +523,9 @@ export async function loadGroupBuilder(
           qualification_override: p?.student_qualification ?? null,
           qualification_computed: computedQ,
           effective_class,
-          motivation_tag: p?.motivation_tag ?? null,
+          motivations: p?.motivations ?? [],
+          motivation_other: p?.motivation_other ?? null,
+          sells_products: p?.sells_products ?? false,
           has_special_contribution: p?.has_special_contribution ?? false,
           times_led_groups: p?.times_led_groups ?? 0,
           family_partner_region_ids: p ? partnerRegionIds(p.id) : [],
@@ -616,7 +622,7 @@ export async function loadGroupBuilder(
            zu_zhang_tier, zu_zhang_grade,
            zu_zhang_dimensions, zu_zhang_core_traits,
            goal_dimensions, student_qualification,
-           motivation_tag, has_special_contribution, times_led_groups,
+           motivations, motivation_other, sells_products, has_special_contribution, times_led_groups,
            family_of_participant_id,
            phone, email`,
         )

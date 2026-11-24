@@ -107,27 +107,7 @@ const PROGRAMME_TIERS = [
 
 const ENERGY_PROFILES = ["high", "medium", "quiet"] as const;
 const LANGUAGE_FLUENCIES = ["en", "cn", "both"] as const;
-const MOTIVATIONS = [
-  "clean",
-  "insurance",
-  "direct_sales",
-  "spiritual",
-  "other",
-] as const;
-
-type ZuZhangTier =
-  | "key_recruitment"
-  | "recruitment"
-  | "maintenance"
-  | "auxiliary";
-
-// Bilingual placeholder name pool — drawn round-robin so every dummy has
-// a readable name (helps QA spot families, leaders, etc.).
-const SURNAMES_CN = [
-  "陈","林","王","张","李","刘","黄","吴","蔡","郑",
-  "周","梁","朱","许","邱","谢","洪","曾","彭","萧",
-  "卓","施","孙","马","江","郭","胡","沈","邓","阮",
-];
+const MOTIVATIONS = ["networking", "spiritual", "business", "family", "other"] as const;
 const GIVENS_CN = [
   "明","志","伟","俊","建","国","俊杰","志强","佳琪",
   "美玲","秀英","丽华","淑芬","秀美","婷婷","嘉欣","雅琪",
@@ -222,7 +202,8 @@ type DummyRow = {
     | "excellence"
     | "strategic";
   upgrade_potential: "low" | "medium" | "high";
-  motivation_tag: (typeof MOTIVATIONS)[number];
+  motivations: (typeof MOTIVATIONS)[number][];
+  sells_products: boolean;
   goal_dimensions: string[];
   programme_tier: (typeof PROGRAMME_TIERS)[number];
   energy_profile: (typeof ENERGY_PROFILES)[number];
@@ -329,7 +310,8 @@ function buildDummies(): DummyRow[] {
         influence_score: inf,
         student_qualification: qualForCls,
         upgrade_potential: upgradePotential,
-        motivation_tag: pick(MOTIVATIONS),
+        motivations: [pick(MOTIVATIONS)],
+        sells_products: Math.random() < 0.15,
         goal_dimensions: pickN(DIMENSIONS, randInt(1, 3)),
         programme_tier: pick(PROGRAMME_TIERS),
         energy_profile: pick(ENERGY_PROFILES),
@@ -399,7 +381,8 @@ async function insertParticipants(
       influence_score: d.influence_score,
       student_qualification: d.student_qualification,
       upgrade_potential: d.upgrade_potential,
-      motivation_tag: d.motivation_tag,
+      motivations: d.motivations,
+      sells_products: d.sells_products,
       goal_dimensions: d.goal_dimensions,
       programme_tier: d.programme_tier,
       energy_profile: d.energy_profile,

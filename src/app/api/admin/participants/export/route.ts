@@ -33,7 +33,9 @@ type RawRow = {
   region: string | null;
   email: string | null;
   phone: string | null;
-  motivation_tag: string | null;
+  motivations: string[] | null;
+  motivation_other: string | null;
+  sells_products: boolean;
   financial_score: number | null;
   influence_score: number | null;
   student_qualification: StudentQualification | null;
@@ -47,7 +49,8 @@ type RawRow = {
   times_led_groups: number;
 };
 
-type ExportRow = Omit<RawRow, "zu_zhang_dimensions" | "goal_dimensions"> & {
+type ExportRow = Omit<RawRow, "zu_zhang_dimensions" | "goal_dimensions" | "motivations"> & {
+  motivations: string;
   qualification: StudentQualification | null;
   default_class: GroupClass;
   zu_zhang_dimensions: string;
@@ -61,7 +64,9 @@ const HEADER_TO_COLUMN: Readonly<Record<string, keyof ExportRow>> = {
   region: "region",
   email: "email",
   phone: "phone",
-  motivation_tag: "motivation_tag",
+  motivations: "motivations",
+  motivation_other: "motivation_other",
+  sells_products: "sells_products",
   financial_score: "financial_score",
   influence_score: "influence_score",
   qualification: "qualification",
@@ -118,7 +123,9 @@ export async function GET(req: Request) {
     "region",
     "email",
     "phone",
-    "motivation_tag",
+    "motivations",
+    "motivation_other",
+    "sells_products",
     "financial_score",
     "influence_score",
     "student_qualification",
@@ -167,6 +174,7 @@ export async function GET(req: Request) {
       default_class: cls,
       zu_zhang_dimensions: (r.zu_zhang_dimensions ?? []).join("|"),
       goal_dimensions: (r.goal_dimensions ?? []).join("|"),
+      motivations: (r.motivations ?? []).join("|"),
     };
   });
 
