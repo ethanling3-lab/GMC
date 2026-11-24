@@ -90,7 +90,8 @@ export default async function EventLogisticsPage({
     .map((e) => e.participant_id)
     .filter((id): id is string => Boolean(id));
   const inboxByParticipant: Record<string, string> = {};
-  if (participantIds.length > 0) {
+  // The inbox is Super Admin only, so customer service gets no thread links.
+  if (participantIds.length > 0 && admin.role === "super_admin") {
     const { data: convs } = await supabase
       .from("conversations")
       .select("id, participant_id, last_message_at")

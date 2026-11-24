@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/admin-guard";
 import { searchEligibleForCheckIn } from "@/lib/check-in/check-in-query";
 import { todayInEventTz } from "@/lib/check-in/day";
 import { isSession } from "@/lib/check-in/mode";
+import { forDeskRole } from "@/lib/check-in/redact";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,7 +37,7 @@ export async function GET(req: Request, { params }: RouteCtx) {
 
   try {
     const rows = await searchEligibleForCheckIn(eventId, q, todayInEventTz(), session);
-    return NextResponse.json({ rows });
+    return NextResponse.json({ rows: forDeskRole(admin.role, rows) });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     console.error("[check-in search]", msg);

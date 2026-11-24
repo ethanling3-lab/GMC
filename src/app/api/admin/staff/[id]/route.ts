@@ -60,12 +60,6 @@ export async function PATCH(
     if (!name_en && !name_cn) {
       return NextResponse.json({ error: "validation_error", detail: "Enter a name." }, { status: 400 });
     }
-    if (body.role === "regional_lead" && !region) {
-      return NextResponse.json(
-        { error: "validation_error", detail: "Choose a region for a regional lead." },
-        { status: 400 },
-      );
-    }
     if (isSelf && (body.role !== target.role || region !== target.region)) {
       return NextResponse.json(
         { error: "own_access", detail: "Another super admin must change your own role or region." },

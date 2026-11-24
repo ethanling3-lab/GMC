@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/admin-guard";
 import { loadCheckInPage } from "@/lib/check-in/check-in-query";
 import { eventDays, shortDate } from "@/lib/check-in/day";
 import { canRunEvent } from "@/lib/check-in/gate";
+import { forDeskRole } from "@/lib/check-in/redact";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 import { CheckInClient } from "@/components/admin/check-in/CheckInClient";
 import { ServiceWorkerRegister } from "@/components/admin/check-in/ServiceWorkerRegister";
@@ -56,8 +57,9 @@ export default async function EventCheckInPage({ params, searchParams }: PagePro
     searchParams,
   ]);
 
-  const data = await loadCheckInPage(id, dayParam ?? null, sessionParam ?? null);
-  if (!data) notFound();
+  const loaded = await loadCheckInPage(id, dayParam ?? null, sessionParam ?? null);
+  if (!loaded) notFound();
+  const data = forDeskRole(admin.role, loaded);
 
   const scheduled = eventDays(data.event.start_date, data.event.end_date);
   const eventDatesLabel =

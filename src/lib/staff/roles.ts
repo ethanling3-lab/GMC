@@ -8,12 +8,6 @@ export const STAFF_ROLES = [
     description: "Full access, including events, finance and staff.",
   },
   {
-    value: "regional_lead",
-    label: "Regional lead",
-    labelZh: "区域负责人",
-    description: "Manages participants in their region and runs Logistics.",
-  },
-  {
     value: "customer_service",
     label: "Customer service",
     labelZh: "客服",
@@ -24,12 +18,6 @@ export const STAFF_ROLES = [
     label: "Finance",
     labelZh: "财务",
     description: "Handles payments and finance records.",
-  },
-  {
-    value: "instructor",
-    label: "Instructor",
-    labelZh: "讲师",
-    description: "Views participants and event information.",
   },
 ] as const;
 

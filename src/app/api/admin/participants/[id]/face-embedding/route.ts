@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
-import { createSupabaseServiceClient } from "@/lib/supabase";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceClient,
+} from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
+import { applyRoleScope } from "@/lib/participants-query";
 import { EMBEDDING_LEN } from "@/lib/face-recognition/types";
 
 // POST /api/admin/participants/[id]/face-embedding
@@ -60,6 +64,16 @@ export async function POST(req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const { id } = await params;
+
+  // Customer service can only refresh this for their assigned participants.
+  const scopedClient = await createSupabaseServerClient();
+  const { data: scoped } = await applyRoleScope(
+    scopedClient.from("participants").select("id").eq("id", id),
+    admin.role,
+    admin.id,
+    admin.region,
+  ).maybeSingle();
+  if (!scoped) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
   let parsed: z.infer<typeof Body>;
   try {

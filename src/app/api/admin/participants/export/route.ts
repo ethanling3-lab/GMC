@@ -33,7 +33,6 @@ type RawRow = {
   region: string | null;
   email: string | null;
   phone: string | null;
-  status: string;
   motivation_tag: string | null;
   financial_score: number | null;
   influence_score: number | null;
@@ -62,7 +61,6 @@ const HEADER_TO_COLUMN: Readonly<Record<string, keyof ExportRow>> = {
   region: "region",
   email: "email",
   phone: "phone",
-  status: "status",
   motivation_tag: "motivation_tag",
   financial_score: "financial_score",
   influence_score: "influence_score",
@@ -120,7 +118,6 @@ export async function GET(req: Request) {
     "region",
     "email",
     "phone",
-    "status",
     "motivation_tag",
     "financial_score",
     "influence_score",

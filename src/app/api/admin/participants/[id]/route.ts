@@ -7,16 +7,24 @@ import { requireAdmin } from "@/lib/admin-guard";
 import { applyRoleScope } from "@/lib/participants-query";
 import {
   ParticipantUpdateSchema,
-  SCOPED_ALLOWED_FIELDS,
   type ParticipantUpdate,
 } from "@/lib/participant-update-schema";
 import { writeAuditLog } from "@/lib/audit";
+import { logParticipantChange } from "@/lib/participants/history";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type RouteCtx = { params: Promise<{ id: string }> };
+
+// Customer service can edit every profile field on their assigned people,
+// except who the person is assigned to and their biometric consent.
+const SUPER_ADMIN_ONLY_FIELDS = new Set<string>([
+  "assigned_region_lead_id",
+  "assigned_cs_id",
+  "facial_recognition_consent",
+]);
 
 function addMonths(iso: string, months: number): string {
   const d = new Date(iso);
@@ -39,9 +47,11 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
 
   // Restrict fields for non-super-admin roles
   if (admin.role !== "super_admin") {
-    const allowed = new Set<string>(SCOPED_ALLOWED_FIELDS);
+    if (admin.role !== "customer_service") {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
     for (const key of Object.keys(patch)) {
-      if (!allowed.has(key)) {
+      if (SUPER_ADMIN_ONLY_FIELDS.has(key)) {
         return NextResponse.json(
           {
             error: `Field not editable by your role: ${key}`,
@@ -141,6 +151,15 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
 
   let data: { id: string; updated_at: string } | null = null;
   if (Object.keys(columnPatch).length > 0) {
+    // Read the old values first so the edit history can show what changed.
+    const { data: beforeRow, error: beforeErr } = await service
+      .from("participants")
+      .select(Object.keys(columnPatch).join(", "))
+      .eq("id", id)
+      .maybeSingle();
+    if (beforeErr) {
+      return NextResponse.json({ error: beforeErr.message }, { status: 500 });
+    }
     const res = await service
       .from("participants")
       .update(columnPatch)
@@ -165,6 +184,12 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     data = res.data as { id: string; updated_at: string } | null;
+    await logParticipantChange({
+      actorId: admin.id,
+      participantId: id,
+      before: (beforeRow ?? {}) as unknown as Record<string, unknown>,
+      after: columnPatch,
+    });
   }
 
   // Family-link reconciliation. The client sends the FULL desired set

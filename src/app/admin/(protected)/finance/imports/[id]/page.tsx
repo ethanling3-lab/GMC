@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { TransactionRow, type TxnRow } from "@/components/admin/finance/TransactionRow";
 
@@ -37,7 +37,8 @@ export default async function ImportReviewPage({ params, searchParams }: PagePro
     ? (statusParam as StatusCode)
     : "all";
 
-  const supabase = await createSupabaseServerClient();
+  // Role checked above. Participant fields below are limited to name and ID.
+  const supabase = createSupabaseServiceClient();
 
   const { data: imp, error: impErr } = await supabase
     .from("bank_imports")

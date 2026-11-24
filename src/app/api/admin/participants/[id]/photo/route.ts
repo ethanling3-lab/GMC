@@ -5,6 +5,7 @@ import {
 } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { applyRoleScope } from "@/lib/participants-query";
+import { logParticipantChange } from "@/lib/participants/history";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,7 +29,10 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const supabase = await createSupabaseServerClient();
 
   // Scoped check
-  let scopeCheck = supabase.from("participants").select("id, region_id").eq("id", id);
+  let scopeCheck = supabase
+    .from("participants")
+    .select("id, region_id, front_photo_url")
+    .eq("id", id);
   scopeCheck = applyRoleScope(scopeCheck, admin.role, admin.id, admin.region);
   const { data: scoped, error: scopeErr } = await scopeCheck.maybeSingle();
   if (scopeErr || !scoped) {
@@ -46,14 +50,22 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const form = await req.formData();
   const action = String(form.get("action") ?? "upload");
 
+  const previousPhoto = (scoped as { front_photo_url: string | null }).front_photo_url;
+
   if (action === "remove") {
-    const { error } = await supabase
+    const { error } = await createSupabaseServiceClient()
       .from("participants")
       .update({ front_photo_url: null })
       .eq("id", id);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    await logParticipantChange({
+      actorId: admin.id,
+      participantId: id,
+      before: { front_photo_url: previousPhoto },
+      after: { front_photo_url: null },
+    });
     return NextResponse.json({ ok: true, url: null });
   }
 
@@ -103,7 +115,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const { data: publicData } = service.storage.from(BUCKET).getPublicUrl(path);
   const publicUrl = publicData?.publicUrl ?? null;
 
-  const { error: updateErr } = await supabase
+  const { error: updateErr } = await service
     .from("participants")
     .update({ front_photo_url: publicUrl })
     .eq("id", id);
@@ -111,6 +123,13 @@ export async function POST(req: Request, { params }: RouteCtx) {
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });
   }
+
+  await logParticipantChange({
+    actorId: admin.id,
+    participantId: id,
+    before: { front_photo_url: previousPhoto },
+    after: { front_photo_url: publicUrl },
+  });
 
   return NextResponse.json({ ok: true, url: publicUrl });
 }

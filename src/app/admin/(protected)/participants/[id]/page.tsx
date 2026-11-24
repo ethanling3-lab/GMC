@@ -1,12 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceClient,
+} from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
   applyRoleScope,
   type MotivationTag,
 } from "@/lib/participants-query";
+import { loadParticipantHistory } from "@/lib/participants/history";
+import { ParticipantHistory } from "@/components/admin/participants/detail/ParticipantHistory";
 import { IdentityEditor } from "@/components/admin/participants/detail/IdentityEditor";
 import { ProfileEditor } from "@/components/admin/participants/detail/ProfileEditor";
 import type { AttendedCourse } from "@/components/admin/participants/detail/ProfileEditor";
@@ -172,6 +177,12 @@ export default async function ParticipantDetailPage({ params }: Props) {
 
   if (error || !data) notFound();
   const p = data as Participant;
+  const isSuper = admin.role === "super_admin";
+
+  // Access to this person is confirmed above. Linked people load by name only,
+  // through the server, so customer service can see and safely save the links
+  // even when the relative is not assigned to them.
+  const relatedClient = isSuper ? supabase : createSupabaseServiceClient();
 
   // Fetch related entities + admin options in parallel
   const [
@@ -182,22 +193,22 @@ export default async function ParticipantDetailPage({ params }: Props) {
     regionLeadsRes,
     csRes,
   ] = await Promise.all([
-    supabase
+    relatedClient
       .from("participant_family_links")
       .select("a_id, b_id")
       .or(`a_id.eq.${p.id},b_id.eq.${p.id}`),
-    supabase
+    relatedClient
       .from("participant_conflict_pairs")
       .select("a_id, b_id")
       .or(`a_id.eq.${p.id},b_id.eq.${p.id}`),
     p.referrer_id
-      ? supabase
+      ? relatedClient
           .from("participants")
           .select("id, region_id, name_en, name_cn")
           .eq("id", p.referrer_id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
-    supabase
+    relatedClient
       .from("participants")
       .select("id, region_id, name_en, name_cn")
       .eq("referrer_id", p.id)
@@ -229,7 +240,7 @@ export default async function ParticipantDetailPage({ params }: Props) {
   }
   let familyMembers: RelatedParticipant[] = [];
   if (partnerIds.size > 0) {
-    const { data: rows } = await supabase
+    const { data: rows } = await relatedClient
       .from("participants")
       .select("id, region_id, name_en, name_cn")
       .in("id", Array.from(partnerIds));
@@ -246,7 +257,7 @@ export default async function ParticipantDetailPage({ params }: Props) {
   }
   let conflictPartners: RelatedParticipant[] = [];
   if (conflictPartnerIds.size > 0) {
-    const { data: rows } = await supabase
+    const { data: rows } = await relatedClient
       .from("participants")
       .select("id, region_id, name_en, name_cn")
       .in("id", Array.from(conflictPartnerIds));
@@ -269,9 +280,10 @@ export default async function ParticipantDetailPage({ params }: Props) {
 
   // Programmes for the ScoringEditor dropdown: active list + the participant's
   // current programme (even if since deactivated) so it stays selectable/shown.
-  const [activeProgrammes, programmeMap] = await Promise.all([
+  const [activeProgrammes, programmeMap, history] = await Promise.all([
     loadActiveProgrammes(),
     loadProgrammeMap(),
+    loadParticipantHistory(p.id),
   ]);
   const toOption = (pr: {
     id: string;
@@ -495,6 +507,8 @@ export default async function ParticipantDetailPage({ params }: Props) {
               conflict_partners: conflictPartners,
             }}
           />
+
+          <ParticipantHistory entries={history} />
         </div>
 
         {/* ASIDE */}
@@ -516,15 +530,17 @@ export default async function ParticipantDetailPage({ params }: Props) {
             initialEmbeddingDetail={p.face_embedding_error}
           />
 
-          <AssignmentEditor
-            participantId={p.id}
-            initial={{
-              assigned_region_lead_id: p.assigned_region_lead_id,
-              assigned_cs_id: p.assigned_cs_id,
-            }}
-            regionLeads={regionLeads}
-            customerService={customerService}
-          />
+          {isSuper ? (
+            <AssignmentEditor
+              participantId={p.id}
+              initial={{
+                assigned_region_lead_id: p.assigned_region_lead_id,
+                assigned_cs_id: p.assigned_cs_id,
+              }}
+              regionLeads={regionLeads}
+              customerService={customerService}
+            />
+          ) : null}
 
           <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--paper-shadow)] bg-[var(--paper)]/60 px-5 py-4">
             <div className="text-[10px] tracking-[0.24em] uppercase text-[var(--ink-faint)]">
@@ -554,12 +570,14 @@ export default async function ParticipantDetailPage({ params }: Props) {
             </dl>
           </div>
 
-          <ActionsCard
-            participantId={p.id}
-            regionIdDisplay={p.region_id}
-            archivedAt={p.archived_at}
-            canDelete={admin.role === "super_admin"}
-          />
+          {isSuper ? (
+            <ActionsCard
+              participantId={p.id}
+              regionIdDisplay={p.region_id}
+              archivedAt={p.archived_at}
+              canDelete
+            />
+          ) : null}
         </aside>
       </div>
     </div>

@@ -43,6 +43,7 @@ type Props = {
   activeCount: number;
   totalCount: number | null;
   initialArchived?: ArchivedMode;
+  canExport: boolean;
 };
 
 export function FiltersBar({
@@ -50,6 +51,7 @@ export function FiltersBar({
   activeCount,
   totalCount,
   initialArchived = "active",
+  canExport,
 }: Props) {
   const router = useRouter();
   const sp = useSearchParams();
@@ -244,23 +246,25 @@ export function FiltersBar({
               Reset
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="inline-flex items-center gap-2 h-9 px-3.5 rounded-[var(--radius-pill)]
-                       border border-[var(--paper-shadow)] bg-[var(--paper)]
-                       text-[12px] tracking-[0.04em] text-[var(--ink)]
-                       hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
-                       focus-visible:shadow-[var(--shadow-focus)]
-                       transition-[background-color,color,border-color] duration-[var(--dur-fast)]"
-            aria-label="Export current view as CSV"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M6 1.5v6M3.5 5L6 7.5 8.5 5" />
-              <path d="M2 9.5v0.5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-0.5" />
-            </svg>
-            Export CSV
-          </button>
+          {canExport ? (
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="inline-flex items-center gap-2 h-9 px-3.5 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,color,border-color] duration-[var(--dur-fast)]"
+              aria-label="Export current view as CSV"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 1.5v6M3.5 5L6 7.5 8.5 5" />
+                <path d="M2 9.5v0.5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-0.5" />
+              </svg>
+              Export CSV
+            </button>
+          ) : null}
         </div>
       </div>
 

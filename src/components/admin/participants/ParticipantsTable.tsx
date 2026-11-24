@@ -258,6 +258,8 @@ export function ParticipantsTable({
 
   const count = selected.size;
   const canDelete = adminRole === "super_admin";
+  // Bulk archive, assignment and export are Super Admin only.
+  const canBulk = adminRole === "super_admin";
 
   return (
     <div
@@ -265,7 +267,7 @@ export function ParticipantsTable({
                  shadow-[var(--shadow-paper-1)] overflow-hidden"
     >
       {/* Bulk action bar */}
-      {count > 0 ? (
+      {canBulk && count > 0 ? (
         <div
           ref={menuRef}
           className="relative flex flex-wrap items-center gap-2 px-5 py-3 border-b border-[var(--paper-shadow)] bg-[var(--cinnabar-wash)]/60"
@@ -366,17 +368,19 @@ export function ParticipantsTable({
         <table className="w-full text-left text-[13px] text-[var(--ink-soft)]">
           <thead className="bg-[var(--paper-deep)]/70 text-[9px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
             <tr>
-              <th scope="col" className="w-10 pl-5 pr-2 py-3.5">
-                <input
-                  ref={headerCheckboxRef}
-                  type="checkbox"
-                  checked={allOnPage}
-                  onChange={toggleAll}
-                  disabled={rows.length === 0}
-                  aria-label="Select all on page"
-                  className="w-3.5 h-3.5 accent-[var(--cinnabar)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
-                />
-              </th>
+              {canBulk ? (
+                <th scope="col" className="w-10 pl-5 pr-2 py-3.5">
+                  <input
+                    ref={headerCheckboxRef}
+                    type="checkbox"
+                    checked={allOnPage}
+                    onChange={toggleAll}
+                    disabled={rows.length === 0}
+                    aria-label="Select all on page"
+                    className="w-3.5 h-3.5 accent-[var(--cinnabar)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                  />
+                </th>
+              ) : null}
               <th scope="col" className="px-5 py-3.5 font-medium">Student ID</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Name</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Region</th>
@@ -389,7 +393,7 @@ export function ParticipantsTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-16 text-center">
+                <td colSpan={canBulk ? 8 : 7} className="px-6 py-16 text-center">
                   <div className="inline-flex flex-col items-center gap-3">
                     <span
                       className="inline-flex items-center justify-center w-10 h-10 rounded-full
@@ -429,15 +433,17 @@ export function ParticipantsTable({
                                ${isArchived ? "opacity-70" : ""}
                                ${isSelected ? "bg-[var(--cinnabar-wash)]/40" : ""}`}
                   >
-                    <td className="w-10 pl-5 pr-2 py-3.5">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleRow(r.id)}
-                        aria-label={`Select ${combinedName(r)}`}
-                        className="w-3.5 h-3.5 accent-[var(--cinnabar)] cursor-pointer"
-                      />
-                    </td>
+                    {canBulk ? (
+                      <td className="w-10 pl-5 pr-2 py-3.5">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleRow(r.id)}
+                          aria-label={`Select ${combinedName(r)}`}
+                          className="w-3.5 h-3.5 accent-[var(--cinnabar)] cursor-pointer"
+                        />
+                      </td>
+                    ) : null}
                     <td className="px-5 py-3.5 font-mono text-[12px] text-[var(--ink)] whitespace-nowrap">
                       <Link
                         href={`/admin/participants/${r.id}`}

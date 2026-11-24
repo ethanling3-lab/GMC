@@ -12,6 +12,7 @@ import { loadDaySnapshot, loadStats } from "@/lib/check-in/check-in-query";
 import { isIsoDay, todayInEventTz } from "@/lib/check-in/day";
 import { resolveDeskContext } from "@/lib/check-in/gate";
 import { CHECK_IN_MODES, isSession } from "@/lib/check-in/mode";
+import { forDeskRole } from "@/lib/check-in/redact";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -66,8 +67,9 @@ const ALLOWED_ROLES = new Set([
   "instructor",
 ]);
 
-function checkInResponse(result: CheckInResult) {
-  if (result.ok) return NextResponse.json(result);
+function checkInResponse(role: string, result: CheckInResult) {
+  const body = forDeskRole(role, result);
+  if (result.ok) return NextResponse.json(body);
   const status =
     result.error === "not_found"
       ? 404
@@ -76,7 +78,7 @@ function checkInResponse(result: CheckInResult) {
         : result.error === "unpaid"
           ? 402
           : 400;
-  return NextResponse.json(result, { status });
+  return NextResponse.json(body, { status });
 }
 
 export async function POST(req: Request, { params }: RouteCtx) {
@@ -129,9 +131,9 @@ export async function POST(req: Request, { params }: RouteCtx) {
       });
       if (!result.ok) {
         const status = result.error === "not_found" ? 404 : 400;
-        return NextResponse.json({ kind: "class", ...result }, { status });
+        return NextResponse.json(forDeskRole(admin.role, { kind: "class", ...result }), { status });
       }
-      return NextResponse.json({ kind: "class", ...result });
+      return NextResponse.json(forDeskRole(admin.role, { kind: "class", ...result }));
     }
 
     const checkInArgs = {
@@ -153,14 +155,14 @@ export async function POST(req: Request, { params }: RouteCtx) {
       if (scanned.type === "class") {
         if (!scanned.result.ok) {
           const status = scanned.result.error === "not_found" ? 404 : 400;
-          return NextResponse.json({ kind: "class", ...scanned.result }, { status });
+          return NextResponse.json(forDeskRole(admin.role, { kind: "class", ...scanned.result }), { status });
         }
-        return NextResponse.json({ kind: "class", ...scanned.result });
+        return NextResponse.json(forDeskRole(admin.role, { kind: "class", ...scanned.result }));
       }
-      return checkInResponse(scanned.result);
+      return checkInResponse(admin.role, scanned.result);
     }
 
-    return checkInResponse(await performCheckIn(checkInArgs));
+    return checkInResponse(admin.role, await performCheckIn(checkInArgs));
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     console.error("[check-in POST]", msg);
@@ -227,7 +229,9 @@ export async function GET(req: Request, { params }: RouteCtx) {
 
   try {
     if (url.searchParams.get("view") === "day") {
-      return NextResponse.json(await loadDaySnapshot(eventId, day, session));
+      return NextResponse.json(
+        forDeskRole(admin.role, await loadDaySnapshot(eventId, day, session)),
+      );
     }
     return NextResponse.json({ stats: await loadStats(eventId, day, session) });
   } catch (err) {

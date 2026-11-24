@@ -5,6 +5,7 @@ import {
 } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { applyRoleScope } from "@/lib/participants-query";
+import { logParticipantChange } from "@/lib/participants/history";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,16 +39,22 @@ export async function POST(req: Request, { params }: RouteCtx) {
 
   // Service client for the actual write (bypasses RLS).
   const service = createSupabaseServiceClient();
+  const archivedAt = action === "archive" ? new Date().toISOString() : null;
   const { error } = await service
     .from("participants")
-    .update({
-      archived_at: action === "archive" ? new Date().toISOString() : null,
-    })
+    .update({ archived_at: archivedAt })
     .eq("id", id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  await logParticipantChange({
+    actorId: admin.id,
+    participantId: id,
+    before: { archived_at: (current as { archived_at: string | null }).archived_at },
+    after: { archived_at: archivedAt },
+  });
 
   return NextResponse.json({ ok: true, action });
 }

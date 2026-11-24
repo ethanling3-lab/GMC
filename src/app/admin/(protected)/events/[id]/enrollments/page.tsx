@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceClient,
+} from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
   EnrollmentsTable,
@@ -42,7 +45,12 @@ export default async function EventEnrollmentsPage({
   const qRaw = typeof sp.q === "string" ? sp.q.trim() : "";
   const q = qRaw.slice(0, 120);
 
-  const supabase = await createSupabaseServerClient();
+  // Finance reads through the server with a fixed list of contact and payment
+  // fields, so scores, personal details and form answers never reach the page.
+  const isFinance = admin.role === "finance";
+  const supabase = isFinance
+    ? createSupabaseServiceClient()
+    : await createSupabaseServerClient();
 
   let event:
     | {
@@ -109,10 +117,13 @@ export default async function EventEnrollmentsPage({
   // Participant join includes referrer free-text columns (migration 009) +
   // is_old_student so we can render the referrer pill and OLD chip inline.
   // If 009 hasn't been applied yet, the select falls back to the legacy set.
-  const participantFull =
-    "id, region_id, name_en, name_cn, region, email, phone, language_fluency, is_old_student, referrer_id, referrer_name, referrer_contact, zu_zhang_tier";
-  const participantLegacy =
-    "id, region_id, name_en, name_cn, region, email, phone, language_fluency, is_old_student, referrer_id";
+  const financeParticipant = "id, region_id, name_en, name_cn, region, email, phone";
+  const participantFull = isFinance
+    ? financeParticipant
+    : "id, region_id, name_en, name_cn, region, email, phone, language_fluency, is_old_student, referrer_id, referrer_name, referrer_contact, zu_zhang_tier";
+  const participantLegacy = isFinance
+    ? financeParticipant
+    : "id, region_id, name_en, name_cn, region, email, phone, language_fluency, is_old_student, referrer_id";
   // Enrolment selects come in four shapes (cross-product of: form_answers
   // shipped in 008, transfer_slip_* shipped in 011). Older databases
   // gracefully fall back via the attempt ladder below. Post-022 we also
@@ -166,7 +177,12 @@ export default async function EventEnrollmentsPage({
       const rows = (res.data ?? []) as Array<Record<string, unknown>>;
       enrollments = rows.map((r) => {
         const next: Record<string, unknown> = { ...r };
-        if (attempt.stripForm) next.form_answers = {};
+        if (attempt.stripForm || isFinance) next.form_answers = {};
+        if (isFinance) {
+          next.pinned_group_no = null;
+          next.serving_as_zu_zhang = null;
+          next.zu_zhang_tier_for_event = null;
+        }
         if (attempt.stripSlip) {
           next.transfer_slip_url = null;
           next.transfer_slip_uploaded_at = null;
@@ -414,7 +430,8 @@ export default async function EventEnrollmentsPage({
         rows={rows}
         canEdit={admin.role === "super_admin"}
         hasFilter={statusFilter !== null || q.length > 0}
-        formSchema={event.form_schema ?? {}}
+        linkParticipants={!isFinance}
+        formSchema={isFinance ? {} : (event.form_schema ?? {})}
         priceTiers={event.price_tiers ?? []}
         referrerById={referrerById}
         latestNotificationByEnrollment={latestNotificationByEnrollment}

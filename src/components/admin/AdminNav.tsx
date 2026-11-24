@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { canOpenPage } from "@/lib/staff/permissions";
 
 type NavItem = {
   href: string;
@@ -8,7 +9,6 @@ type NavItem = {
   labelZh: string;
   icon: IconName;
   soon?: boolean;
-  superAdminOnly?: boolean;
 };
 
 type IconName =
@@ -34,7 +34,7 @@ const PRIMARY: NavItem[] = [
   { href: "/admin/group-reports", label: "Group reports", labelZh: "小组报告", icon: "reports" },
   { href: "/admin/programmes", label: "Programmes", labelZh: "课程", icon: "programmes" },
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance" },
-  { href: "/admin/staff", label: "Staff", labelZh: "员工", icon: "staff", superAdminOnly: true },
+  { href: "/admin/staff", label: "Staff", labelZh: "员工", icon: "staff" },
 ];
 
 // Active detection compares each nav href against the active route segment.
@@ -269,7 +269,7 @@ export function AdminNav({
           />
         )}
         <ul className="space-y-0.5">
-          {PRIMARY.filter((item) => !item.superAdminOnly || role === "super_admin").map((item) => (
+          {PRIMARY.filter((item) => canOpenPage(role, item.href)).map((item) => (
             <li key={item.href}>
               <Item
                 item={item}

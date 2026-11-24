@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceClient,
+} from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import type { EnrollmentStatus } from "@/lib/enrollments-shared";
 
@@ -60,7 +63,10 @@ type EnrollmentExportRow = {
 };
 
 export async function GET(req: Request, { params }: RouteCtx) {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  if (admin.role !== "super_admin" && admin.role !== "finance") {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
   const { id: eventId } = await params;
 
   const url = new URL(req.url);
@@ -71,7 +77,11 @@ export async function GET(req: Request, { params }: RouteCtx) {
       : null;
   const q = url.searchParams.get("q")?.trim() || "";
 
-  const supabase = await createSupabaseServerClient();
+  // This export only contains contact and payment columns.
+  const supabase =
+    admin.role === "finance"
+      ? createSupabaseServiceClient()
+      : await createSupabaseServerClient();
 
   // Load the event for a tidy filename + to confirm the id exists.
   const { data: event, error: eventErr } = await supabase

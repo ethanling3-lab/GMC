@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireFinanceAdmin } from "@/lib/finance/role-guard";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ results: [] });
   }
 
-  const supabase = await createSupabaseServerClient();
+  // Role checked above. Every select below is a fixed contact/payment list.
+  const supabase = createSupabaseServiceClient();
   const needle = `%${q.replace(/[%_]/g, "\\$&")}%`;
 
   const { data: pRows, error: pErr } = await supabase

@@ -65,7 +65,13 @@ function useCrumbs(
   }, [pathname, overrides]);
 }
 
-export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
+export function TopBar({
+  onOpenNav,
+  showNotifications,
+}: {
+  onOpenNav?: () => void;
+  showNotifications: boolean;
+}) {
   const pathname = usePathname() ?? "/admin";
   const labelOverrides = useBreadcrumbLabels();
   const crumbs = useCrumbs(pathname, labelOverrides);
@@ -272,7 +278,7 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
       </button>
 
       {/* Notifications — real, backed by admin_notifications (migration 054) */}
-      <NotificationBell />
+      {showNotifications ? <NotificationBell /> : null}
 
       <Separator />
 

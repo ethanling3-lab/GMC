@@ -105,6 +105,8 @@ type Props = {
   eventId: string;
   rows: EnrollmentRow[];
   canEdit: boolean;
+  /** Off for Finance, who can't open full participant profiles. */
+  linkParticipants?: boolean;
   hasFilter: boolean;
   formSchema: unknown;
   /** Event's tiered-pricing rows (migration 042). Empty = single-price event. */
@@ -270,6 +272,7 @@ export function EnrollmentsTable({
   eventId,
   rows,
   canEdit,
+  linkParticipants = true,
   hasFilter,
   formSchema,
   priceTiers = [],
@@ -880,12 +883,18 @@ export function EnrollmentsTable({
                       {p ? (
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <Link
-                              href={`/admin/participants/${p.id}`}
-                              className="text-[var(--ink)] font-medium hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
-                            >
-                              {participantName(p)}
-                            </Link>
+                            {linkParticipants ? (
+                              <Link
+                                href={`/admin/participants/${p.id}`}
+                                className="text-[var(--ink)] font-medium hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
+                              >
+                                {participantName(p)}
+                              </Link>
+                            ) : (
+                              <span className="text-[var(--ink)] font-medium">
+                                {participantName(p)}
+                              </span>
+                            )}
                             {p.is_old_student ? <OldChipInline /> : null}
                             <DeliveryDot
                               latest={latestNotificationByEnrollment[r.id]}

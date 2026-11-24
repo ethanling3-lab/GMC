@@ -27,10 +27,6 @@ const Body = z
   .refine((b) => Boolean(b.name_en || b.name_cn), {
     message: "Enter a name.",
     path: ["name_en"],
-  })
-  .refine((b) => b.role !== "regional_lead" || Boolean(b.region), {
-    message: "Choose a region for a regional lead.",
-    path: ["region"],
   });
 
 export async function POST(req: Request) {

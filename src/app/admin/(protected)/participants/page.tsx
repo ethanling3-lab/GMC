@@ -87,6 +87,8 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          {admin.role === "super_admin" ? (
+          <>
           <Link
             href="/admin/participants/new"
             className="inline-flex items-center gap-2 h-10 px-4 rounded-[var(--radius-pill)]
@@ -137,6 +139,8 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
             </svg>
             AI Import
           </Link>
+          </>
+          ) : null}
 
           <div
             className="rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)]
@@ -158,6 +162,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         activeCount={total}
         totalCount={scopeTotal ?? null}
         initialArchived={filters.archived ?? "active"}
+        canExport={admin.role === "super_admin"}
       />
 
       <ParticipantsTable

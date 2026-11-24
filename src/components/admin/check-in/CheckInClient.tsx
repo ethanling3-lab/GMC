@@ -305,16 +305,18 @@ export function CheckInClient({
           );
         })}
       </div>
-        <a
-          href={`/api/admin/events/${eventId}/check-in/export.xlsx?day=${day}`}
-          className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[var(--radius-pill)] bg-[var(--paper)] border border-[var(--paper-shadow)] text-[12.5px] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)] active:translate-y-px focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[border-color,color,transform] duration-[var(--dur-fast)]"
-          style={{ color: "var(--ink-soft)" }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
-          </svg>
-          Export Excel · 导出
-        </a>
+        {canRun ? (
+          <a
+            href={`/api/admin/events/${eventId}/check-in/export.xlsx?day=${day}`}
+            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-[var(--radius-pill)] bg-[var(--paper)] border border-[var(--paper-shadow)] text-[12.5px] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)] active:translate-y-px focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)] transition-[border-color,color,transform] duration-[var(--dur-fast)]"
+            style={{ color: "var(--ink-soft)" }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
+            </svg>
+            Export Excel · 导出
+          </a>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-6 items-start">

@@ -379,8 +379,8 @@ function StaffDialog({
           <span className="mt-1 block text-[11.5px] leading-[1.5] text-[var(--ink-mute)]">{role?.description}</span>
         </label>
         <label className="text-[12px] text-[var(--ink-soft)]">
-          Region{form.role === "regional_lead" ? " (required)" : " (optional)"}
-          <select value={form.region} disabled={isSelf} required={form.role === "regional_lead"} onChange={(e) => set("region", e.target.value)} className={inputClass}>
+          Region (optional)
+          <select value={form.region} disabled={isSelf} onChange={(e) => set("region", e.target.value)} className={inputClass}>
             <option value="">No region</option>
             {STAFF_REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase";
+import { createSupabaseServiceClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
   loadFinanceOverview,
@@ -19,7 +19,8 @@ export default async function FinanceDashboardPage() {
     redirect("/admin");
   }
 
-  const supabase = await createSupabaseServerClient();
+  // Role checked above. The overview only reads payment totals.
+  const supabase = createSupabaseServiceClient();
   const overview = await loadFinanceOverview(supabase);
 
   const currencies = Array.from(

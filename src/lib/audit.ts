@@ -106,6 +106,7 @@ export type AuditAction =
   | "seating.auto_placed"
   | "seating.swapped"
   | "groups.class_changed"
+  | "participant.fields_changed"
   | "participant.zu_zhang_tier_changed"
   | "participant.zu_zhang_grade_changed"
   | "participant.zu_zhang_traits_changed"

@@ -6,6 +6,7 @@ import {
 } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { applyRoleScope } from "@/lib/participants-query";
+import { writeAuditLogBatch } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
   const scoped = await createSupabaseServerClient();
   let scopeCheck = scoped
     .from("participants")
-    .select("id")
+    .select("id, archived_at, assigned_cs_id")
     .in("id", body.ids);
   scopeCheck = applyRoleScope(scopeCheck, admin.role, admin.id, admin.region);
   const { data: allowed, error: scopeErr } = await scopeCheck;
@@ -103,6 +104,18 @@ export async function POST(req: Request) {
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
+      await writeAuditLogBatch(
+        (allowed ?? [])
+          .filter((r) => (r.archived_at ?? null) !== archivedAt)
+          .map((r) => ({
+            actor_id: admin.id,
+            action: "participant.fields_changed" as const,
+            entity: "participants",
+            entity_id: r.id,
+            before: { archived_at: r.archived_at ?? null },
+            after: { archived_at: archivedAt },
+          })),
+      );
       break;
     }
     case "assign_cs": {
@@ -113,6 +126,18 @@ export async function POST(req: Request) {
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
+      await writeAuditLogBatch(
+        (allowed ?? [])
+          .filter((r) => (r.assigned_cs_id ?? null) !== body.assigned_cs_id)
+          .map((r) => ({
+            actor_id: admin.id,
+            action: "participant.fields_changed" as const,
+            entity: "participants",
+            entity_id: r.id,
+            before: { assigned_cs_id: r.assigned_cs_id ?? null },
+            after: { assigned_cs_id: body.assigned_cs_id },
+          })),
+      );
       break;
     }
   }

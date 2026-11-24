@@ -158,7 +158,10 @@ export function AdminShell({
         />
 
         <div className="flex-1 min-w-0 flex flex-col">
-          <TopBar onOpenNav={() => setMobileNavOpen(true)} />
+          <TopBar
+            onOpenNav={() => setMobileNavOpen(true)}
+            showNotifications={admin.role === "super_admin"}
+          />
           <main
             className="flex-1 min-w-0 relative"
             style={{

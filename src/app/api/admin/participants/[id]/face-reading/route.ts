@@ -6,6 +6,7 @@ import {
 } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import { applyRoleScope } from "@/lib/participants-query";
+import { logParticipantChange } from "@/lib/participants/history";
 import {
   ARCHETYPE_NAMES,
   SKIN_TONES,
@@ -92,7 +93,7 @@ async function scopedFetch(
   const supabase = await createSupabaseServerClient();
   let q = supabase
     .from("participants")
-    .select("id, face_measurements, face_archetype_suggested")
+    .select("id, face_measurements, face_archetype, face_archetype_suggested, face_skin_tone_override")
     .eq("id", id);
   q = applyRoleScope(q, admin.role, admin.id, admin.region);
   return q.maybeSingle();
@@ -171,6 +172,12 @@ export async function POST(req: Request, { params }: RouteCtx) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+  await logParticipantChange({
+    actorId: admin.id,
+    participantId: id,
+    before: scoped as unknown as Record<string, unknown>,
+    after: update,
+  });
   return NextResponse.json({ ok: true, kind: "success", archetype });
 }
 
@@ -241,5 +248,11 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+  await logParticipantChange({
+    actorId: admin.id,
+    participantId: id,
+    before: scoped as unknown as Record<string, unknown>,
+    after: update,
+  });
   return NextResponse.json({ ok: true });
 }
