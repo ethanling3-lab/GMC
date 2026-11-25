@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin-guard";
 import { NewEventForm } from "@/components/admin/events/NewEventForm";
+import { listCourseOptions } from "@/lib/programmes/courses";
 
 export const metadata: Metadata = { title: "New event" };
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export default async function NewEventPage() {
           New event
         </h1>
       </div>
-      <NewEventForm />
+      <NewEventForm courseOptions={await listCourseOptions()} />
     </div>
   );
 }

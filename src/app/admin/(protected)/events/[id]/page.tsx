@@ -8,6 +8,7 @@ import {
 } from "@/components/admin/events/EventEditor";
 import { CrumbLabel } from "@/components/admin/BreadcrumbContext";
 import { loadActiveProgrammes } from "@/lib/programmes/load";
+import { listCourseOptions } from "@/lib/programmes/courses";
 
 export const metadata: Metadata = { title: "Edit event" };
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ export default async function EventDetailPage({ params }: PageProps) {
 
   const supabase = await createSupabaseServerClient();
   const columnsWithSchema =
-    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, misc_fee, currency, price_tiers, payment_methods, target_audience_filter, status, requires_approval, form_schema, bank_details, main_venue_hotel_name, designated_hotels, transfer_rules, seating_mode, group_size_min, group_size_max, check_in_method, dates_tentative, created_at, updated_at";
+    "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, misc_fee, currency, price_tiers, payment_methods, target_audience_filter, status, requires_approval, form_schema, bank_details, main_venue_hotel_name, designated_hotels, transfer_rules, seating_mode, group_size_min, group_size_max, check_in_method, dates_tentative, course_id, created_at, updated_at";
   const columnsLegacy =
     "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, poster_url, gallery, type, mode, venue, city, country, start_date, end_date, arrival_day, departure_day, enrollment_opens_at, enrollment_closes_at, capacity, price, currency, payment_methods, target_audience_filter, status, requires_approval, created_at, updated_at";
 
@@ -70,6 +71,7 @@ export default async function EventDetailPage({ params }: PageProps) {
     misc_fee: raw.misc_fee == null ? null : Number(raw.misc_fee),
     price_tiers: Array.isArray(raw.price_tiers) ? raw.price_tiers : [],
     dates_tentative: Boolean(raw.dates_tentative),
+    course_id: (raw.course_id as string | null | undefined) ?? null,
     designated_hotels:
       raw.designated_hotels &&
       typeof raw.designated_hotels === "object" &&
@@ -112,6 +114,7 @@ export default async function EventDetailPage({ params }: PageProps) {
         canDelete={canDelete}
         enrollmentCount={enrollmentCount ?? 0}
         programmes={programmes}
+        courseOptions={await listCourseOptions()}
       />
     </>
   );

@@ -16,6 +16,7 @@ const Body = z
     title_cn: z.string().trim().min(1).max(200),
     title_en: z.string().trim().max(200).nullable().optional(),
     type: z.enum(["retreat", "course", "single_class", "delivery_class", "other"]).default("course"),
+    course_id: z.string().uuid().nullable().optional(),
     start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     city: z.string().trim().max(80).nullable().optional(),
@@ -37,6 +38,10 @@ export async function POST(req: Request) {
   if (b.end_date && b.end_date < b.start_date) {
     return NextResponse.json({ error: "invalid_dates", detail: "End date is before start date." }, { status: 400 });
   }
+  // A Course-type event is a run of one of the programmes' courses.
+  if (b.type === "course" && !b.course_id) {
+    return NextResponse.json({ error: "course_required", detail: "Pick the course this event is a run of." }, { status: 400 });
+  }
 
   const service = createSupabaseServiceClient();
   // Slug from the English title (Chinese-only titles fall back to "event").
@@ -57,6 +62,7 @@ export async function POST(req: Request) {
       title_cn: b.title_cn,
       type: b.type,
       status: "planned",
+      course_id: b.course_id ?? null,
       start_date: b.start_date,
       end_date: b.end_date ?? b.start_date,
       city: b.city || null,

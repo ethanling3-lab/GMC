@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-guard";
 import { listProgrammes } from "@/lib/programmes/programmes";
 import { validityLabel } from "@/lib/programmes/types";
+import { courseCountsByProgramme } from "@/lib/programmes/courses";
 
 export const metadata: Metadata = { title: "Programmes" };
 export const dynamic = "force-dynamic";
@@ -14,7 +15,10 @@ function fmtSgd(n: number): string {
 export default async function ProgrammesPage() {
   const admin = await requireAdmin();
   const canManage = admin.role === "super_admin" || admin.role === "regional_lead";
-  const programmes = await listProgrammes({ includeInactive: true });
+  const [programmes, courseCounts] = await Promise.all([
+    listProgrammes({ includeInactive: true }),
+    courseCountsByProgramme(),
+  ]);
 
   return (
     <div>
@@ -29,8 +33,8 @@ export default async function ProgrammesPage() {
           </h1>
           <p className="mt-4 max-w-[62ch] text-[14.5px] leading-[1.7] text-[var(--ink-soft)]">
             The membership tiers that drive tiered pricing. Each carries a validity
-            term — once a participant&apos;s membership lapses they revert to
-            new/returning pricing.
+            term and its own list of included courses — open a programme to see
+            them.
           </p>
         </div>
         {canManage ? (
@@ -49,6 +53,7 @@ export default async function ProgrammesPage() {
           <thead>
             <tr className="text-left text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)] border-b border-[var(--paper-shadow)]">
               <th className="px-5 py-3 font-normal">Programme</th>
+              <th className="px-3 py-3 font-normal">Courses</th>
               <th className="px-3 py-3 font-normal">Slug</th>
               <th className="px-3 py-3 font-normal">Validity</th>
               <th className="px-3 py-3 font-normal text-right">Price</th>
@@ -60,7 +65,7 @@ export default async function ProgrammesPage() {
           <tbody>
             {programmes.length === 0 ? (
               <tr>
-                <td colSpan={canManage ? 7 : 6} className="px-5 py-10 text-center text-[var(--ink-faint)]">
+                <td colSpan={canManage ? 8 : 7} className="px-5 py-10 text-center text-[var(--ink-faint)]">
                   No programmes yet.
                 </td>
               </tr>
@@ -71,9 +76,23 @@ export default async function ProgrammesPage() {
                   className="border-t border-[var(--paper-shadow)] even:bg-[var(--paper-deep)]/30"
                 >
                   <td className="px-5 py-3">
-                    <span className="text-[var(--ink)] font-display tracking-[-0.005em]">{p.name_cn}</span>
-                    <span className="ml-2 text-[var(--ink-mute)]">{p.name_en}</span>
+                    <Link
+                      href={`/admin/programmes/${p.id}`}
+                      className="group rounded-sm focus-visible:shadow-[var(--shadow-focus)]"
+                    >
+                      <span className="text-[var(--ink)] font-display tracking-[-0.005em] group-hover:text-[var(--cinnabar-deep)] transition-colors duration-[var(--dur-fast)]">{p.name_cn}</span>
+                      <span className="ml-2 text-[var(--ink-mute)]">{p.name_en}</span>
+                    </Link>
                     <span className="ml-2 text-[11px] text-[var(--ink-faint)]">{p.abbrev}</span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <Link
+                      href={`/admin/programmes/${p.id}`}
+                      className="text-[12.5px] underline underline-offset-2 rounded-sm focus-visible:shadow-[var(--shadow-focus)]"
+                      style={{ color: "var(--cinnabar)" }}
+                    >
+                      {courseCounts.get(p.id) ?? 0} course{courseCounts.get(p.id) === 1 ? "" : "s"}
+                    </Link>
                   </td>
                   <td className="px-3 py-3 font-mono text-[11.5px] text-[var(--ink-soft)]">{p.slug}</td>
                   <td className="px-3 py-3 text-[var(--ink-soft)]">{validityLabel(p.validity_months)}</td>

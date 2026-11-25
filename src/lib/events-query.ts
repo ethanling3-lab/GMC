@@ -10,6 +10,8 @@ export type EventFilters = {
   status?: EventStatus;
   type?: EventType;
   mode?: EventMode;
+  /** Course id (migration 079) — events that are runs of this course. */
+  course?: string;
   sort?: "recent" | "oldest" | "start_soonest" | "start_latest" | "title";
   /** "active" (default) hides archived, "archived" shows only archived, "all" shows both. */
   archived?: "active" | "archived" | "all";
@@ -76,7 +78,13 @@ export function parseFilters(
       ? archivedRaw
       : "active";
 
-  return { q, status, type, mode, sort, archived };
+  const courseRaw = get("course");
+  const course =
+    courseRaw && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(courseRaw)
+      ? courseRaw
+      : undefined;
+
+  return { q, status, type, mode, course, sort, archived };
 }
 
 export function parsePage(
@@ -118,6 +126,7 @@ export function applyEventFilters<T extends { ilike: any; eq: any; or: any; orde
   if (filters.status) q = q.eq("status", filters.status);
   if (filters.type) q = q.eq("type", filters.type);
   if (filters.mode) q = q.eq("mode", filters.mode);
+  if (filters.course) q = q.eq("course_id", filters.course);
 
   // Archived scope — "active" hides status=archived; "archived" shows only
   // archived; "all" no-ops. Note: the events table uses the status enum for

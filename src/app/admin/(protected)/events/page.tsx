@@ -14,6 +14,7 @@ import {
   parseFilters,
   parsePage,
 } from "@/lib/events-query";
+import { listCourses } from "@/lib/programmes/courses";
 
 export const metadata: Metadata = { title: "Events" };
 export const dynamic = "force-dynamic";
@@ -35,14 +36,20 @@ export default async function EventsPage({ searchParams }: PageProps) {
   const supabase = await createSupabaseServerClient();
 
   const columns =
-    "id, slug, title_en, title_cn, type, mode, status, venue, city, country, start_date, end_date, capacity, price, currency, updated_at";
+    "id, slug, title_en, title_cn, type, mode, status, venue, city, country, start_date, end_date, capacity, price, currency, updated_at, course_id";
 
   let q = supabase.from("events").select(columns, { count: "exact" });
   q = applyEventFilters(q, filters);
   q = q.range(from, to);
 
   const { data, count, error } = await q;
-  const rows = (error ? [] : (data ?? [])) as EventRow[];
+  const courses = await listCourses();
+  const courseById = new Map(courses.map((c) => [c.id, c]));
+  const rows = ((error ? [] : (data ?? [])) as Array<EventRow & { course_id: string | null }>).map((r) => {
+    const c = r.course_id ? courseById.get(r.course_id) : undefined;
+    return { ...r, course: c ? { name_cn: c.name_cn, name_en: c.name_en } : null };
+  });
+  const filterCourse = filters.course ? courseById.get(filters.course) : undefined;
   const total = count ?? 0;
 
   const { count: scopeTotal } = await supabase
@@ -112,6 +119,19 @@ export default async function EventsPage({ searchParams }: PageProps) {
         </div>
       </div>
 
+      {filterCourse ? (
+        <div className="mt-6 flex items-center gap-2.5 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] px-4 py-2.5 text-[13px] text-[var(--ink-soft)]">
+          Showing events of
+          <span className="text-[var(--ink)] font-medium">
+            {filterCourse.name_cn}
+            {filterCourse.name_en ? ` · ${filterCourse.name_en}` : ""}
+          </span>
+          <Link href="/admin/events" className="ml-auto text-[12px] underline underline-offset-2" style={{ color: "var(--cinnabar)" }}>
+            Show all events
+          </Link>
+        </div>
+      ) : null}
+
       <EventsFilterBar
         initialQ={filters.q ?? ""}
         activeCount={total}
@@ -122,7 +142,7 @@ export default async function EventsPage({ searchParams }: PageProps) {
       <EventsTable
         rows={rows}
         hasFilters={Boolean(
-          filters.q || filters.status || filters.type || filters.mode,
+          filters.q || filters.status || filters.type || filters.mode || filters.course,
         )}
         canEdit={admin.role === "super_admin"}
         canCreate={canCreate}

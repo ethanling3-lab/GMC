@@ -26,6 +26,7 @@ export const EventCreateSchema = z.object({
     .enum(["retreat", "course", "single_class", "delivery_class", "other"])
     .default("course"),
   mode: z.enum(["online", "offline"]).default("offline"),
+  course_id: z.string().uuid().nullable().optional(),
 });
 export type EventCreate = z.infer<typeof EventCreateSchema>;
 
@@ -104,6 +105,8 @@ export const EventUpdateSchema = z
     target_audience_filter: z.record(z.string(), z.unknown()).optional(),
     status: z.enum(["draft", "planned", "open", "closed", "archived"]).optional(),
     // Migration 075 — "dates TBC" for planned events.
+    // Migration 079 — the course (from the programmes' lists) it's a run of.
+    course_id: z.string().uuid().nullable().optional(),
     dates_tentative: z.boolean().optional(),
     requires_approval: z.boolean().optional(),
 

@@ -25,6 +25,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
+  // A Course-type event is a run of one of the programmes' courses.
+  if (body.type === "course" && !body.course_id) {
+    return NextResponse.json({ error: "Pick the course this event is a run of." }, { status: 400 });
+  }
+
   const service = createSupabaseServiceClient();
 
   const { data, error } = await service
@@ -35,6 +40,7 @@ export async function POST(req: Request) {
       title_cn: body.title_cn ?? null,
       type: body.type,
       mode: body.mode,
+      course_id: body.course_id ?? null,
       created_by: admin.id,
     })
     .select("id, slug")

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireAdmin } from "@/lib/admin-guard";
 import { loadCalendarYear } from "@/lib/calendar/load";
 import { listHolidays } from "@/lib/calendar/holiday-store";
+import { listCourseOptions } from "@/lib/programmes/courses";
 import { CalendarClient } from "@/components/admin/calendar/CalendarClient";
 
 export const metadata: Metadata = { title: "Calendar" };
@@ -11,7 +12,9 @@ export const dynamic = "force-dynamic";
 // rows — created early as "planned", opened for registration later.
 // Super Admin plans + edits; CS and Finance view (see permissions.ts).
 
-type PageProps = { searchParams: Promise<{ year?: string; view?: string; month?: string }> };
+type PageProps = { searchParams: Promise<{ year?: string; view?: string; month?: string; plan?: string }> };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function CalendarPage({ searchParams }: PageProps) {
   const admin = await requireAdmin();
@@ -42,7 +45,10 @@ export default async function CalendarPage({ searchParams }: PageProps) {
       today={nowSg.toISOString().slice(0, 10)}
       sessions={sessions}
       holidays={holidays}
+      courseOptions={canPlan ? await listCourseOptions() : []}
       canPlan={canPlan}
+      // "+ Plan a run" on a programme's course opens the plan form with it.
+      initialPlanCourseId={canPlan && sp.plan && UUID.test(sp.plan) ? sp.plan : null}
     />
   );
 }

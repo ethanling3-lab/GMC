@@ -17,7 +17,7 @@ export const runtime = "nodejs";
 const Body = z.object({ from_year: z.number().int().min(2020).max(2100) }).strict();
 
 const COPY_COLUMNS =
-  "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, type, mode, venue, city, country, start_date, end_date, capacity, price, misc_fee, currency, price_tiers, payment_methods, requires_approval, seating_mode, group_size_min, group_size_max";
+  "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, type, mode, venue, city, country, start_date, end_date, capacity, price, misc_fee, currency, price_tiers, payment_methods, requires_approval, seating_mode, group_size_min, group_size_max, course_id";
 
 type Row = Record<string, unknown> & {
   id: string;

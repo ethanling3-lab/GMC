@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
+import type { CourseOption } from "@/lib/programmes/course-types";
 
 const TYPES: { code: string; label: string }[] = [
   { code: "retreat", label: "Retreat · 静修" },
@@ -23,8 +24,9 @@ function slugify(s: string): string {
     .slice(0, 80);
 }
 
-export function NewEventForm() {
+export function NewEventForm({ courseOptions }: { courseOptions: CourseOption[] }) {
   const router = useRouter();
+  const [courseId, setCourseId] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [titleCn, setTitleCn] = useState("");
   const [slug, setSlug] = useState("");
@@ -39,10 +41,28 @@ export function NewEventForm() {
     if (!slugDirty) setSlug(slugify(v));
   }
 
+  const courseRequired = type === "course" && courseOptions.length > 0;
+  const picked = courseOptions.find((c) => c.id === courseId);
+
+  // Picking a course fills in titles the admin hasn't typed themselves
+  // (empty, or still the previous course's names).
+  function pickCourse(id: string) {
+    const prev = picked;
+    const next = courseOptions.find((c) => c.id === id);
+    setCourseId(id);
+    if (!next) return;
+    if (!titleCn.trim() || titleCn === prev?.name_cn) setTitleCn(next.name_cn);
+    if (!titleEn.trim() || titleEn === (prev?.name_en ?? "")) handleTitleEnChange(next.name_en ?? "");
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
+    if (courseRequired && !courseId) {
+      setError("Pick the course this event is a run of.");
+      return;
+    }
     const finalSlug = slug.trim();
     if (!finalSlug) {
       setError("Slug is required.");
@@ -66,6 +86,7 @@ export function NewEventForm() {
           title_cn: titleCn.trim() || null,
           type,
           mode,
+          course_id: courseId || null,
         }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -95,6 +116,40 @@ export function NewEventForm() {
             accommodations — after the event is created.
           </p>
         </div>
+
+        {courseOptions.length > 0 ? (
+          <Field
+            label="Course"
+            labelZh="课程"
+            required={courseRequired}
+            hint={
+              picked
+                ? picked.programmes.length > 0
+                  ? `Included in: ${picked.programmes.join(" · ")}. Fills in the titles below.`
+                  : "Not in any programme's list."
+                : courseRequired
+                  ? "Which programme course this event is a run of. Fills in the titles below."
+                  : "Optional for this type."
+            }
+          >
+            <select
+              value={courseId}
+              onChange={(e) => pickCourse(e.target.value)}
+              className="h-10 w-full px-3.5 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[13px] text-[var(--ink)]
+                         focus:border-[var(--cinnabar)]/50 focus:outline-none focus:shadow-[var(--shadow-focus)]"
+            >
+              <option value="">{courseRequired ? "— Pick a course" : "— Not set"}</option>
+              {courseOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name_cn}
+                  {c.name_en ? ` · ${c.name_en}` : ""}
+                  {c.programmes.length > 0 ? `  (${c.programmes.join(" · ")})` : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
 
         <Field label="Title (English)" labelZh="标题">
           <input

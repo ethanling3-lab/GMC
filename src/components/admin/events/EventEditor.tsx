@@ -15,6 +15,7 @@ import {
   type ParticipantPriceCategory,
 } from "@/lib/pricing/tiers";
 import { PosterUploader } from "./PosterUploader";
+import type { CourseOption } from "@/lib/programmes/course-types";
 import { EventFormBuilder } from "./EventFormBuilder";
 
 export type EventFull = {
@@ -53,6 +54,9 @@ export type EventFull = {
   status: EventStatus;
   // Migration 075 — "dates TBC" for planned events.
   dates_tentative: boolean;
+  // Migration 079 — which course (from the programmes' lists) this event
+  // is a run of. Optional.
+  course_id: string | null;
   requires_approval: boolean;
   form_schema: Record<string, unknown>;
   bank_details: { en?: string; zh?: string } | null;
@@ -163,6 +167,8 @@ type Props = {
   // Active programmes (slug + bilingual name) for the price-tier "applies to"
   // picker. Loaded server-side so newly-created programmes are priceable.
   programmes: { slug: string; name_en: string; name_cn: string }[];
+  // Course names from the programmes' course lists (migration 079).
+  courseOptions: CourseOption[];
 };
 
 type PriceCategoryOption = { key: string; cn: string; en: string };
@@ -180,6 +186,7 @@ export function EventEditor({
   canDelete,
   enrollmentCount,
   programmes,
+  courseOptions,
 }: Props) {
   const router = useRouter();
 
@@ -290,6 +297,7 @@ export function EventEditor({
         start_date: draft.start_date,
         end_date: draft.end_date,
         dates_tentative: draft.dates_tentative,
+        course_id: draft.course_id,
         arrival_day: draft.arrival_day,
         departure_day: draft.departure_day,
         enrollment_opens_at: draft.enrollment_opens_at,
@@ -735,7 +743,43 @@ export function EventEditor({
           <Field label="Country" labelZh="国家">
             <input type="text" value={draft.country ?? ""} onChange={(e) => update("country", e.target.value || null)} disabled={!canEdit} className={inputCls()} />
           </Field>
-          <div />
+          <Field
+            label="Course"
+            labelZh="课程"
+            hint={(() => {
+              const c = courseOptions.find((o) => o.id === draft.course_id);
+              if (!c) return "Which programme course this event is a run of.";
+              return c.programmes.length > 0 ? `Included in: ${c.programmes.join(" · ")}` : "Not in any programme's list.";
+            })()}
+          >
+            <select
+              value={draft.course_id ?? ""}
+              onChange={(e) => {
+                const id = e.target.value || null;
+                const c = courseOptions.find((o) => o.id === id);
+                // Empty titles take the course's names; typed titles are kept.
+                setDraft((d) => ({
+                  ...d,
+                  course_id: id,
+                  title_cn: d.title_cn?.trim() ? d.title_cn : (c?.name_cn ?? d.title_cn),
+                  title_en: d.title_en?.trim() ? d.title_en : (c?.name_en ?? d.title_en),
+                }));
+              }}
+              disabled={!canEdit}
+              className={inputCls()}
+            >
+              <option value="">— Not set</option>
+              {courseOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name_cn}
+                  {c.name_en ? ` · ${c.name_en}` : ""}
+                </option>
+              ))}
+            </select>
+            {draft.type === "course" && !draft.course_id && courseOptions.length > 0 ? (
+              <span className="text-[11.5px] text-[#B45309]">Not linked to a programme course yet.</span>
+            ) : null}
+          </Field>
 
           <Field label="Start date" labelZh="开始日期">
             <input type="date" value={draft.start_date ?? ""} onChange={(e) => update("start_date", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />

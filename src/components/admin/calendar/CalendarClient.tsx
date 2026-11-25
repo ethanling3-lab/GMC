@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { STATUS_LABEL, TYPE_LABEL, type EventType } from "@/lib/events-shared";
 import { HolidaysPanel } from "./HolidaysPanel";
+import type { CourseOption } from "@/lib/programmes/course-types";
 import {
   holidayRegionInfo,
   holidayRegionTag,
@@ -68,10 +69,12 @@ type Props = {
   today: string;
   sessions: CalendarSession[];
   holidays: CalendarHoliday[];
+  courseOptions: CourseOption[];
   canPlan: boolean;
+  initialPlanCourseId?: string | null;
 };
 
-export function CalendarClient({ year, month, view, today, sessions, holidays, canPlan }: Props) {
+export function CalendarClient({ year, month, view, today, sessions, holidays, courseOptions, canPlan, initialPlanCourseId }: Props) {
   const router = useRouter();
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hiddenRegions, setHiddenRegions] = useState<Set<HolidayRegion>>(new Set());
@@ -111,7 +114,18 @@ export function CalendarClient({ year, month, view, today, sessions, holidays, c
     return m;
   }, [holidays, hiddenRegions]);
   const [showDrafts, setShowDrafts] = useState(true);
-  const [planning, setPlanning] = useState(false);
+  const [planning, setPlanning] = useState(Boolean(initialPlanCourseId));
+  // Drop ?plan= once the form is open, so a refresh doesn't reopen it.
+  useEffect(() => {
+    if (!initialPlanCourseId) return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("plan");
+      window.history.replaceState(null, "", url.toString());
+    } catch {
+      /* ignore */
+    }
+  }, [initialPlanCourseId]);
   const [managingHolidays, setManagingHolidays] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -216,6 +230,8 @@ export function CalendarClient({ year, month, view, today, sessions, holidays, c
 
       {planning && canPlan ? (
         <PlanSessionPanel
+          courseOptions={courseOptions}
+          initialCourseId={initialPlanCourseId ?? null}
           holidayIndex={holidayIndex}
           hiddenRegions={hiddenRegions}
           defaultDate={`${year}-${String(month).padStart(2, "0")}-01`}
@@ -767,19 +783,26 @@ function MonthGrid({
 }
 
 function PlanSessionPanel({
+  courseOptions,
+  initialCourseId,
   holidayIndex,
   hiddenRegions,
   defaultDate,
   onDone,
 }: {
+  courseOptions: CourseOption[];
+  initialCourseId: string | null;
   holidayIndex: HolidayIndex;
   hiddenRegions: Set<HolidayRegion>;
   defaultDate: string;
   onDone: (msg: string) => void;
 }) {
-  const [titleCn, setTitleCn] = useState("");
-  const [titleEn, setTitleEn] = useState("");
+  const initial = initialCourseId ? courseOptions.find((o) => o.id === initialCourseId) : undefined;
+  const [titleCn, setTitleCn] = useState(initial?.name_cn ?? "");
+  const [titleEn, setTitleEn] = useState(initial?.name_en ?? "");
   const [type, setType] = useState<EventType>("course");
+  const [courseId, setCourseId] = useState(initial?.id ?? "");
+  const courseRequired = type === "course" && courseOptions.length > 0;
   const [start, setStart] = useState(defaultDate);
   const [end, setEnd] = useState(defaultDate);
   const [city, setCity] = useState("");
@@ -793,6 +816,10 @@ function PlanSessionPanel({
 
   async function save() {
     setError(null);
+    if (courseRequired && !courseId) {
+      setError("Pick the course this event is a run of.");
+      return;
+    }
     if (!titleCn.trim() || !start) {
       setError("Enter a Chinese title and a start date.");
       return;
@@ -810,6 +837,7 @@ function PlanSessionPanel({
           title_cn: titleCn.trim(),
           title_en: titleEn.trim() || null,
           type,
+          course_id: courseId || null,
           start_date: start,
           end_date: end || null,
           city: city.trim() || null,
@@ -829,6 +857,35 @@ function PlanSessionPanel({
   return (
     <section className="mt-6 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] p-5">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+        {courseOptions.length > 0 ? (
+          <label className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-5">
+            <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">
+              {courseRequired ? "Course · 课程 — which programme course this is a run of" : "Course · 课程 (optional — fills in the title)"}
+            </span>
+            <select
+              className={input}
+              value={courseId}
+              onChange={(e) => {
+                const id = e.target.value;
+                setCourseId(id);
+                const c = courseOptions.find((o) => o.id === id);
+                if (c) {
+                  setTitleCn(c.name_cn);
+                  setTitleEn(c.name_en ?? "");
+                }
+              }}
+            >
+              <option value="">{courseRequired ? "— Pick a course" : "— Not set"}</option>
+              {courseOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name_cn}
+                  {c.name_en ? ` · ${c.name_en}` : ""}
+                  {c.programmes.length > 0 ? `  (${c.programmes.join(" · ")})` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="flex flex-col gap-1.5 lg:col-span-2">
           <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Title (CN) · 中文名称</span>
           <input className={input} value={titleCn} onChange={(e) => setTitleCn(e.target.value)} placeholder="永不落空的力量" />

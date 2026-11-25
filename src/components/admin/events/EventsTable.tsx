@@ -28,6 +28,8 @@ export type EventRow = {
   price: number | null;
   currency: string;
   updated_at: string;
+  /** The course this event is a run of (migration 079), if set. */
+  course?: { name_cn: string; name_en: string | null } | null;
 };
 
 type Props = {
@@ -412,8 +414,16 @@ export function EventsTable({ rows, hasFilters, canEdit, canCreate }: Props) {
                         <div className="text-[var(--ink)] font-medium">
                           {title(r)}
                         </div>
-                        <div className="mt-0.5 font-mono text-[11px] text-[var(--ink-faint)]">
-                          /{r.slug}
+                        <div className="mt-0.5 flex items-center gap-2 flex-wrap">
+                          {r.course ? (
+                            <span
+                              className="inline-flex items-center rounded-full border border-[var(--paper-shadow)] bg-[var(--paper)] px-2 py-px text-[11px] text-[var(--ink-soft)]"
+                              title={r.course.name_en ? `Course: ${r.course.name_en}` : "Course"}
+                            >
+                              {r.course.name_cn}
+                            </span>
+                          ) : null}
+                          <span className="font-mono text-[11px] text-[var(--ink-faint)]">/{r.slug}</span>
                         </div>
                       </Link>
                     </td>
