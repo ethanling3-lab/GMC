@@ -2,6 +2,7 @@ import "server-only";
 import { DEFAULT_LANGUAGE } from "@/lib/participants/languages";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  STUDENT_QUALIFICATION_LABEL,
   effectiveQualification,
   participantToClass,
   scoreToQualification,
@@ -648,26 +649,63 @@ export async function loadGroupBuilder(
       for (const p of extra ?? []) participantById.set(p.id, p);
     }
 
-    // Bucket enrolled members by their effective class. Serving 组长 are
-    // seeded as leaders, not counted as members (same as balance.ts).
+    // Preview counts — mirror balance.ts: serving 组长 are seeded as
+    // leaders (not members); unpinned caution-flagged people are left for
+    // manual placement; default-language listeners group by type, and
+    // every other language forms its own groups across types (each
+    // group's type = its most common member type).
+    const regularCapacity = Math.max(1, event.group_size_max - 2);
+    const otherLang = new Map<string, Array<{ cls: GroupClass; strength: number }>>();
     for (const e of enrolPinsRes.data ?? []) {
       const p = participantById.get(e.participant_id);
       if (!p) continue;
       if (e.serving_as_zu_zhang && (e.zu_zhang_tier_for_event ?? p.zu_zhang_tier)) continue;
-      const cls = participantToClass({
+      if (p.sells_products && e.pinned_group_no == null) continue;
+      const scoreInput = {
         financial_score: p.financial_score,
         influence_score: p.influence_score,
         student_qualification_override: p.student_qualification,
-      });
-      memberCountByClass[cls] += 1;
+      };
+      const cls = participantToClass(scoreInput);
+      const lang = p.listening_language || DEFAULT_LANGUAGE;
+      if (lang === DEFAULT_LANGUAGE) {
+        memberCountByClass[cls] += 1;
+      } else {
+        const q = effectiveQualification(scoreInput);
+        const list = otherLang.get(lang) ?? [];
+        list.push({
+          cls,
+          strength: (q ? STUDENT_QUALIFICATION_LABEL[q].score : 0) * 10
+            + Math.max(p.financial_score ?? 0, p.influence_score ?? 0),
+        });
+        otherLang.set(lang, list);
+      }
     }
-
-    // k per class — same formula as balance.ts (regular capacity =
-    // group_size_max - 2 to reserve seats for the leader pair).
-    const regularCapacity = Math.max(1, event.group_size_max - 2);
     for (const cls of ["strategic", "key", "growth", "maintenance"] as GroupClass[]) {
       if (memberCountByClass[cls] === 0) continue;
       kByClass[cls] = Math.ceil(memberCountByClass[cls] / regularCapacity);
+    }
+    for (const list of otherLang.values()) {
+      const sorted = [...list].sort((a, b) => b.strength - a.strength);
+      const k = Math.ceil(sorted.length / regularCapacity);
+      let start = 0;
+      for (let i = 0; i < k; i += 1) {
+        const size = Math.floor(sorted.length / k) + (i < sorted.length % k ? 1 : 0);
+        const chunk = sorted.slice(start, start + size);
+        start += size;
+        const count: Record<GroupClass, number> = { strategic: 0, key: 0, growth: 0, maintenance: 0 };
+        for (const m of chunk) count[m.cls] += 1;
+        let best: GroupClass = "growth";
+        let bestN = 0;
+        for (const c of ["strategic", "key", "growth", "maintenance"] as GroupClass[]) {
+          if (count[c] > bestN) {
+            best = c;
+            bestN = count[c];
+          }
+        }
+        kByClass[best] += 1;
+        memberCountByClass[best] += chunk.length;
+      }
     }
 
     // Build the curated 组长 roster the algorithm would consume.

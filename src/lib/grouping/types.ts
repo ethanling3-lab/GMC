@@ -244,6 +244,10 @@ export type RosterShortfall = {
   required_role: "main" | "auxiliary";
   have: number;
   need: number;
+  // Whole-tier gap = max(0, demand − have) across every role needing this
+  // tier. This is the true "need N more" number; `have`/`need` above are
+  // the per-role proportional share (diagnostic only).
+  tier_gap: number;
 };
 
 // =============================================================================

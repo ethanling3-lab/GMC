@@ -1274,7 +1274,7 @@ export function GroupsClient(props: Props) {
   }
 
   const totalGroups = viewGroups.length;
-  const hasShortfalls = props.rosterShortfalls.length > 0;
+  const hasShortfalls = props.rosterShortfalls.some((s) => s.tier_gap > 0);
 
   return (
     <div>
@@ -1751,15 +1751,14 @@ function RosterShortfallBanner({
       byTier.set(s.required_tier, {
         tier: s.required_tier,
         classes: new Set([s.group_class]),
-        need: s.need,
+        need: s.tier_gap,
         have: s.have,
       });
     } else {
       cur.classes.add(s.group_class);
-      cur.need += s.need - s.have;
     }
   }
-  const lines = [...byTier.values()];
+  const lines = [...byTier.values()].filter((l) => l.need > 0);
 
   return (
     <div className="mb-4 rounded-[var(--radius-md)] border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] px-4 py-3">

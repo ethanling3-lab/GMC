@@ -475,6 +475,22 @@ function seedGroups(
         g.main_zu_zhang ? [{ main_zu_zhang: g.main_zu_zhang }] : [],
       );
     }
+    // Language beats tier: a non-default language set borrows a speaker of
+    // another tier NOW, before default-language groups take speakers as
+    // ordinary exact-tier leaders.
+    if (set[0].language !== DEFAULT_LANGUAGE) {
+      for (const role of ["main", "auxiliary"] as const) {
+        for (const g of set) {
+          const seat = role === "main" ? "main_zu_zhang" : "auxiliary_zu_zhang";
+          if (g[seat]) continue;
+          const wanted = requiredLeaderTiers(g.group_class)[role];
+          const got = borrowFrom(pool, wanted, g.language);
+          if (!got) continue;
+          g[seat] = got;
+          g.borrowed.push({ role, wanted, got: got.tier, language_missing: false });
+        }
+      }
+    }
   }
 
   // Pass 2 — borrow another tier that speaks the language.
@@ -964,6 +980,7 @@ export function computeRosterShortfalls(
         required_role: r.role,
         have: share,
         need: r.k_required,
+        tier_gap: Math.max(0, totalDemand - haveByTier[r.tier]),
       });
     }
   }

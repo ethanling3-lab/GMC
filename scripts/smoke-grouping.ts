@@ -713,6 +713,29 @@ function checkRules() {
   const missingLang = (r3.metadata.warnings ?? []).filter((w) => w.code === "language_leader_missing");
   if (missingLang.some((w) => /Melayu/.test(w.detail_en))) pass(`no Malay speaker → warned (${missingLang[0].detail_en})`);
   else fail("missing-speaker language not warned");
+  // A speaker of another tier must be borrowed for a rarer language before
+  // a 中文 group claims them as an exact-tier leader (regression, 2026-11-25).
+  const roster4 = [
+    leader("K1", "key_recruitment", 5, ["financial"]),
+    leader("R1", "recruitment", 5, ["health"]),
+    leader("M1", "maintenance", 3, ["spiritual"], ["zh", "vi"]),
+    leader("A1", "auxiliary", 3, ["health"]),
+    leader("A2", "auxiliary", 2, ["financial"]),
+  ];
+  const students4 = [
+    student("Z01", 5, ["financial"]),
+    student("Z02", 2, ["health"]),
+    student("VV1", 4, [], { listening_language: "vi" }),
+  ];
+  const r4 = balance(
+    [...students4, ...roster4.map((z) => student(z.participant_id, 5, [], { listening_language: z.listening_language }))],
+    roster4,
+    config,
+  );
+  const viGroup = r4.groups.find((g) => g.members.some((m) => m.participant_id === "VV1"));
+  if (mainOf(viGroup) === "M1") pass("Vietnamese group borrows the only vi speaker before 中文 groups take them");
+  else fail(`Vietnamese group led by ${mainOf(viGroup)}, expected M1`);
+
   const v3 = validateGrouping(r3.groups, all3.filter((p) => !roster3.some((z) => z.participant_id === p.participant_id)), roster3, config);
   const langErrs = v3.errors.filter((e) => e.code === "language_mismatch");
   if (langErrs.length === 0) pass("validator: no language mismatches");
