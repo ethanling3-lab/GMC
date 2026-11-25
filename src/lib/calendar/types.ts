@@ -1,15 +1,6 @@
 // Client-safe shapes for the year calendar (Phase 1).
 
-import type { EventStatus } from "@/lib/events-shared";
-
-export type CalendarCourse = {
-  id: string;
-  slug: string;
-  name_en: string;
-  name_cn: string;
-  short_label: string;
-  colour: string;
-};
+import type { EventStatus, EventType } from "@/lib/events-shared";
 
 export type CalendarSession = {
   id: string;
@@ -22,7 +13,7 @@ export type CalendarSession = {
   dates_tentative: boolean;
   city: string | null;
   country: string | null;
-  course_id: string | null;
+  type: EventType;
 };
 
 // Holiday regions: a country ("MY", "SG", "TW") or a Malaysian state
@@ -98,8 +89,12 @@ export type CalendarHoliday = {
   source: "import" | "manual";
 };
 
-// What "Import <year>" proposes (src/lib/calendar/holidays.ts).
-export type HolidayPreset = Omit<CalendarHoliday, "id" | "source">;
 
-// Neutral colour for sessions without a course.
-export const NO_COURSE_COLOUR = "#868E96";
+// Calendar colour per event type (#RRGGBB — the year view appends alpha).
+export const TYPE_COLOUR: Record<EventType, string> = {
+  course: "#3B5BDB",
+  retreat: "#0C8599",
+  single_class: "#7048E8",
+  delivery_class: "#E67700",
+  other: "#868E96",
+};

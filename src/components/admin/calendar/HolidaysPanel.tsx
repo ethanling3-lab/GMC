@@ -10,8 +10,7 @@ import {
 } from "@/lib/calendar/types";
 
 // Super Admin's holiday list for one year (calendar_holidays, migration
-// 076). "Import" pre-fills MY / Johor / SG from the library; every row is
-// then editable and deletable, and one-off days can be added by hand.
+// 076). Entered by hand — add, edit, delete; any region from the catalogue.
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const HOLIDAY_RED = "#B91C1C";
@@ -176,14 +175,6 @@ export function HolidaysPanel({
     }
   }
 
-  const importYear = () =>
-    run(async () => {
-      const j = await call("/api/admin/calendar/holidays/import", "POST", { year });
-      const created = Number(j.created ?? 0);
-      const skipped = Number(j.skipped ?? 0);
-      return `✓ Imported ${created} holiday${created === 1 ? "" : "s"} for ${year}${skipped ? ` · ${skipped} already there` : ""}. Check the ≈ dates against the official gazette.`;
-    });
-
   const add = () =>
     run(async () => {
       await call("/api/admin/calendar/holidays", "POST", { ...adding, name_cn: adding.name_cn || null });
@@ -215,19 +206,16 @@ export function HolidaysPanel({
             Public holidays {year} <span className="text-[15px] text-[var(--ink-mute)]">· 公共假期</span>
           </h2>
           <p className="mt-1 max-w-[64ch] text-[12.5px] leading-[1.6] text-[var(--ink-mute)]">
-            Import fills in Malaysia, Johor and Singapore for {year} in one click — then fix any date, delete what you
-            don’t need, or add one-off days (e.g. an election holiday). Importing again never overwrites your edits.
+            Add each public holiday for {year}: date, name and the regions it applies to. Tick “≈ Estimated” for dates
+            that may still move, such as Islamic-calendar holidays.
           </p>
         </div>
-        <button type="button" onClick={importYear} disabled={busy} className={primaryBtn} style={{ color: "var(--paper-warm)" }}>
-          Import {year} holidays
-        </button>
       </div>
 
       <div className="mt-5 grid grid-cols-1 md:grid-cols-[150px_1fr_1fr] xl:grid-cols-[150px_1fr_1fr_220px_auto] gap-x-3 gap-y-2 items-center">
         <DraftFields d={adding} set={setAdding} />
         <div className="md:col-span-3 xl:col-span-5 flex justify-end">
-          <button type="button" onClick={add} disabled={busy || !adding.name_en.trim()} className={smallBtn}>
+          <button type="button" onClick={add} disabled={busy || !adding.name_en.trim()} className={primaryBtn} style={{ color: "var(--paper-warm)" }}>
             + Add holiday
           </button>
         </div>
@@ -238,7 +226,7 @@ export function HolidaysPanel({
       <div className="mt-5 border-t border-[var(--paper-shadow)]">
         {holidays.length === 0 ? (
           <p className="py-6 text-center text-[13px] text-[var(--ink-mute)]">
-            No holidays for {year} yet — use “Import {year} holidays” or add them one by one.
+            No holidays for {year} yet — add the first one above.
           </p>
         ) : (
           <ul>
@@ -266,7 +254,6 @@ export function HolidaysPanel({
                     <span className="text-[var(--ink-soft)]">{h.name_en}</span>
                     <span className="ml-2 text-[11px] text-[var(--ink-faint)]">
                       {h.regions.map((r) => holidayRegionInfo(r).en).join(" · ")}
-                      {h.source === "manual" ? " · added by hand" : ""}
                     </span>
                   </span>
                   <span className="flex gap-1.5">

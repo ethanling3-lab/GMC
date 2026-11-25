@@ -7,13 +7,15 @@ import { writeAuditLog } from "@/lib/audit";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// POST /api/admin/calendar/sessions — quick-add a PLANNED session of a
-// course (Super Admin). Creates a real event row with status 'planned';
+// POST /api/admin/calendar/sessions — quick-add a PLANNED event (Super
+// Admin). Creates a real event row with status 'planned';
 // the admin fills in pricing/content later in the event editor and opens
 // registration by switching it to 'open'.
 const Body = z
   .object({
-    course_id: z.string().uuid(),
+    title_cn: z.string().trim().min(1).max(200),
+    title_en: z.string().trim().max(200).nullable().optional(),
+    type: z.enum(["retreat", "course", "single_class", "delivery_class", "other"]).default("course"),
     start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     city: z.string().trim().max(80).nullable().optional(),
@@ -37,23 +39,24 @@ export async function POST(req: Request) {
   }
 
   const service = createSupabaseServiceClient();
-  const { data: course } = await service
-    .from("courses")
-    .select("id, slug, name_en, name_cn")
-    .eq("id", b.course_id)
-    .maybeSingle<{ id: string; slug: string; name_en: string; name_cn: string }>();
-  if (!course) return NextResponse.json({ error: "course_not_found" }, { status: 404 });
-
-  const slug = await freeSlug(service, `${course.slug}-${b.start_date}`);
+  // Slug from the English title (Chinese-only titles fall back to "event").
+  const base =
+    (b.title_en ?? "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60)
+      .replace(/-+$/g, "") || "event";
+  const slug = await freeSlug(service, `${base}-${b.start_date}`);
   const { data: ev, error } = await service
     .from("events")
     .insert({
       slug,
-      title_en: course.name_en,
-      title_cn: course.name_cn,
-      type: "course",
+      title_en: b.title_en || null,
+      title_cn: b.title_cn,
+      type: b.type,
       status: "planned",
-      course_id: course.id,
       start_date: b.start_date,
       end_date: b.end_date ?? b.start_date,
       city: b.city || null,
@@ -70,7 +73,7 @@ export async function POST(req: Request) {
     action: "event.planned_created",
     entity: "events",
     entity_id: ev.id,
-    after: { slug: ev.slug, course: course.slug, start_date: b.start_date, end_date: b.end_date ?? b.start_date },
+    after: { slug: ev.slug, title_cn: b.title_cn, start_date: b.start_date, end_date: b.end_date ?? b.start_date },
   });
   return NextResponse.json({ ok: true, id: ev.id, slug: ev.slug }, { status: 201 });
 }

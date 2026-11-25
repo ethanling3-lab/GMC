@@ -7,7 +7,7 @@ import { CalendarClient } from "@/components/admin/calendar/CalendarClient";
 export const metadata: Metadata = { title: "Calendar" };
 export const dynamic = "force-dynamic";
 
-// Year calendar of courses / events (Phase 1). Entries are the real event
+// Year calendar of events (Phase 1). Entries are the real event
 // rows — created early as "planned", opened for registration later.
 // Super Admin plans + edits; CS and Finance view (see permissions.ts).
 
@@ -30,7 +30,7 @@ export default async function CalendarPage({ searchParams }: PageProps) {
   const view = sp.view === "month" ? "month" : "year";
   const canPlan = admin.role === "super_admin";
 
-  const { sessions, courses } = await loadCalendarYear(year, { includeDrafts: canPlan });
+  const { sessions } = await loadCalendarYear(year, { includeDrafts: canPlan });
   // This year + next, so planning a session early next year still warns.
   const holidays = await listHolidays(year, year + 1);
 
@@ -41,7 +41,6 @@ export default async function CalendarPage({ searchParams }: PageProps) {
       view={view}
       today={nowSg.toISOString().slice(0, 10)}
       sessions={sessions}
-      courses={courses}
       holidays={holidays}
       canPlan={canPlan}
     />

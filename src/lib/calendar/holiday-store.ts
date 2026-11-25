@@ -2,7 +2,6 @@ import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import type { AdminContext } from "@/lib/admin-guard";
 import { writeAuditLog } from "@/lib/audit";
-import { holidayPresetsForYear } from "./holidays";
 import { isHolidayRegion, sortHolidayRegions, type CalendarHoliday } from "./types";
 
 // Admin-managed public holidays (calendar_holidays, migration 076).
@@ -144,31 +143,4 @@ export async function deleteHoliday(id: string, admin: AdminContext): Promise<{ 
     before: before as Record<string, unknown>,
   });
   return {};
-}
-
-/** Pre-fill a year from the library. Rows already there (same date + name)
- *  are skipped, so importing twice never duplicates or overwrites edits. */
-export async function importHolidayYear(
-  year: number,
-  admin: AdminContext,
-): Promise<{ created: number; skipped: number }> {
-  const presets = holidayPresetsForYear(year);
-  const supabase = createSupabaseServiceClient();
-  const { data, error } = await supabase
-    .from("calendar_holidays")
-    .upsert(
-      presets.map((p) => ({ ...p, source: "import", created_by: admin.id, updated_by: admin.id })),
-      { onConflict: "date,name_en", ignoreDuplicates: true },
-    )
-    .select("id");
-  if (error) throw new Error(`importHolidayYear failed: ${error.message}`);
-  const created = data?.length ?? 0;
-  await writeAuditLog({
-    actor_id: admin.id,
-    action: "holidays.imported",
-    entity: "admins",
-    entity_id: admin.id,
-    after: { year, created, skipped: presets.length - created },
-  });
-  return { created, skipped: presets.length - created };
 }

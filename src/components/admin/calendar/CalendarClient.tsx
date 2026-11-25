@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { STATUS_LABEL } from "@/lib/events-shared";
+import { STATUS_LABEL, TYPE_LABEL, type EventType } from "@/lib/events-shared";
 import { HolidaysPanel } from "./HolidaysPanel";
 import {
   holidayRegionInfo,
   holidayRegionTag,
   sortHolidayRegions,
-  NO_COURSE_COLOUR,
-  type CalendarCourse,
+  TYPE_COLOUR,
   type CalendarHoliday,
   type CalendarSession,
   type HolidayRegion,
@@ -55,7 +54,7 @@ function shortDate(iso: string): string {
 }
 
 // Year calendar (Phase 1). Year view = 12 month panels listing sessions;
-// month view = a Mon–Sun grid. Colour = course. Status reads from the
+// month view = a Mon–Sun grid. Colour = event type. Status reads from the
 // mark: planned = hollow ring + dashed edge, open = solid, closed = muted,
 // draft = faint (Super Admin only).
 
@@ -68,12 +67,11 @@ type Props = {
   view: "year" | "month";
   today: string;
   sessions: CalendarSession[];
-  courses: CalendarCourse[];
   holidays: CalendarHoliday[];
   canPlan: boolean;
 };
 
-export function CalendarClient({ year, month, view, today, sessions, courses, holidays, canPlan }: Props) {
+export function CalendarClient({ year, month, view, today, sessions, holidays, canPlan }: Props) {
   const router = useRouter();
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hiddenRegions, setHiddenRegions] = useState<Set<HolidayRegion>>(new Set());
@@ -118,13 +116,12 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
-  const usedCourseIds = useMemo(
-    () => new Set(sessions.map((s) => s.course_id ?? "none")),
+  const usedTypes = useMemo(
+    () => new Set<EventType>(sessions.map((s) => s.type)),
     [sessions],
   );
   const visible = sessions.filter(
-    (s) => !hidden.has(s.course_id ?? "none") && (showDrafts || s.status !== "draft"),
+    (s) => !hidden.has(s.type) && (showDrafts || s.status !== "draft"),
   );
 
   const go = (p: { year?: number; view?: string; month?: number }) => {
@@ -136,7 +133,7 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
     router.push(`/admin/calendar?${q.toString()}`);
   };
 
-  const toggleCourse = (id: string) =>
+  const toggleType = (id: string) =>
     setHidden((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -145,7 +142,7 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
     });
 
   async function duplicate() {
-    if (!window.confirm(`Copy every ${year} course session into ${year + 1} as planned (dates TBC)? Sessions already copied are skipped.`)) return;
+    if (!window.confirm(`Copy every ${year} event into ${year + 1} as planned (dates TBC)? Events already copied are skipped.`)) return;
     setBusy(true);
     setNotice(null);
     try {
@@ -176,7 +173,7 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
             Calendar.
           </h1>
           <p className="mt-4 max-w-[62ch] text-[14.5px] leading-[1.7] text-[var(--ink-soft)]">
-            Every course session for the year. Plan sessions early — they stay closed to registration
+            Every event for the year. Plan events early — they stay closed to registration
             until you open them in the event editor.
           </p>
         </div>
@@ -205,7 +202,7 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
               className="inline-flex items-center h-10 px-5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[12.5px] tracking-[0.04em] uppercase hover:bg-[var(--cinnabar-deep)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] transition-[background-color,transform] duration-[var(--dur-fast)]"
               style={{ color: "var(--paper-warm)" }}
             >
-              {planning ? "Close" : "+ Plan session"}
+              {planning ? "Close" : "+ Plan event"}
             </button>
           </div>
         ) : null}
@@ -219,7 +216,6 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
 
       {planning && canPlan ? (
         <PlanSessionPanel
-          courses={courses}
           holidayIndex={holidayIndex}
           hiddenRegions={hiddenRegions}
           defaultDate={`${year}-${String(month).padStart(2, "0")}-01`}
@@ -242,7 +238,7 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
         />
       ) : null}
 
-      {/* Toolbar: year nav, view toggle, course legend */}
+      {/* Toolbar: year nav, view toggle, type legend */}
       <div className="mt-8 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
           <NavButton label="Previous" onClick={() => (view === "year" ? go({ year: year - 1 }) : month === 1 ? go({ year: year - 1, month: 12 }) : go({ month: month - 1 }))}>‹</NavButton>
@@ -267,10 +263,9 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
           </div>
         </div>
         <Legend
-          courses={courses.filter((c) => usedCourseIds.has(c.id))}
-          hasNoCourse={usedCourseIds.has("none")}
+          types={(Object.keys(TYPE_COLOUR) as EventType[]).filter((t) => usedTypes.has(t))}
           hidden={hidden}
-          onToggle={toggleCourse}
+          onToggle={toggleType}
           canPlan={canPlan}
           showDrafts={showDrafts}
           setShowDrafts={setShowDrafts}
@@ -308,7 +303,7 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
             className="text-[11.5px] underline underline-offset-2 rounded-[var(--radius-sm)] focus-visible:shadow-[var(--shadow-focus)]"
             style={{ color: HOLIDAY_RED }}
           >
-            No holidays for {year} yet — import them
+            No holidays for {year} yet — add them
           </button>
         ) : (
           <span className="text-[11px] text-[var(--ink-faint)]">
@@ -322,25 +317,15 @@ export function CalendarClient({ year, month, view, today, sessions, courses, ho
           <p className="text-[14px] text-[var(--ink-soft)]">Nothing scheduled in {year} yet.</p>
           {canPlan ? (
             <p className="mt-2 text-[12.5px] text-[var(--ink-mute)]">
-              {courses.length === 0 ? (
-                <>
-                  Start by adding courses in{" "}
-                  <Link href="/admin/courses" style={{ color: "var(--cinnabar)" }} className="underline underline-offset-2">
-                    Courses
-                  </Link>
-                  , then plan sessions here.
-                </>
-              ) : (
-                <>Use “+ Plan session”, or copy last year with “Copy {year - 1} → {year}” from {year - 1}.</>
-              )}
+              Use “+ Plan event”, or copy last year with “Copy {year - 1} → {year}” from {year - 1}.
             </p>
           ) : null}
         </div>
       ) : null}
       {view === "year" ? (
-        <YearGrid year={year} today={today} sessions={visible} courseById={courseById} canOpen={canPlan} holidayIndex={holidayIndex} hiddenRegions={hiddenRegions} onMonth={(m) => go({ view: "month", month: m })} />
+        <YearGrid year={year} today={today} sessions={visible} canOpen={canPlan} holidayIndex={holidayIndex} hiddenRegions={hiddenRegions} onMonth={(m) => go({ view: "month", month: m })} />
       ) : (
-        <MonthGrid year={year} month={month} today={today} sessions={visible} courseById={courseById} canOpen={canPlan} holidayIndex={holidayIndex} hiddenRegions={hiddenRegions} />
+        <MonthGrid year={year} month={month} today={today} sessions={visible} canOpen={canPlan} holidayIndex={holidayIndex} hiddenRegions={hiddenRegions} />
       )}
     </div>
   );
@@ -362,16 +347,14 @@ function NavButton({ label, onClick, children }: { label: string; onClick: () =>
 }
 
 function Legend({
-  courses,
-  hasNoCourse,
+  types,
   hidden,
   onToggle,
   canPlan,
   showDrafts,
   setShowDrafts,
 }: {
-  courses: CalendarCourse[];
-  hasNoCourse: boolean;
+  types: EventType[];
   hidden: Set<string>;
   onToggle: (id: string) => void;
   canPlan: boolean;
@@ -398,8 +381,7 @@ function Legend({
   };
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
-      {courses.map((c) => chip(c.id, c.colour, c.short_label))}
-      {hasNoCourse ? chip("none", NO_COURSE_COLOUR, "No course") : null}
+      {types.map((t) => chip(t, TYPE_COLOUR[t], `${TYPE_LABEL[t].en} · ${TYPE_LABEL[t].zh}`))}
       <span className="mx-1 h-4 w-px bg-[var(--paper-shadow)]" aria-hidden="true" />
       <StatusKey />
       {canPlan ? (
@@ -438,8 +420,8 @@ function Mark({ colour, status }: { colour: string; status: CalendarSession["sta
   );
 }
 
-function sessionTitle(s: CalendarSession, course: CalendarCourse | undefined): string {
-  return course?.short_label ?? s.title_cn ?? s.title_en ?? s.slug;
+function sessionTitle(s: CalendarSession): string {
+  return s.title_cn || s.title_en || s.slug;
 }
 
 // "8–14" within one month; "31 May – 6 Jun" across months.
@@ -454,26 +436,24 @@ function bubbleDates(s: CalendarSession): string {
   return ma === mb ? `${a}–${b} ${ma}` : `${a} ${ma} – ${b} ${mb}`;
 }
 
-// Year-view session = a filled bubble tinted with its course colour (like a
+// Year-view session = a filled bubble tinted with its event-type colour (like a
 // Google Calendar event block). Status reads from the edge: planned =
 // dashed outline on a lighter tint, open = solid tint, closed = muted,
 // draft = faint dashed (Super Admin only).
 function SessionRow({
   s,
-  course,
   canOpen,
   holidayIndex,
 }: {
   s: CalendarSession;
-  course: CalendarCourse | undefined;
   canOpen: boolean;
   holidayIndex: HolidayIndex;
 }) {
-  const colour = course?.colour ?? NO_COURSE_COLOUR;
+  const colour = TYPE_COLOUR[s.type] ?? TYPE_COLOUR.other;
   const clash = holidaysIn(s, holidayIndex);
   const dashed = s.status === "planned" || s.status === "draft";
   const style: React.CSSProperties = {
-    // 8-digit hex = colour + alpha; course colours are validated #RRGGBB.
+    // 8-digit hex = colour + alpha; TYPE_COLOUR values are #RRGGBB.
     background: `${colour}${s.status === "planned" ? "14" : s.status === "draft" ? "0D" : "24"}`,
     borderColor: `${colour}${dashed ? "A6" : "40"}`,
     borderLeftColor: colour,
@@ -486,7 +466,7 @@ function SessionRow({
       style={style}
     >
       <span className="flex items-center gap-1.5 min-w-0">
-        <span className="truncate text-[13px] font-medium leading-[1.35] text-[var(--ink)]">{sessionTitle(s, course)}</span>
+        <span className="truncate text-[13px] font-medium leading-[1.35] text-[var(--ink)]">{sessionTitle(s)}</span>
         {clash.length > 0 ? (
           <span
             className="flex-none rounded-[3px] border px-1 text-[9.5px] leading-[1.5]"
@@ -606,7 +586,6 @@ function YearGrid({
   year,
   today,
   sessions,
-  courseById,
   canOpen,
   holidayIndex,
   hiddenRegions,
@@ -615,7 +594,6 @@ function YearGrid({
   year: number;
   today: string;
   sessions: CalendarSession[];
-  courseById: Map<string, CalendarCourse>;
   canOpen: boolean;
   holidayIndex: HolidayIndex;
   hiddenRegions: Set<HolidayRegion>;
@@ -672,7 +650,7 @@ function YearGrid({
               <div className="flex flex-col gap-1.5">
                 {items.map((it) =>
                   it.s ? (
-                    <SessionRow key={it.key} s={it.s} course={it.s.course_id ? courseById.get(it.s.course_id) : undefined} canOpen={canOpen} holidayIndex={holidayIndex} />
+                    <SessionRow key={it.key} s={it.s} canOpen={canOpen} holidayIndex={holidayIndex} />
                   ) : it.h ? (
                     <HolidayRow key={it.key} g={it.h} hiddenRegions={hiddenRegions} />
                   ) : null,
@@ -691,7 +669,6 @@ function MonthGrid({
   month,
   today,
   sessions,
-  courseById,
   canOpen,
   holidayIndex,
   hiddenRegions,
@@ -700,7 +677,6 @@ function MonthGrid({
   month: number;
   today: string;
   sessions: CalendarSession[];
-  courseById: Map<string, CalendarCourse>;
   canOpen: boolean;
   holidayIndex: HolidayIndex;
   hiddenRegions: Set<HolidayRegion>;
@@ -760,17 +736,16 @@ function MonthGrid({
               ))}
               <div className="flex flex-col gap-1">
                 {list.map((s) => {
-                  const c = s.course_id ? courseById.get(s.course_id) : undefined;
-                  const colour = c?.colour ?? NO_COURSE_COLOUR;
+                  const colour = TYPE_COLOUR[s.type] ?? TYPE_COLOUR.other;
                   const chip = (
                     <span
                       className={`block truncate rounded-[4px] px-1.5 py-0.5 text-[11px] leading-[1.35] ${
                         s.status === "planned" ? "border border-dashed bg-[var(--paper)]" : "text-white"
                       } ${s.status === "draft" ? "opacity-45" : s.status === "closed" ? "opacity-65" : ""}`}
                       style={s.status === "planned" ? { borderColor: colour, color: colour } : { background: colour }}
-                      title={`${sessionTitle(s, c)} · ${STATUS_LABEL[s.status].en}${s.dates_tentative ? " · dates TBC" : ""}`}
+                      title={`${sessionTitle(s)} · ${STATUS_LABEL[s.status].en}${s.dates_tentative ? " · dates TBC" : ""}`}
                     >
-                      {sessionTitle(s, c)}
+                      {sessionTitle(s)}
                       {s.dates_tentative ? " · TBC" : ""}
                     </span>
                   );
@@ -792,19 +767,19 @@ function MonthGrid({
 }
 
 function PlanSessionPanel({
-  courses,
   holidayIndex,
   hiddenRegions,
   defaultDate,
   onDone,
 }: {
-  courses: CalendarCourse[];
   holidayIndex: HolidayIndex;
   hiddenRegions: Set<HolidayRegion>;
   defaultDate: string;
   onDone: (msg: string) => void;
 }) {
-  const [courseId, setCourseId] = useState(courses[0]?.id ?? "");
+  const [titleCn, setTitleCn] = useState("");
+  const [titleEn, setTitleEn] = useState("");
+  const [type, setType] = useState<EventType>("course");
   const [start, setStart] = useState(defaultDate);
   const [end, setEnd] = useState(defaultDate);
   const [city, setCity] = useState("");
@@ -816,22 +791,10 @@ function PlanSessionPanel({
   const input =
     "h-10 w-full px-3 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[13px] text-[var(--ink)] focus:border-[var(--cinnabar)]/50 focus:outline-none focus:shadow-[var(--shadow-focus)] transition-[border-color,box-shadow] duration-[var(--dur-fast)]";
 
-  if (courses.length === 0) {
-    return (
-      <div className="mt-6 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] p-5 text-[13px] text-[var(--ink-soft)]">
-        Add a course first in{" "}
-        <Link href="/admin/courses/new" style={{ color: "var(--cinnabar)" }} className="underline underline-offset-2">
-          Courses
-        </Link>
-        .
-      </div>
-    );
-  }
-
   async function save() {
     setError(null);
-    if (!courseId || !start) {
-      setError("Pick a course and a start date.");
+    if (!titleCn.trim() || !start) {
+      setError("Enter a Chinese title and a start date.");
       return;
     }
     if (end && end < start) {
@@ -844,7 +807,9 @@ function PlanSessionPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          course_id: courseId,
+          title_cn: titleCn.trim(),
+          title_en: titleEn.trim() || null,
+          type,
           start_date: start,
           end_date: end || null,
           city: city.trim() || null,
@@ -854,8 +819,7 @@ function PlanSessionPanel({
       });
       const j = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
       if (!res.ok) throw new Error(j.detail ?? j.error ?? `Failed (${res.status})`);
-      const c = courses.find((x) => x.id === courseId);
-      onDone(`✓ Planned ${c?.name_cn ?? "session"} on ${start}${tbc ? " (TBC)" : ""}. Open it from the calendar to add pricing and open registration.`);
+      onDone(`✓ Planned ${titleCn.trim()} on ${start}${tbc ? " (TBC)" : ""}. Open it from the calendar to add pricing and open registration.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
       setSaving(false);
@@ -866,11 +830,19 @@ function PlanSessionPanel({
     <section className="mt-6 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] shadow-[var(--shadow-paper-1)] p-5">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
         <label className="flex flex-col gap-1.5 lg:col-span-2">
-          <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Course · 课程</span>
-          <select className={input} value={courseId} onChange={(e) => setCourseId(e.target.value)}>
-            {courses.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name_cn} · {c.name_en}
+          <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Title (CN) · 中文名称</span>
+          <input className={input} value={titleCn} onChange={(e) => setTitleCn(e.target.value)} placeholder="永不落空的力量" />
+        </label>
+        <label className="flex flex-col gap-1.5 lg:col-span-2">
+          <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Title (EN) · 英文名称</span>
+          <input className={input} value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder="The Infallible Power" />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Type · 类型</span>
+          <select className={input} value={type} onChange={(e) => setType(e.target.value as EventType)}>
+            {(Object.keys(TYPE_COLOUR) as EventType[]).map((t) => (
+              <option key={t} value={t}>
+                {TYPE_LABEL[t].en} · {TYPE_LABEL[t].zh}
               </option>
             ))}
           </select>
@@ -903,7 +875,7 @@ function PlanSessionPanel({
           <input type="checkbox" checked={tbc} onChange={(e) => setTbc(e.target.checked)} className="h-4 w-4 accent-[var(--cinnabar)]" />
           Dates TBC · 日期待定
         </label>
-        <div className="lg:col-span-2 flex justify-end">
+        <div className="lg:col-span-4 flex justify-end">
           <button
             type="button"
             onClick={save}
@@ -911,7 +883,7 @@ function PlanSessionPanel({
             className="inline-flex items-center h-10 px-5 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[12.5px] tracking-[0.04em] hover:bg-[var(--cinnabar-deep)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] disabled:opacity-50 transition-[background-color,transform] duration-[var(--dur-fast)]"
             style={{ color: "var(--paper-warm)" }}
           >
-            {saving ? "Planning…" : "Plan session"}
+            {saving ? "Planning…" : "Plan event"}
           </button>
         </div>
       </div>

@@ -51,8 +51,7 @@ export type EventFull = {
   payment_methods: string[];
   target_audience_filter: Record<string, unknown>;
   status: EventStatus;
-  // Migration 075 — the course this event is a session of + "dates TBC".
-  course_id: string | null;
+  // Migration 075 — "dates TBC" for planned events.
   dates_tentative: boolean;
   requires_approval: boolean;
   form_schema: Record<string, unknown>;
@@ -164,8 +163,6 @@ type Props = {
   // Active programmes (slug + bilingual name) for the price-tier "applies to"
   // picker. Loaded server-side so newly-created programmes are priceable.
   programmes: { slug: string; name_en: string; name_cn: string }[];
-  // Course catalogue (migration 075) for the "Course" picker.
-  courses: { id: string; name_en: string; name_cn: string; colour: string; active: boolean }[];
 };
 
 type PriceCategoryOption = { key: string; cn: string; en: string };
@@ -183,7 +180,6 @@ export function EventEditor({
   canDelete,
   enrollmentCount,
   programmes,
-  courses,
 }: Props) {
   const router = useRouter();
 
@@ -293,7 +289,6 @@ export function EventEditor({
         country: draft.country,
         start_date: draft.start_date,
         end_date: draft.end_date,
-        course_id: draft.course_id,
         dates_tentative: draft.dates_tentative,
         arrival_day: draft.arrival_day,
         departure_day: draft.departure_day,
@@ -740,18 +735,7 @@ export function EventEditor({
           <Field label="Country" labelZh="国家">
             <input type="text" value={draft.country ?? ""} onChange={(e) => update("country", e.target.value || null)} disabled={!canEdit} className={inputCls()} />
           </Field>
-          <Field label="Course" labelZh="所属课程" hint="Which course this is a session of. Colours it on the calendar.">
-            <select value={draft.course_id ?? ""} onChange={(e) => update("course_id", e.target.value || null)} disabled={!canEdit} className={inputCls()}>
-              <option value="">— No course</option>
-              {courses
-                .filter((c) => c.active || c.id === draft.course_id)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name_cn} · {c.name_en}
-                  </option>
-                ))}
-            </select>
-          </Field>
+          <div />
 
           <Field label="Start date" labelZh="开始日期">
             <input type="date" value={draft.start_date ?? ""} onChange={(e) => update("start_date", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />

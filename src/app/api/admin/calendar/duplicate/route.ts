@@ -7,25 +7,29 @@ import { writeAuditLog } from "@/lib/audit";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// POST /api/admin/calendar/duplicate { from_year } — copy every course
-// session of `from_year` (planned / open / closed; not drafts or
+// POST /api/admin/calendar/duplicate { from_year } — copy every event
+// of `from_year` (planned / open / closed; not drafts or
 // archived) into `from_year + 1` as PLANNED with dates TBC, same month
 // and day. Content, pricing and seating settings carry over; registrations
-// don't. Sessions already copied (same course + same next-year start)
+// don't. Events already copied (same title + same next-year start)
 // are skipped, so running it twice is safe.
 
 const Body = z.object({ from_year: z.number().int().min(2020).max(2100) }).strict();
 
 const COPY_COLUMNS =
-  "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, type, mode, venue, city, country, start_date, end_date, capacity, price, misc_fee, currency, price_tiers, payment_methods, requires_approval, seating_mode, group_size_min, group_size_max, course_id";
+  "id, slug, title_en, title_cn, heading_en, heading_cn, sub_heading_en, sub_heading_cn, body_en, body_cn, type, mode, venue, city, country, start_date, end_date, capacity, price, misc_fee, currency, price_tiers, payment_methods, requires_approval, seating_mode, group_size_min, group_size_max";
 
 type Row = Record<string, unknown> & {
   id: string;
   slug: string;
   start_date: string;
   end_date: string | null;
-  course_id: string | null;
+  title_en: string | null;
+  title_cn: string | null;
 };
+
+const copyKey = (r: { title_en: string | null; title_cn: string | null }, start: string) =>
+  `${(r.title_cn ?? "").trim()}|${(r.title_en ?? "").trim()}|${start}`;
 
 export async function POST(req: Request) {
   const admin = await requireAdmin();
@@ -42,7 +46,6 @@ export async function POST(req: Request) {
     .from("events")
     .select(COPY_COLUMNS)
     .in("status", ["planned", "open", "closed"])
-    .not("course_id", "is", null)
     .gte("start_date", `${fromYear}-01-01`)
     .lte("start_date", `${fromYear}-12-31`)
     .order("start_date", { ascending: true })
@@ -51,18 +54,18 @@ export async function POST(req: Request) {
 
   const { data: existing } = await service
     .from("events")
-    .select("slug, course_id, start_date")
+    .select("slug, title_en, title_cn, start_date")
     .gte("start_date", `${toYear}-01-01`)
     .lte("start_date", `${toYear}-12-31`)
-    .returns<Array<{ slug: string; course_id: string | null; start_date: string }>>();
-  const already = new Set((existing ?? []).map((e) => `${e.course_id}|${e.start_date}`));
+    .returns<Array<{ slug: string; title_en: string | null; title_cn: string | null; start_date: string }>>();
+  const already = new Set((existing ?? []).map((e) => copyKey(e, e.start_date)));
   const takenSlugs = new Set((existing ?? []).map((e) => e.slug));
 
   const inserts: Record<string, unknown>[] = [];
   let skipped = 0;
   for (const r of src ?? []) {
     const start = shiftYear(r.start_date);
-    if (already.has(`${r.course_id}|${start}`)) {
+    if (already.has(copyKey(r, start))) {
       skipped += 1;
       continue;
     }
