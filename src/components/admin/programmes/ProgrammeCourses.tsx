@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { groupBySection, type Course, type ProgrammeCourse } from "@/lib/programmes/course-types";
 
 // "Included courses · 包含课程" on a programme's page. Everyone who can
@@ -135,12 +135,6 @@ export function ProgrammeCourses({
         </span>
       </div>
 
-      <datalist id="all-courses">
-        {allCourses.filter((c) => !inProgramme.has(c.id)).map((c) => (
-          <option key={c.id} value={c.name_cn}>{c.name_en ?? ""}</option>
-        ))}
-      </datalist>
-
       {canEdit ? (
         <div className="mt-5 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] p-5">
           <h3 className="text-[14px] font-medium text-[var(--ink)]">Add a course · 添加课程</h3>
@@ -156,9 +150,19 @@ export function ProgrammeCourses({
             />
             <label className="flex flex-col gap-1">
               <span className={label}>Course (CN) · 中文名称</span>
-              <input className={input} list="all-courses" value={adding.name_cn} placeholder="永不落空的力量" onChange={(e) => setAdding((a) => ({ ...a, name_cn: e.target.value }))} />
+              <CourseCombo
+                value={adding.name_cn}
+                courses={allCourses}
+                inProgramme={inProgramme}
+                programmeName={programmeName}
+                onChange={(v) => setAdding((a) => ({ ...a, name_cn: v }))}
+              />
             </label>
-            {existing ? (
+            {existing && inProgramme.has(existing.id) ? (
+              <div className="flex items-end pb-2 text-[12px] text-[var(--cinnabar-deep)]">
+                Already in {programmeName}.
+              </div>
+            ) : existing ? (
               <div className="flex items-end pb-2 text-[12px] text-[var(--ink-soft)]">
                 Existing course{existing.name_en ? ` · ${existing.name_en}` : ""}: it will be shared with the programmes that already list it.
               </div>
@@ -182,7 +186,7 @@ export function ProgrammeCourses({
             ) : null}
           </div>
           <div className="mt-4 flex justify-end">
-            <button type="button" className={primaryBtn} style={{ color: "var(--paper-warm)" }} disabled={busy || !adding.name_cn.trim() || !adding.section_cn.trim()} onClick={add}>
+            <button type="button" className={primaryBtn} style={{ color: "var(--paper-warm)" }} disabled={busy || !adding.name_cn.trim() || !adding.section_cn.trim() || (!!existing && inProgramme.has(existing.id))} onClick={add}>
               + Add course
             </button>
           </div>
@@ -413,5 +417,113 @@ function RunsSummary({ pc }: { pc: ProgrammeCourse }) {
         </>
       ) : null}
     </span>
+  );
+}
+
+/** Course name box with a compact list of every course. Courses already in
+ *  this programme are shown greyed so a new one is visible straight away. */
+function CourseCombo({
+  value,
+  courses,
+  inProgramme,
+  programmeName,
+  onChange,
+}: {
+  value: string;
+  courses: Course[];
+  inProgramme: Set<string>;
+  programmeName: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const listRef = useRef<HTMLUListElement>(null);
+  const q = value.trim().toLowerCase();
+  const shown = useMemo(() => {
+    const list = q
+      ? courses.filter((c) => c.name_cn.toLowerCase().includes(q) || (c.name_en ?? "").toLowerCase().includes(q))
+      : courses;
+    // Pickable first, then the ones already here.
+    return [...list].sort((a, b) => Number(inProgramme.has(a.id)) - Number(inProgramme.has(b.id)));
+  }, [courses, inProgramme, q]);
+
+  function pick(c: Course) {
+    if (inProgramme.has(c.id)) return;
+    onChange(c.name_cn);
+    setOpen(false);
+  }
+
+  function onKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setOpen(true);
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setActive((i) => {
+        const n = Math.max(0, Math.min(shown.length - 1, i + step));
+        listRef.current?.children[n]?.scrollIntoView({ block: "nearest" });
+        return n;
+      });
+    } else if (e.key === "Enter" && open && shown[active]) {
+      e.preventDefault();
+      pick(shown[active]);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div className="relative">
+      <input
+        className={input}
+        value={value}
+        placeholder="永不落空的力量"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls="course-combo-list"
+        aria-autocomplete="list"
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={onKey}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+          setActive(-1);
+        }}
+      />
+      {open && shown.length > 0 ? (
+        <ul
+          id="course-combo-list"
+          ref={listRef}
+          role="listbox"
+          className="absolute z-30 left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] py-1 shadow-[var(--shadow-paper-2)]"
+        >
+          {shown.map((c, i) => {
+            const here = inProgramme.has(c.id);
+            return (
+              <li
+                key={c.id}
+                role="option"
+                aria-selected={i === active}
+                aria-disabled={here}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(c);
+                }}
+                onMouseEnter={() => setActive(i)}
+                className={`px-2.5 py-1.5 text-[12.5px] leading-snug ${
+                  here
+                    ? "cursor-default text-[var(--ink-faint)]"
+                    : `cursor-pointer text-[var(--ink)] ${i === active ? "bg-[var(--paper-warm)]" : ""}`
+                }`}
+              >
+                <span>{c.name_cn}</span>
+                {c.name_en ? <span className="ml-1.5 text-[11.5px] text-[var(--ink-mute)]">{c.name_en}</span> : null}
+                {here ? <span className="ml-1.5 text-[11px]">· already in {programmeName}</span> : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
   );
 }

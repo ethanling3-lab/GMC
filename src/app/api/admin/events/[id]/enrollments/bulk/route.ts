@@ -1,3 +1,4 @@
+import { releaseSeat } from "@/lib/seats/seats";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServiceClient } from "@/lib/supabase";
@@ -195,6 +196,10 @@ export async function POST(req: Request, { params }: RouteCtx) {
   }
   if (updRes.error) {
     return NextResponse.json({ error: updRes.error.message }, { status: 500 });
+  }
+  // Cancelled / rejected registrations give their 名额 back.
+  if (nextStatus === "cancelled" || nextStatus === "rejected") {
+    for (const r of found) await releaseSeat(r.id, `registration ${nextStatus}`, admin, { reprice: false });
   }
 
   // Fan out notifications + audit rows in parallel. Notification failures are

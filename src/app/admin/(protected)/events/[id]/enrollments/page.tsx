@@ -13,6 +13,7 @@ import {
   type ReferrerRef,
 } from "@/components/admin/events/EnrollmentsTable";
 import { PriceCheckPanel } from "@/components/admin/events/PriceCheckPanel";
+import { seatsForEvent } from "@/lib/seats/seats";
 import { EnrollmentsToolbar } from "@/components/admin/events/EnrollmentsToolbar";
 import type { PriceTier } from "@/lib/pricing/tiers";
 import { STATUS_LABEL as EVENT_STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
@@ -72,7 +73,7 @@ export default async function EventEnrollmentsPage({
     const primary = await supabase
       .from("events")
       .select(
-        "id, slug, title_en, title_cn, type, status, start_date, end_date, capacity, form_schema, price_tiers",
+        "id, slug, title_en, title_cn, type, status, start_date, end_date, capacity, form_schema, price_tiers, course_id",
       )
       .eq("id", eventId)
       .maybeSingle();
@@ -216,6 +217,16 @@ export default async function EventEnrollmentsPage({
         .filter((v): v is string => typeof v === "string" && v.length > 0),
     ),
   );
+  // 名额 seats: usable (given to this person for this event's course) and
+  // already used on these registrations. Super Admin only.
+  const seatInfo =
+    admin.role === "super_admin"
+      ? await seatsForEvent(
+          { id: event.id, course_id: (event as { course_id?: string | null }).course_id ?? null },
+          (rows as Array<{ participant: { id: string } | null }>).map((r) => r.participant?.id).filter((x): x is string => !!x),
+        )
+      : { usable: {}, usedByEnrollment: {} };
+
   // Programme names for the "why this price" line on each row.
   const programmeNames: Record<string, string> = {};
   {
@@ -439,6 +450,7 @@ export default async function EventEnrollmentsPage({
       <EnrollmentsTable
         eventId={event.id}
         programmeNames={programmeNames}
+        seatInfo={seatInfo}
         rows={rows}
         canEdit={admin.role === "super_admin"}
         hasFilter={statusFilter !== null || q.length > 0}

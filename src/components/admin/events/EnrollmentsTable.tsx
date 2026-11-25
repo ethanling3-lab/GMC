@@ -29,6 +29,7 @@ import {
   type RejectReasonValue,
 } from "./RejectReasonModal";
 import { describeBasis, type PriceBasis, type PriceTier } from "@/lib/pricing/tiers";
+import { SEAT_TIER_KEY, type Seat } from "@/lib/seats/types";
 
 type ParticipantRef = {
   id: string;
@@ -115,6 +116,8 @@ type Props = {
   priceTiers?: PriceTier[];
   /** Programme slug → Chinese name, for the "why this price" line. */
   programmeNames?: Record<string, string>;
+  /** 名额: usable seats per participant + seats used per enrollment. */
+  seatInfo?: { usable: Record<string, Seat[]>; usedByEnrollment: Record<string, Seat> };
   referrerById: Record<string, ReferrerRef>;
   latestNotificationByEnrollment?: Record<string, LatestNotification>;
 };
@@ -281,6 +284,7 @@ export function EnrollmentsTable({
   formSchema,
   priceTiers = [],
   programmeNames = {},
+  seatInfo = { usable: {}, usedByEnrollment: {} },
   referrerById,
   latestNotificationByEnrollment = {},
 }: Props) {
@@ -288,6 +292,7 @@ export function EnrollmentsTable({
   const tierByKey = new Map(priceTiers.map((t) => [t.key, t]));
   const tierLabel = (key: string | null | undefined): string | null => {
     if (!key) return null;
+    if (key === SEAT_TIER_KEY) return "名额 · 会务费 only";
     const t = tierByKey.get(key);
     return t ? t.label_cn || t.label_en : null;
   };
@@ -611,8 +616,71 @@ export function EnrollmentsTable({
   // Tier-override editor — window.prompt picker (matches the Pin editor
   // pattern). Only offered when the event defines price tiers. Admin types
   // the number of the tier (or blank to clear → falls back to event price).
+  // 名额: use a seat given to this person for this event's course.
+  async function useSeat(enrollmentId: string, seats: Seat[]) {
+    if (!canEdit || seats.length === 0) return;
+    let seat = seats[0];
+    if (seats.length > 1) {
+      const menu = seats.map((x, i) => `${i + 1}. from ${x.holder.name}${x.note ? ` (${x.note})` : ""}`).join("\n");
+      const raw = window.prompt(`Use which 名额?\n${menu}`, "1");
+      if (raw === null) return;
+      const idx = Number(raw.trim()) - 1;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= seats.length) {
+        setError(`Enter a number between 1 and ${seats.length}.`);
+        return;
+      }
+      seat = seats[idx];
+    } else if (!window.confirm(`Use the ${seat.course.name_cn} 名额 from ${seat.holder.name}? The course fee is waived — they pay the 会务费 only.`)) {
+      return;
+    }
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${enrollmentId}/seat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seat_id: seat.id }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.detail ?? payload?.error ?? `Couldn't use the 名额 (${res.status})`);
+      router.refresh();
+      setToast({ message: `名额 used · amount due ${payload?.amount_due ?? "updated"}` });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't use the 名额");
+    }
+  }
+
+  async function removeSeat(enrollmentId: string, seat: Seat) {
+    if (!canEdit) return;
+    const reason = window.prompt(
+      `Remove the 名额 from ${seat.holder.name}? It goes back to this person and the price is worked out again.\nReason (kept in the audit log):`,
+    );
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      setError("Give a short reason (3+ characters).");
+      return;
+    }
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/enrollments/${enrollmentId}/seat`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.detail ?? payload?.error ?? `Couldn't remove the 名额 (${res.status})`);
+      router.refresh();
+      setToast({ message: `名额 removed · amount due ${payload?.amount_due ?? "updated"}` });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't remove the 名额");
+    }
+  }
+
   async function editPriceTier(id: string, currentKey: string | null | undefined, currentRepeat = false) {
     if (!canEdit || priceTiers.length === 0) return;
+    if (currentKey === "seat") {
+      window.alert("A 名额 is used on this registration, so the price is the 会务费 only.\nRemove the 名额 first to change the price.");
+      return;
+    }
     const menu = priceTiers
       .map(
         (t, i) =>
@@ -1204,7 +1272,7 @@ export function EnrollmentsTable({
                         <span className="text-[var(--ink-faint)]">—</span>
                       )}
                       {/* Tiered pricing — amount due + applied tier (migration 042). */}
-                      {priceTiers.length > 0 ? (
+                      {priceTiers.length > 0 || r.price_tier_key === SEAT_TIER_KEY ? (
                         canEdit ? (
                           <button
                             type="button"
@@ -1240,6 +1308,38 @@ export function EnrollmentsTable({
                           </div>
                         )
                       ) : null}
+                      {/* 名额 — use a seat given to this person, or remove one. */}
+                      {(() => {
+                        const used = seatInfo.usedByEnrollment[r.id];
+                        if (used) {
+                          return (
+                            <div className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-[#3a6b3b]">
+                              <span title={`${used.course.name_cn} 名额 from ${used.holder.name}`}>名额 · from {used.holder.name}</span>
+                              {canEdit ? (
+                                <button
+                                  type="button"
+                                  onClick={() => removeSeat(r.id, used)}
+                                  className="px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[var(--ink-mute)] hover:bg-[var(--cinnabar-wash)]/60 hover:text-[var(--cinnabar-deep)] transition-colors duration-[var(--dur-fast)]"
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        }
+                        const avail = r.participant ? seatInfo.usable[r.participant.id] ?? [] : [];
+                        if (!canEdit || avail.length === 0 || r.status === "cancelled" || r.status === "rejected") return null;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => useSeat(r.id, avail)}
+                            title={avail.map((x) => `from ${x.holder.name}`).join(", ")}
+                            className="mt-1 inline-flex items-center gap-1 h-6 px-2.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)]/50 text-[11px] text-[var(--cinnabar-deep)] hover:border-[var(--cinnabar)]/70 hover:bg-[var(--cinnabar-wash)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] transition-[border-color,background-color,transform] duration-[var(--dur-fast)]"
+                          >
+                            Use 名额{avail.length > 1 ? ` (${avail.length})` : ""} · from {avail[0].holder.name}
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td className="px-5 py-3.5 text-right text-[var(--ink-mute)] whitespace-nowrap align-top">
                       <span

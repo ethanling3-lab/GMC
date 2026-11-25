@@ -163,6 +163,13 @@ export type AuditAction =
   | "programme.course_added"
   | "programme.course_updated"
   | "programme.course_removed"
+  // 名额 reward seats (migration 082)
+  | "seat.issued"
+  | "seat.assigned"
+  | "seat.unassigned"
+  | "seat.cancelled"
+  | "seat.used"
+  | "seat.released"
   | "holiday.created"
   | "holiday.updated"
   | "holiday.deleted"

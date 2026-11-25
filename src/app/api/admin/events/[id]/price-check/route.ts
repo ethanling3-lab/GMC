@@ -58,8 +58,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   let checked = 0;
   for (const r of rows ?? []) {
     checked += 1;
-    // A staff override is a deliberate decision — don't flag it.
-    if (r.price_basis?.rule === "override") continue;
+    // A staff override or a 名额 is a deliberate decision — don't flag it.
+    if (r.price_basis?.rule === "override" || r.price_basis?.rule === "seat") continue;
     const now = resolvePrice(event, people.get(r.participant_id) ?? null);
     const stored = r.amount_due == null ? null : Number(r.amount_due);
     const same = stored === now.amount && (r.price_tier_key ?? null) === (now.tier_key ?? null);

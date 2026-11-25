@@ -79,7 +79,9 @@ export type ParticipantLike = {
 /** Why a price was chosen — stored on the enrollment (price_basis). */
 export type PriceBasis = {
   v: 1;
-  rule: "tier" | "classic_fallback" | "default_tier" | "single_price" | "none" | "override";
+  rule: "tier" | "classic_fallback" | "default_tier" | "single_price" | "none" | "override" | "seat";
+  /** 名额 only: the seat used and whose it was. */
+  seat?: { id: string; holder_id: string; holder_name: string; course_name: string };
   /** Staff override only: who changed it and why. */
   override?: { by: string; reason: string; at: string };
   category: ParticipantPriceCategory;
@@ -321,6 +323,8 @@ export function describeBasis(
       return `${who} · no tier for them, used 其他${rep} → ${money(b.amount)}`;
     case "single_price":
       return `${who} · single price → ${money(b.amount)}`;
+    case "seat":
+      return `名额 from ${b.seat?.holder_name ?? "a member"} (${b.seat?.course_name ?? "course"}) → 会务费 only ${money(b.amount)}`;
     case "override":
       return `Set by staff → ${money(b.amount)}${b.override?.reason ? ` · “${b.override.reason}”` : ""}`;
     default:

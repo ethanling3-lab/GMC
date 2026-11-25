@@ -803,6 +803,8 @@ function PlanSessionPanel({
   const [type, setType] = useState<EventType>("course");
   const [courseId, setCourseId] = useState(initial?.id ?? "");
   const courseRequired = type === "course" && courseOptions.length > 0;
+  // A Course event's title IS the course name (migration 083).
+  const lockedCourse = type === "course" ? courseOptions.find((o) => o.id === courseId) : undefined;
   const [start, setStart] = useState(defaultDate);
   const [end, setEnd] = useState(defaultDate);
   const [city, setCity] = useState("");
@@ -888,11 +890,11 @@ function PlanSessionPanel({
         ) : null}
         <label className="flex flex-col gap-1.5 lg:col-span-2">
           <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Title (CN) · 中文名称</span>
-          <input className={input} value={titleCn} onChange={(e) => setTitleCn(e.target.value)} placeholder="永不落空的力量" />
+          <input className={input} value={lockedCourse ? lockedCourse.name_cn : titleCn} readOnly={!!lockedCourse} onChange={(e) => setTitleCn(e.target.value)} placeholder="永不落空的力量" />
         </label>
         <label className="flex flex-col gap-1.5 lg:col-span-2">
           <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Title (EN) · 英文名称</span>
-          <input className={input} value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder="The Infallible Power" />
+          <input className={input} value={lockedCourse ? (lockedCourse.name_en ?? "") : titleEn} readOnly={!!lockedCourse} onChange={(e) => setTitleEn(e.target.value)} placeholder="The Infallible Power" />
         </label>
         <label className="flex flex-col gap-1.5">
           <span className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-mute)]">Type · 类型</span>

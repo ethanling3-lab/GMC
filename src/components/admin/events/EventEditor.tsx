@@ -237,6 +237,10 @@ export function EventEditor({
     };
   }, [statusMenuOpen]);
 
+  // A Course event linked to a course takes the course's name as its title.
+  const titleCourse =
+    draft.type === "course" && draft.course_id ? courseOptions.find((o) => o.id === draft.course_id) ?? null : null;
+
   function update<K extends keyof EventFull>(key: K, value: EventFull[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
   }
@@ -281,8 +285,8 @@ export function EventEditor({
     try {
       await patch({
         slug: draft.slug.trim(),
-        title_en: draft.title_en,
-        title_cn: draft.title_cn,
+        title_en: titleCourse ? (titleCourse.name_en ?? null) : draft.title_en,
+        title_cn: titleCourse ? titleCourse.name_cn : draft.title_cn,
         heading_en: draft.heading_en,
         heading_cn: draft.heading_cn,
         sub_heading_en: draft.sub_heading_en,
@@ -645,6 +649,51 @@ export function EventEditor({
 
       {/* Content section */}
       <Section title="Content" titleZh="内容" description="Bilingual copy for the public page.">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <Field
+              label="Course"
+              labelZh="课程"
+              hint={(() => {
+                const c = courseOptions.find((o) => o.id === draft.course_id);
+                if (!c) return "Which programme course this event is a run of.";
+                return c.programmes.length > 0 ? `Included in: ${c.programmes.join(" · ")}` : "Not in any programme's list.";
+              })()}
+            >
+              <select
+                value={draft.course_id ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value || null;
+                  const c = courseOptions.find((o) => o.id === id);
+                  // A Course event's title IS the course name (migration 083
+                  // enforces it); other types only fill empty titles.
+                  setDraft((d) =>
+                    d.type === "course" && c
+                      ? { ...d, course_id: id, title_cn: c.name_cn, title_en: c.name_en ?? null }
+                      : {
+                          ...d,
+                          course_id: id,
+                          title_cn: d.title_cn?.trim() ? d.title_cn : (c?.name_cn ?? d.title_cn),
+                          title_en: d.title_en?.trim() ? d.title_en : (c?.name_en ?? d.title_en),
+                        },
+                  );
+                }}
+                disabled={!canEdit}
+                className={inputCls()}
+              >
+                <option value="">— Not set</option>
+                {courseOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name_cn}
+                    {c.name_en ? ` · ${c.name_en}` : ""}
+                  </option>
+                ))}
+              </select>
+              {draft.type === "course" && !draft.course_id && courseOptions.length > 0 ? (
+                <span className="text-[11.5px] text-[#B45309]">Not linked to a programme course yet.</span>
+              ) : null}
+            </Field>
+        </div>
+
         <Field label="Slug" labelZh="链接标识" required>
           <div className="flex items-center gap-2">
             <span className="font-mono text-[12px] text-[var(--ink-faint)] flex-none">
@@ -662,11 +711,11 @@ export function EventEditor({
         </Field>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <Field label="Title (EN)" labelZh="标题">
-            <input type="text" value={draft.title_en ?? ""} onChange={(e) => update("title_en", e.target.value || null)} disabled={!canEdit} className={inputCls()} />
+          <Field label="Title (EN)" labelZh="标题" hint={titleCourse ? "Same as the course name." : undefined}>
+            <input type="text" value={titleCourse ? (titleCourse.name_en ?? "") : (draft.title_en ?? "")} onChange={(e) => update("title_en", e.target.value || null)} disabled={!canEdit} readOnly={!!titleCourse} className={inputCls(titleCourse ? "text-[var(--ink-soft)] cursor-default" : undefined)} />
           </Field>
-          <Field label="Title (中文)" labelZh="中文标题">
-            <input type="text" value={draft.title_cn ?? ""} onChange={(e) => update("title_cn", e.target.value || null)} disabled={!canEdit} className={inputCls()} />
+          <Field label="Title (中文)" labelZh="中文标题" hint={titleCourse ? "Same as the course name." : undefined}>
+            <input type="text" value={titleCourse ? titleCourse.name_cn : (draft.title_cn ?? "")} onChange={(e) => update("title_cn", e.target.value || null)} disabled={!canEdit} readOnly={!!titleCourse} className={inputCls(titleCourse ? "text-[var(--ink-soft)] cursor-default" : undefined)} />
           </Field>
 
           <Field label="Heading (EN)" labelZh="主标题">
@@ -742,43 +791,6 @@ export function EventEditor({
           </Field>
           <Field label="Country" labelZh="国家">
             <input type="text" value={draft.country ?? ""} onChange={(e) => update("country", e.target.value || null)} disabled={!canEdit} className={inputCls()} />
-          </Field>
-          <Field
-            label="Course"
-            labelZh="课程"
-            hint={(() => {
-              const c = courseOptions.find((o) => o.id === draft.course_id);
-              if (!c) return "Which programme course this event is a run of.";
-              return c.programmes.length > 0 ? `Included in: ${c.programmes.join(" · ")}` : "Not in any programme's list.";
-            })()}
-          >
-            <select
-              value={draft.course_id ?? ""}
-              onChange={(e) => {
-                const id = e.target.value || null;
-                const c = courseOptions.find((o) => o.id === id);
-                // Empty titles take the course's names; typed titles are kept.
-                setDraft((d) => ({
-                  ...d,
-                  course_id: id,
-                  title_cn: d.title_cn?.trim() ? d.title_cn : (c?.name_cn ?? d.title_cn),
-                  title_en: d.title_en?.trim() ? d.title_en : (c?.name_en ?? d.title_en),
-                }));
-              }}
-              disabled={!canEdit}
-              className={inputCls()}
-            >
-              <option value="">— Not set</option>
-              {courseOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name_cn}
-                  {c.name_en ? ` · ${c.name_en}` : ""}
-                </option>
-              ))}
-            </select>
-            {draft.type === "course" && !draft.course_id && courseOptions.length > 0 ? (
-              <span className="text-[11.5px] text-[#B45309]">Not linked to a programme course yet.</span>
-            ) : null}
           </Field>
 
           <Field label="Start date" labelZh="开始日期">

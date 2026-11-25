@@ -19,6 +19,8 @@ import type { AttendedCourse } from "@/components/admin/participants/detail/Prof
 import { ScoringEditor } from "@/components/admin/participants/detail/ScoringEditor";
 import { describePriceCategory } from "@/lib/pricing/resolve-server";
 import { listCourses } from "@/lib/programmes/courses";
+import { seatsForParticipant } from "@/lib/seats/seats";
+import { RewardSeatsCard } from "@/components/admin/participants/detail/RewardSeatsCard";
 import { ZuZhangProfileEditor } from "@/components/admin/participants/detail/ZuZhangProfileEditor";
 import type {
   GrowthDimension,
@@ -500,6 +502,15 @@ export default async function ParticipantDetailPage({ params }: Props) {
               cs_notes: p.cs_notes,
             }}
           />
+
+          {isSuper ? (
+            <RewardSeatsCard
+              participantId={p.id}
+              participantName={p.name_cn || p.name_en || "this person"}
+              {...(await seatsForParticipant(p.id))}
+              courses={(await listCourses()).map((c) => ({ id: c.id, name_cn: c.name_cn, name_en: c.name_en }))}
+            />
+          ) : null}
 
           <RelationshipsEditor
             participantId={p.id}

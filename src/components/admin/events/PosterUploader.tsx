@@ -149,7 +149,7 @@ export function PosterUploader({
           );
           uploadFiles(files);
         }}
-        className={`relative aspect-[16/9] rounded-[var(--radius-lg)] overflow-hidden
+        className={`relative ${showing ? "aspect-[16/9] w-full max-w-[480px]" : "h-28 w-full"} rounded-[var(--radius-lg)] overflow-hidden
                     border-2 border-dashed
                     transition-[background-color,border-color] duration-[var(--dur-fast)]
                     ${
@@ -163,20 +163,20 @@ export function PosterUploader({
             src={showing}
             alt={showIdx === 0 ? "Event hero" : `Slide ${showIdx + 1}`}
             fill
-            sizes="(max-width: 1024px) 100vw, 720px"
+            sizes="(max-width: 1024px) 100vw, 480px"
             className="object-cover"
             unoptimized
           />
         ) : (
           <div
-            className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
+            className="absolute inset-0 flex items-center justify-center gap-3 px-6 text-left"
             style={{
               backgroundImage:
                 "radial-gradient(540px 340px at 50% 30%, rgba(37,99,235,0.06), transparent 65%)",
             }}
           >
             <span
-              className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[var(--paper)] border border-[var(--paper-shadow)] text-[var(--cinnabar)]"
+              className="flex-none inline-flex items-center justify-center w-10 h-10 rounded-full bg-[var(--paper)] border border-[var(--paper-shadow)] text-[var(--cinnabar)]"
               aria-hidden="true"
             >
               <svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

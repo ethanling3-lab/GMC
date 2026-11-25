@@ -25,6 +25,7 @@ import {
   type PriceTier,
 } from "@/lib/pricing/tiers";
 import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
+import { releaseSeat } from "@/lib/seats/seats";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
 import { participantEmailLocale } from "@/lib/i18n";
 import { ensureRegionId } from "@/lib/region-id";
@@ -181,6 +182,18 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     }
     const ev = (row as unknown as { event: EventShape | null }).event;
     if (!ev) return NextResponse.json({ error: "event_not_found" }, { status: 404 });
+    // A 名额 is applied — remove it first (that re-prices and frees the seat).
+    const { data: seatRow } = await service
+      .from("reward_seats")
+      .select("id")
+      .eq("enrollment_id", enrollmentId)
+      .maybeSingle();
+    if (seatRow) {
+      return NextResponse.json(
+        { error: "seat_applied", detail: "A 名额 is used on this registration. Remove the 名额 first." },
+        { status: 409 },
+      );
+    }
     const misc = Number(ev.misc_fee ?? 0) || 0;
     let nextKey: string | null;
     let amountDue: number | null;
@@ -445,6 +458,10 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   }
   if (updRes.error) {
     return NextResponse.json({ error: updRes.error.message }, { status: 500 });
+  }
+  // A cancelled / rejected registration gives its 名额 back to the recipient.
+  if (nextStatus === "cancelled" || nextStatus === "rejected") {
+    await releaseSeat(enrollmentId, `registration ${nextStatus}`, admin, { reprice: false });
   }
 
   await writeAuditLog({

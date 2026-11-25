@@ -43,6 +43,7 @@ export function NewEventForm({ courseOptions }: { courseOptions: CourseOption[] 
 
   const courseRequired = type === "course" && courseOptions.length > 0;
   const picked = courseOptions.find((c) => c.id === courseId);
+  const titleLocked = type === "course" && !!picked;
 
   // Picking a course fills in titles the admin hasn't typed themselves
   // (empty, or still the previous course's names).
@@ -51,6 +52,12 @@ export function NewEventForm({ courseOptions }: { courseOptions: CourseOption[] 
     const next = courseOptions.find((c) => c.id === id);
     setCourseId(id);
     if (!next) return;
+    if (type === "course") {
+      // A Course event's title IS the course name (migration 083).
+      setTitleCn(next.name_cn);
+      handleTitleEnChange(next.name_en ?? "");
+      return;
+    }
     if (!titleCn.trim() || titleCn === prev?.name_cn) setTitleCn(next.name_cn);
     if (!titleEn.trim() || titleEn === (prev?.name_en ?? "")) handleTitleEnChange(next.name_en ?? "");
   }
@@ -82,8 +89,8 @@ export function NewEventForm({ courseOptions }: { courseOptions: CourseOption[] 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slug: finalSlug,
-          title_en: titleEn.trim() || null,
-          title_cn: titleCn.trim() || null,
+          title_en: titleLocked ? (picked?.name_en ?? null) : titleEn.trim() || null,
+          title_cn: titleLocked ? (picked?.name_cn ?? null) : titleCn.trim() || null,
           type,
           mode,
           course_id: courseId || null,
@@ -125,10 +132,10 @@ export function NewEventForm({ courseOptions }: { courseOptions: CourseOption[] 
             hint={
               picked
                 ? picked.programmes.length > 0
-                  ? `Included in: ${picked.programmes.join(" · ")}. Fills in the titles below.`
+                  ? `Included in: ${picked.programmes.join(" · ")}.${type === "course" ? " The title is the course name." : ""}`
                   : "Not in any programme's list."
                 : courseRequired
-                  ? "Which programme course this event is a run of. Fills in the titles below."
+                  ? "Which programme course this event is a run of. The title is the course name."
                   : "Optional for this type."
             }
           >
@@ -154,7 +161,8 @@ export function NewEventForm({ courseOptions }: { courseOptions: CourseOption[] 
         <Field label="Title (English)" labelZh="标题">
           <input
             type="text"
-            value={titleEn}
+            value={titleLocked ? (picked?.name_en ?? "") : titleEn}
+            readOnly={titleLocked}
             onChange={(e) => handleTitleEnChange(e.target.value)}
             placeholder="GMC April 2026 — Philosophy & Cultivation"
             className="h-10 w-full px-3.5 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)]
@@ -167,7 +175,8 @@ export function NewEventForm({ courseOptions }: { courseOptions: CourseOption[] 
         <Field label="Title (中文)" labelZh="中文标题">
           <input
             type="text"
-            value={titleCn}
+            value={titleLocked ? (picked?.name_cn ?? "") : titleCn}
+            readOnly={titleLocked}
             onChange={(e) => setTitleCn(e.target.value)}
             placeholder="GMC 2026年4月 — 经典与修心"
             className="h-10 w-full px-3.5 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)]
