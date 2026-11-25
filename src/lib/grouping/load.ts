@@ -1,4 +1,5 @@
 import "server-only";
+import { DEFAULT_LANGUAGE } from "@/lib/participants/languages";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   CushionShape,
@@ -72,6 +73,8 @@ type EnrolmentRow = {
     zu_zhang_core_traits: ZuZhangCoreTrait[] | null;
     energy_profile: "high" | "medium" | "quiet" | null;
     language_fluency: "en" | "cn" | "both" | null;
+    listening_language: string | null;
+    spoken_languages: string[] | null;
   } | null;
 };
 
@@ -98,7 +101,7 @@ export async function loadGroupingInputs(
          is_old_student, family_of_participant_id, region,
          goal_dimensions, student_qualification,
          zu_zhang_tier, zu_zhang_grade, zu_zhang_dimensions, zu_zhang_core_traits,
-         energy_profile, language_fluency
+         energy_profile, language_fluency, listening_language, spoken_languages
        )`,
     )
     .eq("event_id", eventId)
@@ -210,6 +213,27 @@ export async function loadGroupingInputs(
     }
   }
 
+  // CS-suggested 组长 (migration 072), ordered by position. Non-fatal:
+  // grouping still runs without suggestions if the read fails.
+  const suggestedByPid = new Map<string, string[]>();
+  for (let i = 0; i < eventPids.length; i += 100) {
+    const { data: sug, error: sugErr } = await supabase
+      .from("participant_suggested_leaders")
+      .select("participant_id, leader_id, position")
+      .in("participant_id", eventPids.slice(i, i + 100))
+      .order("position", { ascending: true })
+      .returns<Array<{ participant_id: string; leader_id: string; position: number }>>();
+    if (sugErr) {
+      console.warn("[grouping/load] suggested leaders unavailable:", sugErr.message);
+      break;
+    }
+    for (const r of sug ?? []) {
+      const list = suggestedByPid.get(r.participant_id) ?? [];
+      list.push(r.leader_id);
+      suggestedByPid.set(r.participant_id, list);
+    }
+  }
+
   const participants: GroupingParticipant[] = enrolmentRows.map((e) => ({
     participant_id: e.participant!.id,
     region_id: e.participant!.region_id,
@@ -229,6 +253,8 @@ export async function loadGroupingInputs(
     energy_profile: e.participant!.energy_profile,
     language_fluency: e.participant!.language_fluency,
     conflict_member_ids: Array.from(conflictByPid.get(e.participant!.id) ?? []),
+    suggested_leader_ids: suggestedByPid.get(e.participant!.id) ?? [],
+    listening_language: toClassLanguage(e.participant!.listening_language),
   }));
 
   // Curated 组长 roster — only enrolments admin has flagged. Effective
@@ -249,6 +275,8 @@ export async function loadGroupingInputs(
       grade,
       dimensions: e.participant!.zu_zhang_dimensions ?? [],
       core_traits: e.participant!.zu_zhang_core_traits ?? [],
+      spoken_languages: e.participant!.spoken_languages ?? ["zh"],
+      listening_language: toClassLanguage(e.participant!.listening_language),
       is_main:
         tier === "key_recruitment"
         || tier === "recruitment"
@@ -283,4 +311,8 @@ export async function loadGroupingInputs(
     cushions,
     locked_group_nos: lockedGroupNos,
   };
+}
+
+function toClassLanguage(v: string | null | undefined): string {
+  return v && /^[a-z]{2,3}$/.test(v) ? v : DEFAULT_LANGUAGE;
 }

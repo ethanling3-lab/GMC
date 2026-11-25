@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/audit";
 import { loadGroupingInputs } from "@/lib/grouping/load";
 import { balance } from "@/lib/grouping/balance";
 import { cushionRank } from "@/lib/grouping/cushion-rank";
-import { runLlmGrouping } from "@/lib/grouping/llm-grouping";
+import { validateGrouping } from "@/lib/grouping/validate";
 import { persistGroupingResult } from "@/lib/grouping/persist";
 import type { GroupingResult } from "@/lib/grouping/types";
 
@@ -15,13 +15,12 @@ export const runtime = "nodejs";
 // POST /api/admin/events/[id]/groups/generate
 //
 // Branches on events.seating_mode:
-//   * tables   → balance.ts (M6.2 swaps in LLM as primary path with
-//                balance.ts as the fallback)
-//   * cushions → cushion-rank.ts (no LLM ever — pure ranking)
+//   * tables   → balance.ts — the rules engine (no AI since the
+//                2026-11-24 grouping rework)
+//   * cushions → cushion-rank.ts (pure ranking)
 //
-// Idempotent: previous event_groups + event_seat_assignments are wiped
-// before the new state lands. Super-admin gated because LLM cost will
-// land here in M6.2; gating now keeps the surface consistent.
+// Idempotent: previous non-protected event_groups + assignments are
+// wiped before the new state lands. Super-admin gated.
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -94,16 +93,7 @@ async function runGenerate(_req: Request, { params }: RouteCtx) {
   }
 
   let result: GroupingResult;
-  let llmFailureReason: string | null = null;
-  let llmRetries = 0;
-  let llmTokens = {
-    in: 0,
-    out: 0,
-    cache_read: 0,
-    cache_create: 0,
-    latency_ms: 0,
-  };
-  let llmValidationErrors: string[] = [];
+  let validationErrors: string[] = [];
 
   if (inputs.event.seating_mode === "cushions") {
     result = cushionRank({
@@ -111,31 +101,23 @@ async function runGenerate(_req: Request, { params }: RouteCtx) {
       cushions: inputs.cushions,
     });
   } else {
-    // Table mode — try LLM first, fall back to balance.ts if it fails.
-    const llm = await runLlmGrouping({
-      participants: inputs.participants,
-      roster: inputs.zu_zhang_roster,
-      config: inputs.event.config,
-    });
-    llmFailureReason = llm.failure_reason;
-    llmRetries = llm.retries;
-    llmValidationErrors = llm.validation_errors;
-    llmTokens = {
-      in: llm.tokens_in,
-      out: llm.tokens_out,
-      cache_read: llm.cache_read_tokens,
-      cache_create: llm.cache_creation_tokens,
-      latency_ms: llm.latency_ms,
-    };
-    if (llm.result) {
-      result = llm.result;
-    } else {
-      result = balance(
-        inputs.participants,
-        inputs.zu_zhang_roster,
-        inputs.event.config,
-      );
-    }
+    result = balance(
+      inputs.participants,
+      inputs.zu_zhang_roster,
+      inputs.event.config,
+      { reserved_group_nos: inputs.locked_group_nos },
+    );
+    // Advisory check. People left for manual placement are expected to
+    // be missing, so they're not reported.
+    const manual = new Set(
+      (result.metadata.manual_placement ?? []).map((m) => m.participant_id),
+    );
+    validationErrors = validateGrouping(
+      result.groups,
+      inputs.participants.filter((p) => !manual.has(p.participant_id)),
+      inputs.zu_zhang_roster,
+      inputs.event.config,
+    ).errors.map((e) => `${e.code}: ${e.detail}`);
   }
 
   // Validate the generated result has at least one assignment when there
@@ -175,18 +157,10 @@ async function runGenerate(_req: Request, { params }: RouteCtx) {
       locked_groups_preserved: persistResult.locked_groups_preserved,
       roster_size: inputs.zu_zhang_roster.length,
       roster_shortfalls: result.metadata.roster_shortfalls ?? null,
+      warnings: result.metadata.warnings ?? null,
+      manual_placement: result.metadata.manual_placement?.length ?? 0,
+      validation_errors: validationErrors.slice(0, 50),
       latency_ms: Date.now() - startedAt,
-      llm: {
-        attempted: inputs.event.seating_mode === "tables",
-        retries: llmRetries,
-        failure_reason: llmFailureReason,
-        validation_errors: llmValidationErrors,
-        tokens_in: llmTokens.in,
-        tokens_out: llmTokens.out,
-        cache_read: llmTokens.cache_read,
-        cache_create: llmTokens.cache_create,
-        latency_ms: llmTokens.latency_ms,
-      },
     },
     metadata: {
       seating_mode: inputs.event.seating_mode,
@@ -203,6 +177,7 @@ async function runGenerate(_req: Request, { params }: RouteCtx) {
     k: result.metadata.k,
     roster_size: inputs.zu_zhang_roster.length,
     roster_shortfalls: result.metadata.roster_shortfalls ?? null,
-    llm_fallback_reason: llmFailureReason,
+    warnings: result.metadata.warnings ?? [],
+    manual_placement: result.metadata.manual_placement?.length ?? 0,
   });
 }

@@ -134,16 +134,26 @@ export async function persistGroupingResult(
     };
   }
 
-  // Renumber fresh groups to skip locked group_no values. The filtered
-  // list arrives with possibly-sparse group_no values (1, 3, 5...) if
-  // some originals were dropped; we hand each surviving slot the next
-  // available number that isn't held by a locked group.
+  // Keep the algorithm's group numbers. balance.ts already skips the
+  // protected numbers, so pins (which use the numbers the admin sees)
+  // stay correct. Only a collision — or a duplicate — gets the next free
+  // number.
   const renumber = new Map<number, number>();
-  let nextNo = 1;
+  const used = new Set(protectedNos);
+  const collided: number[] = [];
   for (const g of populatedGroups) {
-    while (protectedNos.has(nextNo)) nextNo += 1;
-    renumber.set(g.group_no, nextNo);
-    nextNo += 1;
+    if (used.has(g.group_no) || renumber.has(g.group_no)) {
+      collided.push(g.group_no);
+      continue;
+    }
+    renumber.set(g.group_no, g.group_no);
+    used.add(g.group_no);
+  }
+  let nextNo = 1;
+  for (const no of collided) {
+    while (used.has(nextNo)) nextNo += 1;
+    renumber.set(no, nextNo);
+    used.add(nextNo);
   }
 
   const { data: insertedGroups, error: groupInsErr } = await service

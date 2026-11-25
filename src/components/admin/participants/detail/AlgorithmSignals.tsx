@@ -20,7 +20,7 @@ import type { GrowthDimension } from "@/lib/grouping/types";
 //   sells_products   — CAUTION flag (DB name kept): may be here to recruit for
 //                      insurance / direct sales / MLM, i.e. not 纯真. For admin
 //                      + CS attention; grouping leaves them for manual placement.
-//   goal_dimensions  — ordered array of 1-4 growth dimensions; first =
+//   goal_dimensions  — ordered array of 1-5 growth dimensions; first =
 //                      primary. balance.ts matches participants' primary
 //                      goal to 组长 dimension strengths.
 //   energy_profile   — soft balance (high / medium / quiet). Spread
@@ -44,6 +44,7 @@ const DIMENSIONS: GrowthDimension[] = [
   "relationship",
   "health",
   "inner_peace",
+  "spiritual",
 ];
 
 const ENERGY_LABEL: Record<

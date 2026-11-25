@@ -12,6 +12,7 @@ import {
 import { writeAuditLog } from "@/lib/audit";
 import { logParticipantChange } from "@/lib/participants/history";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
+import { contactLanguageFor } from "@/lib/participants/languages";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -87,6 +88,25 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   // stored as columns. Everything else flows straight to UPDATE.
   const { family_member_ids, conflict_member_ids, suggested_leader_ids, ...columnRest } = patch;
   const columnPatch: Record<string, unknown> = { ...columnRest };
+
+  // The messaging language follows the class languages (migration 074) —
+  // staff edit "Listens in" / "Speaks", never language_fluency directly.
+  if ("listening_language" in columnPatch || "spoken_languages" in columnPatch) {
+    const { data: cur } = await service
+      .from("participants")
+      .select("listening_language, spoken_languages")
+      .eq("id", id)
+      .maybeSingle<{ listening_language: string | null; spoken_languages: string[] | null }>();
+    const listening =
+      "listening_language" in columnPatch
+        ? (columnPatch.listening_language as string)
+        : cur?.listening_language ?? null;
+    const spoken =
+      "spoken_languages" in columnPatch
+        ? (columnPatch.spoken_languages as string[])
+        : cur?.spoken_languages ?? null;
+    columnPatch.language_fluency = contactLanguageFor(listening, spoken);
+  }
 
   // Keep phone_e164 in step with phone (migration 052). Editing either the
   // number or the region can change the canonical form — '86111315' is a

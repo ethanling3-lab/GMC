@@ -1,4 +1,5 @@
 import "server-only";
+import { DEFAULT_LANGUAGE } from "@/lib/participants/languages";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   effectiveQualification,
@@ -107,6 +108,9 @@ export type GroupBuilderMember = {
   // M6.4 grouping signals (migration 030).
   energy_profile: "high" | "medium" | "quiet" | null;
   language_fluency: "en" | "cn" | "both" | null;
+  // Migration 074 — class language they listen in + languages they speak.
+  listening_language: string;
+  spoken_languages: string[];
   // Region IDs of conflict-pair partners enrolled in the same event.
   conflict_partner_region_ids: string[];
   // Other enrolled records that look like the same person. Unlike family
@@ -165,6 +169,10 @@ export type GroupBuilderUnassigned = {
   qualification: StudentQualification | null;
   effective_class: GroupClass;
   zu_zhang_tier: ZuZhangTier | null;
+  // Caution flag (注意：可能拉保险/直销/传销) — auto-grouping skips these
+  // people; the admin places them by hand.
+  sells_products: boolean;
+  listening_language: string;
 };
 
 // One pickable 组长 for the leader picker (Phase 3). Sourced from the
@@ -189,6 +197,7 @@ export type GroupBuilderLeaderCandidate = {
   grade: number | null;
   dimensions: GrowthDimension[];
   core_traits: ZuZhangCoreTrait[];
+  spoken_languages: string[];
   times_led_groups: number;
   // Current placement in this event. null group_no = unassigned.
   current_group_no: number | null;
@@ -269,6 +278,8 @@ type ParticipantRow = {
   family_of_participant_id: string | null;
   energy_profile: "high" | "medium" | "quiet" | null;
   language_fluency: "en" | "cn" | "both" | null;
+  listening_language: string | null;
+  spoken_languages: string[] | null;
   // Duplicate-person detection only. Never forwarded to the client.
   phone: string | null;
   email: string | null;
@@ -364,7 +375,7 @@ export async function loadGroupBuilder(
          goal_dimensions, student_qualification,
          motivations, motivation_other, sells_products, has_special_contribution, times_led_groups,
          family_of_participant_id,
-         energy_profile, language_fluency,
+         energy_profile, language_fluency, listening_language, spoken_languages,
          phone, email`,
       )
       .in("id", allParticipantIds)
@@ -513,7 +524,9 @@ export async function loadGroupBuilder(
           financial_score: p?.financial_score ?? null,
           pinned_group_no: enrol?.pinned_group_no ?? null,
           role: a.role,
-          zu_zhang_tier: p?.zu_zhang_tier ?? null,
+          // Effective tier = per-event override ?? participant global.
+          zu_zhang_tier:
+            enrol?.zu_zhang_tier_for_event ?? p?.zu_zhang_tier ?? null,
           // Effective grade = per-event override ?? participant global.
           zu_zhang_grade:
             enrol?.zu_zhang_grade_for_event ?? p?.zu_zhang_grade ?? null,
@@ -531,6 +544,8 @@ export async function loadGroupBuilder(
           family_partner_region_ids: p ? partnerRegionIds(p.id) : [],
           energy_profile: p?.energy_profile ?? null,
           language_fluency: p?.language_fluency ?? null,
+          listening_language: p?.listening_language ?? DEFAULT_LANGUAGE,
+          spoken_languages: p?.spoken_languages ?? [DEFAULT_LANGUAGE],
           conflict_partner_region_ids: p ? conflictPartnerRegionIds(p.id) : [],
           // Filled in below — detection needs every enrolled participant
           // hydrated, which happens after this map runs.
@@ -624,6 +639,7 @@ export async function loadGroupBuilder(
            goal_dimensions, student_qualification,
            motivations, motivation_other, sells_products, has_special_contribution, times_led_groups,
            family_of_participant_id,
+           energy_profile, language_fluency, listening_language, spoken_languages,
            phone, email`,
         )
         .in("id", missingPids)
@@ -632,10 +648,12 @@ export async function loadGroupBuilder(
       for (const p of extra ?? []) participantById.set(p.id, p);
     }
 
-    // Bucket enrolled members by their effective class.
+    // Bucket enrolled members by their effective class. Serving 组长 are
+    // seeded as leaders, not counted as members (same as balance.ts).
     for (const e of enrolPinsRes.data ?? []) {
       const p = participantById.get(e.participant_id);
       if (!p) continue;
+      if (e.serving_as_zu_zhang && (e.zu_zhang_tier_for_event ?? p.zu_zhang_tier)) continue;
       const cls = participantToClass({
         financial_score: p.financial_score,
         influence_score: p.influence_score,
@@ -653,7 +671,7 @@ export async function loadGroupBuilder(
     }
 
     // Build the curated 组长 roster the algorithm would consume.
-    const roster: GroupingZuZhang[] = [];
+    const roster: Array<Pick<GroupingZuZhang, "tier">> = [];
     for (const e of enrolPinsRes.data ?? []) {
       if (!e.serving_as_zu_zhang) continue;
       const p = participantById.get(e.participant_id);
@@ -661,19 +679,8 @@ export async function loadGroupBuilder(
       const tier = e.zu_zhang_tier_for_event ?? p.zu_zhang_tier;
       if (!tier) continue;
       const grade = e.zu_zhang_grade_for_event ?? p.zu_zhang_grade;
-      roster.push({
-        participant_id: p.id,
-        region_id: p.region_id,
-        tier,
-        grade,
-        dimensions: p.zu_zhang_dimensions ?? [],
-        core_traits: (p.zu_zhang_core_traits ?? []) as never,
-        is_main:
-          tier === "key_recruitment"
-          || tier === "recruitment"
-          || tier === "maintenance",
-        is_auxiliary: tier === "auxiliary",
-      });
+      void grade;
+      roster.push({ tier });
     }
     rosterShortfalls = computeRosterShortfalls(roster, kByClass);
   }
@@ -795,6 +802,7 @@ export async function loadGroupBuilder(
       grade: e.zu_zhang_grade_for_event ?? p.zu_zhang_grade ?? null,
       dimensions: p.zu_zhang_dimensions ?? [],
       core_traits: (p.zu_zhang_core_traits ?? []) as ZuZhangCoreTrait[],
+      spoken_languages: p.spoken_languages ?? [DEFAULT_LANGUAGE],
       times_led_groups: p.times_led_groups ?? 0,
       current_group_no: placement?.group_no ?? null,
       current_role: placement?.role ?? null,
@@ -845,7 +853,9 @@ export async function loadGroupBuilder(
         influence_score: p.influence_score,
         student_qualification_override: p.student_qualification,
       }),
-      zu_zhang_tier: p.zu_zhang_tier ?? null,
+      zu_zhang_tier: e.zu_zhang_tier_for_event ?? p.zu_zhang_tier ?? null,
+      sells_products: p.sells_products ?? false,
+      listening_language: p.listening_language ?? DEFAULT_LANGUAGE,
     });
   }
   unassigned.sort((a, b) => (a.region_id ?? "").localeCompare(b.region_id ?? ""));

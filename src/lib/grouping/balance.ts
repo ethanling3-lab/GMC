@@ -1,30 +1,45 @@
-// Class-bucketed grouping for table-mode events. M6.0 rewrite — replaces
-// the score-derived leader model with the curated 组长 + 4-class
-// (特级 / 重点 / 成长 / 维护) taxonomy from migration 022.
+// Class-bucketed grouping for table-mode events — the ONLY placement
+// engine (grouping rework, 2026-11-24). Deterministic: the same input
+// always gives the same output. No AI.
 //
-// Used as the deterministic fallback when LLM grouping (M6.2) fails
-// validation 3× or when ANTHROPIC_API_KEY is missing. Also used as the
-// reference implementation against which the LLM's output is validated.
+// Rule order (higher wins):
+//   1. Language (listening_language, migration 074) — HARD, universal:
+//      whoever listens in a language is grouped under a 组长 who speaks it.
+//      The default language (中文) is grouped by type as below; every other
+//      language gets its own groups ACROSS types (a group's type = its most
+//      common member type).
+//   2. Group type (特级 / 重点 / 成长 / 维护) from qualification — HARD
+//      within a language.
+//   3. Family & conflict splits — HARD.
+//   4. CS-suggested 组长 (participant_suggested_leaders, first = preferred):
+//      if a suggested leader leads a group of the student's language (and,
+//      for 中文, type) with room, the student goes there.
+//   5. Main goal (goal_dimensions[0]) covered by the 主 or 副组长's
+//      strengths, whenever a group with room covers it.
+//   6. Stronger students → higher-grade leaders: students are ranked by
+//      qualification then scores, groups by main-leader grade, and each
+//      student aims for the group at their rank.
+//   7. Second goal covered — tie-break.
+//   8. Core traits — display-only until Yi Suan confirms the pairing.
+//   9. Energy / 老新 mix — soft swaps.
 //
-// Pipeline:
-//   1. Bucket participants by class (effectiveQualification → group_class).
-//   2. Compute k per class = ceil(class_n / group_size_max).
-//   3. Validate the curated 组长 roster covers the per-class
-//      leader-tier pairing requirements. Surface shortfalls; proceed
-//      anyway with whichever 组长 are available (degraded mode).
-//   4. Seed each group within each class with one main 组长 + one
-//      auxiliary 组长 (per requiredLeaderTiers(class)).
-//   5. Distribute regular participants WITHIN their class:
-//      Phase A — dimension match (primary goal vs 组长 dimensions).
-//      Phase B — priority spread (特级 + 重点 only — even-distribute
-//                participants with max(fin, inf) ≥ 4).
-//      Phase C — family split (no two family-linked participants in
-//                the same group).
-//      Phase D — pin respect (overrides A-C even if it pulls them
-//                across class — admin's call).
-//      Phase E — old-student mix (no group is 100% new students if
-//                old students remain available in the class).
-//   6. Generate plain-English bilingual rationale per group.
+// Balancing swaps may never break rules 1–6: suggested placements and
+// pins never move, and a swap must keep both students' goal coverage and
+// stay between groups whose main-leader grades differ by at most 1.
+//
+// Caution-flagged people (sells_products = 注意：可能拉保险/直销/传销) are
+// NOT auto-placed. They stay unassigned and the admin places them by hand
+// from the Unassigned pool. A pin still places them (the admin's call).
+//
+// Tier gap: when a group lacks its required 组长 tier, the best leader
+// from the next tier down is borrowed (then further down, then up), and a
+// warning names the group. Language beats tier: a speaker of another tier
+// is borrowed before a non-speaker, and a non-speaker raises
+// `language_leader_missing`.
+//
+// Every placement carries a rule-based reason. Reasons are written into
+// the group rationale as "• <region_id> — <reason>" lines; the groups
+// page shows them on each member's detail row.
 //
 // Pure function. No DB. Caller persists.
 
@@ -32,8 +47,9 @@ import { applyCuratedRoles } from "./roles";
 import {
   GROUP_CLASS_LABEL,
   GROWTH_DIMENSION_LABEL,
+  STUDENT_QUALIFICATION_LABEL,
   ZU_ZHANG_TIER_LABEL,
-  isPriority,
+  effectiveQualification,
   participantToClass,
   requiredLeaderTiers,
 } from "./types";
@@ -43,26 +59,103 @@ import type {
   GroupingConfig,
   GroupingParticipant,
   GroupingResult,
+  GroupingWarning,
   GroupingZuZhang,
   GrowthDimension,
   RosterShortfall,
   ZuZhangTier,
 } from "./types";
+import {
+  DEFAULT_LANGUAGE,
+  languageLabel,
+  speaks,
+  type ClassLanguage,
+} from "../participants/languages";
+
+type Reason = { en: string; cn: string };
 
 type WorkingGroup = {
   group_no: number;
   group_class: GroupClass;
+  language: ClassLanguage;
   main_zu_zhang: GroupingZuZhang | null;
   auxiliary_zu_zhang: GroupingZuZhang | null;
   members: GroupingParticipant[];
+  borrowed: Array<{
+    role: "main" | "auxiliary";
+    wanted: ZuZhangTier;
+    got: ZuZhangTier;
+    // The borrowed leader doesn't speak the group's language.
+    language_missing: boolean;
+  }>;
+};
+
+type Ctx = {
+  familyChains: Map<string, string>;
+  conflictChains: Map<string, string>;
+  // Students that must not move during balancing: pins + CS suggestions.
+  locked: Set<string>;
+  // Fixed reasons (pins, suggestions, surplus leaders).
+  reasons: Map<string, Reason>;
+  // Placement notes for everyone else; the goal/grade part of the reason
+  // is written from the FINAL group, after balancing swaps.
+  notes: Map<string, Reason[]>;
+};
+
+// Students grouped for seeding: the default language by type, every
+// other language as one cohort each (keyed by language code).
+type Cohorts = {
+  main: Record<GroupClass, GroupingParticipant[]>;
+  other: Map<string, GroupingParticipant[]>;
+};
+
+// A set of groups placed together: one type of 中文 groups, or all the
+// groups of one other language.
+type PlacementSet = {
+  language: ClassLanguage;
+  cls: GroupClass | null;
+  groups: WorkingGroup[];
+  students: GroupingParticipant[];
+};
+
+export type BalanceOptions = {
+  // group_no values held by protected (locked / hand-edited) groups.
+  // Fresh groups skip them so pins (which use the numbers the admin
+  // sees) land in the right group.
+  reserved_group_nos?: number[];
 };
 
 const CLASS_ORDER: GroupClass[] = ["strategic", "key", "growth", "maintenance"];
+const TIER_LADDER: ZuZhangTier[] = [
+  "key_recruitment",
+  "recruitment",
+  "maintenance",
+  "auxiliary",
+];
+
+// Other languages in seeding priority: fewest speaking 组长 first, so
+// bilingual leaders go where they're scarcest. Ties by code.
+function otherLanguagesBySpeakerScarcity(
+  cohorts: Cohorts,
+  roster: GroupingZuZhang[],
+): string[] {
+  const speakers = (lang: string) =>
+    roster.filter((z) => speaks(z.spoken_languages, lang)).length;
+  return [...cohorts.other.keys()].sort(
+    (a, b) => speakers(a) - speakers(b) || a.localeCompare(b),
+  );
+}
+
+// Group numbering order for other languages: by code, stable.
+function otherLanguagesInOrder(cohorts: Cohorts): string[] {
+  return [...cohorts.other.keys()].sort();
+}
 
 export function balance(
   participants: GroupingParticipant[],
   roster: GroupingZuZhang[],
   config: GroupingConfig,
+  options: BalanceOptions = {},
 ): GroupingResult {
   const n = participants.length;
   if (n === 0) {
@@ -74,257 +167,161 @@ export function balance(
     };
   }
 
-  // 组长 are seeded into groups; they must NOT also be distributed as
-  // regular members. Partition the participants list against the roster.
+  const reserved = new Set(options.reserved_group_nos ?? []);
   const rosterPids = new Set(roster.map((z) => z.participant_id));
-  const regularParticipants = participants.filter(
-    (p) => !rosterPids.has(p.participant_id),
-  );
+  const regular = participants.filter((p) => !rosterPids.has(p.participant_id));
 
-  // Step 1 — bucket regular participants by class. Pinned participants
-  // also bucket by class first; the pin is honored in Phase D below.
-  const buckets: Record<GroupClass, GroupingParticipant[]> = {
-    strategic: [],
-    key: [],
-    growth: [],
-    maintenance: [],
-  };
-  for (const p of regularParticipants) {
-    const cls = participantToClass(p);
-    buckets[cls].push(p);
-  }
+  // Caution-flagged + unpinned → left for manual placement.
+  const manual = regular.filter((p) => p.sells_products && p.pinned_group_no == null);
+  const manualPids = new Set(manual.map((p) => p.participant_id));
+  const auto = regular.filter((p) => !manualPids.has(p.participant_id));
 
-  // Step 1b — pre-validate the curated roster against per-class demand.
-  // Compute provisional k per class, identify surplus 组长 (those with
-  // tiers that don't match any class's required tier), demote them to
-  // regular participants in 'growth' so they're seated as members.
-  // Each group seats up to 2 curated 组长 (main + auxiliary) PLUS
-  // group_size_max regular members, so the per-class group count is
-  // computed off the regular-member capacity = group_size_max - 2.
-  // Floor at 1 to avoid divide-by-zero when admin sets group_size_max
-  // to 2 or smaller.
+  // Each group seats the leader pair + this many regular members.
   const regularCapacity = Math.max(1, config.group_size_max - 2);
-  const provisionalK: Record<GroupClass, number> = {
-    strategic: 0,
-    key: 0,
-    growth: 0,
-    maintenance: 0,
+
+  // Seed groups. Leaders left over after every slot is filled are demoted
+  // to regular members (in their own listening language) — which can
+  // raise a group count, which needs more leaders. Iterate to a fixed
+  // point (converges in 1–2 rounds in practice).
+  let demoted: GroupingZuZhang[] = [];
+  let seeded = seedGroups(roster, buildCohorts(auto, demoted), regularCapacity, reserved);
+  for (let round = 0; round < 4; round += 1) {
+    if (seeded.leftover.length === demoted.length) break;
+    demoted = seeded.leftover;
+    seeded = seedGroups(roster, buildCohorts(auto, demoted), regularCapacity, reserved);
+  }
+  const groups = seeded.groups;
+  const cohorts = buildCohorts(auto, seeded.leftover);
+
+  const shortfalls = computeRosterShortfalls(roster, seeded.kByClass);
+
+  const ctx: Ctx = {
+    familyChains: buildFamilyChains(participants),
+    conflictChains: buildConflictChains(participants),
+    locked: new Set(),
+    reasons: new Map(),
+    notes: new Map(),
   };
-  for (const cls of CLASS_ORDER) {
-    if (buckets[cls].length === 0) continue;
-    provisionalK[cls] = Math.ceil(buckets[cls].length / regularCapacity);
-  }
-  const tierDemand: Record<ZuZhangTier, number> = {
-    key_recruitment: 0,
-    recruitment: 0,
-    maintenance: 0,
-    auxiliary: 0,
-  };
-  for (const cls of CLASS_ORDER) {
-    const k = provisionalK[cls];
-    if (k === 0) continue;
-    const { main, auxiliary } = requiredLeaderTiers(cls);
-    tierDemand[main] += k;
-    tierDemand[auxiliary] += k;
-  }
-  const tierHave: Record<ZuZhangTier, number> = {
-    key_recruitment: 0,
-    recruitment: 0,
-    maintenance: 0,
-    auxiliary: 0,
-  };
-  for (const z of roster) tierHave[z.tier] += 1;
-  // Surplus per tier = max(0, have - demand). Demote surplus 组长 to
-  // regular members in 'growth' (safe middle bucket). Each surplus
-  // participant counts toward k_growth so they get a seat. Demote the
-  // LOWEST-graded leaders so the strongest ones stay in the seeding
-  // queue.
-  const surplusPids = new Set<string>();
-  for (const tier of Object.keys(tierHave) as ZuZhangTier[]) {
-    const surplus = Math.max(0, tierHave[tier] - tierDemand[tier]);
-    if (surplus === 0) continue;
-    const pool = roster
-      .filter((z) => z.tier === tier)
-      .slice()
-      .sort((a, b) => (b.grade ?? 0) - (a.grade ?? 0));
-    for (let i = pool.length - surplus; i < pool.length; i += 1) {
-      const z = pool[i];
-      surplusPids.add(z.participant_id);
-      buckets.growth.push({
-        participant_id: z.participant_id,
-        region_id: z.region_id,
-        overall_score: null,
-        influence_score: null,
-        financial_score: null,
-        motivations: [],
-        motivation_other: null,
-        sells_products: false,
-        is_old_student: false,
-        family_of_participant_id: null,
-        family_member_ids: [],
-        region: null,
-        pinned_group_no: null,
-        goal_dimensions: z.dimensions,
-        student_qualification_override: null,
-        energy_profile: null,
-        language_fluency: null,
-        conflict_member_ids: [],
-      });
-    }
-  }
-  // Filter the curated roster down to non-surplus.
-  const seatedRoster = roster.filter((z) => !surplusPids.has(z.participant_id));
-
-  // Step 2 — compute final k per class using the regular-member
-  // capacity (max - 2 for the seeded leader pair). Empty classes get 0.
-  const kByClass: Record<GroupClass, number> = {
-    strategic: 0,
-    key: 0,
-    growth: 0,
-    maintenance: 0,
-  };
-  for (const cls of CLASS_ORDER) {
-    const classN = buckets[cls].length;
-    if (classN === 0) continue;
-    kByClass[cls] = Math.ceil(classN / regularCapacity);
-  }
-
-  // Step 3 — validate curated roster against per-class requirements.
-  const shortfalls = computeRosterShortfalls(roster, kByClass);
-
-  // Step 4 — seed groups within each class with main + auxiliary 组长.
-  // Build a working set of 组长 we haven't placed yet (each 组长 can
-  // only be at one table). Walk classes in order.
-  const remainingByTier = bucketRosterByTier(seatedRoster);
-  const groups: WorkingGroup[] = [];
-  let groupCounter = 0;
-  for (const cls of CLASS_ORDER) {
-    const k = kByClass[cls];
-    if (k === 0) continue;
-    const { main, auxiliary } = requiredLeaderTiers(cls);
-    for (let i = 0; i < k; i += 1) {
-      groupCounter += 1;
-      const mainPick = popPreferringDimensionSpread(
-        remainingByTier,
-        main,
-        groups.filter((g) => g.group_class === cls),
-      );
-      const auxPick = popPreferringDimensionSpread(
-        remainingByTier,
-        auxiliary,
-        // Spread auxiliary against the main we just seeded if we have one.
-        mainPick ? [{ ...emptyWorkingGroupShape(cls, mainPick) }] : [],
-      );
-      groups.push({
-        group_no: groupCounter,
-        group_class: cls,
-        main_zu_zhang: mainPick,
-        auxiliary_zu_zhang: auxPick,
-        members: [],
-      });
-    }
-  }
-
-
-  // Step 5 — distribute participants within their class. Pinned
-  // participants land in their `pinned_group_no` regardless of class
-  // (Phase D); everyone else flows through Phase A → E within their
-  // bucket.
-
-  // Phase D first (pin respect) so they're locked before we try to
-  // balance around them.
-  const remainingPerClass: Record<GroupClass, GroupingParticipant[]> = {
-    strategic: [],
-    key: [],
-    growth: [],
-    maintenance: [],
-  };
-  for (const cls of CLASS_ORDER) {
-    for (const p of buckets[cls]) {
-      if (
-        p.pinned_group_no != null
-        && p.pinned_group_no >= 1
-        && p.pinned_group_no <= groups.length
-      ) {
-        groups[p.pinned_group_no - 1].members.push(p);
-      } else {
-        remainingPerClass[cls].push(p);
-      }
-    }
-  }
-
-  // Phase A + B + E within each class.
-  const familyChains = buildFamilyChains(participants);
-  // Migration 030 — conflict pairs. Same hardness as family; built as a
-  // parallel chains map so the same swap logic can repair violations.
-  const conflictChains = buildConflictChains(participants);
-  for (const cls of CLASS_ORDER) {
-    const classGroups = groups.filter((g) => g.group_class === cls);
-    if (classGroups.length === 0) continue;
-
-    // Phase A — dimension match. For each participant with a primary
-    // goal dimension, prefer the group whose main 组长 covers it.
-    // Tie-break by lowest current size.
-    const sorted = [...remainingPerClass[cls]].sort((a, b) => {
-      // Priority participants first (so 特级 + 重点 spread phase has
-      // them already placed when it scans for over-clusters).
-      const ap = isPriority(a) ? 1 : 0;
-      const bp = isPriority(b) ? 1 : 0;
-      if (ap !== bp) return bp - ap;
-      // Then old students first (helps Phase E).
-      if (a.is_old_student !== b.is_old_student) {
-        return a.is_old_student ? -1 : 1;
-      }
-      // Then by region_id for determinism.
-      return (a.region_id ?? "").localeCompare(b.region_id ?? "");
+  for (const z of seeded.leftover) {
+    ctx.reasons.set(z.participant_id, {
+      en: `surplus ${ZU_ZHANG_TIER_LABEL[z.tier].en} leader, seated as a member`,
+      cn: `${ZU_ZHANG_TIER_LABEL[z.tier].cn}组长有余，作为组员入座`,
     });
-
-    for (const p of sorted) {
-      const targetGroup = pickGroupForParticipant(
-        p,
-        classGroups,
-        familyChains,
-        conflictChains,
-        config.group_size_max,
-      );
-      targetGroup.members.push(p);
-    }
-
-    // Phase B — priority spread (特级 + 重点 only).
-    if (cls === "strategic" || cls === "key") {
-      rebalancePriority(classGroups, familyChains, conflictChains);
-    }
-
-    // Phase C — family split repair within class.
-    repairFamilySplit(classGroups, familyChains, conflictChains);
-
-    // Phase C2 — conflict-pair split repair (same hardness, separate
-    // adjacency). Runs after family so the family swap doesn't undo a
-    // conflict swap.
-    repairConflictSplit(classGroups, familyChains, conflictChains);
-
-    // Phase E — old-student mix balance.
-    repairOldStudentMix(classGroups, familyChains, conflictChains);
-
-    // Phase F — energy_profile distribution (soft).
-    repairEnergyDistribution(classGroups, familyChains, conflictChains);
-
-    // Phase G — language fluency mix (soft).
-    repairLanguageMix(classGroups, familyChains, conflictChains);
   }
 
-  // Step 6 — assign roles + generate rationale.
-  const drafts: DraftGroup[] = groups.map((g) => {
-    const roles = applyCuratedRoles(g);
-    return {
+  // Leader → group, and region_id lookups for reasons.
+  const groupByLeader = new Map<string, WorkingGroup>();
+  for (const g of groups) {
+    if (g.main_zu_zhang) groupByLeader.set(g.main_zu_zhang.participant_id, g);
+    if (g.auxiliary_zu_zhang) groupByLeader.set(g.auxiliary_zu_zhang.participant_id, g);
+  }
+  const regionByPid = new Map<string, string | null>();
+  for (const p of participants) regionByPid.set(p.participant_id, p.region_id);
+  for (const z of roster) regionByPid.set(z.participant_id, z.region_id);
+
+  // Placement sets: each type of the default language, then each other
+  // language.
+  const sets: PlacementSet[] = [
+    ...CLASS_ORDER.map((cls) => ({
+      language: DEFAULT_LANGUAGE as ClassLanguage,
+      cls,
+      groups: groups.filter((g) => g.language === DEFAULT_LANGUAGE && g.group_class === cls),
+      students: cohorts.main[cls],
+    })),
+    ...otherLanguagesInOrder(cohorts).map((lang) => ({
+      language: lang,
+      cls: null,
+      groups: groups.filter((g) => g.language === lang),
+      students: cohorts.other.get(lang) ?? [],
+    })),
+  ];
+
+  // Pins first — they use the group numbers the admin sees.
+  const groupByNo = new Map(groups.map((g) => [g.group_no, g]));
+  for (const set of sets) {
+    const unpinned: GroupingParticipant[] = [];
+    for (const p of set.students) {
+      const pinned = p.pinned_group_no != null ? groupByNo.get(p.pinned_group_no) : undefined;
+      if (pinned) {
+        pinned.members.push(p);
+        ctx.locked.add(p.participant_id);
+        ctx.reasons.set(p.participant_id, {
+          en: `pinned to #${pinned.group_no} by admin`,
+          cn: `管理员指定第 ${pinned.group_no} 组`,
+        });
+      } else {
+        unpinned.push(p);
+      }
+    }
+    set.students = unpinned;
+  }
+
+  for (const set of sets) {
+    if (set.groups.length === 0) continue;
+    placeSet(set, config.group_size_max, ctx, groupByLeader, regionByPid);
+
+    // Hard repairs (only fire after an overflow fallback).
+    repairChainSplit(set.groups, ctx, "family");
+    repairChainSplit(set.groups, ctx, "conflict");
+    // Soft mixes — guarded so they never break rules 4–6.
+    repairOldStudentMix(set.groups, ctx);
+    repairEnergyDistribution(set.groups, ctx);
+  }
+
+  // Warnings: missing language speakers, borrowed tiers, leaderless groups.
+  const warnings: GroupingWarning[] = [];
+  for (const g of groups) {
+    if (g.members.length === 0) continue;
+    const where_en = `#${g.group_no} ${groupLabel(g, "en")}`;
+    const where_cn = `第 ${g.group_no} 组（${groupLabel(g, "cn")}）`;
+    for (const b of g.borrowed) {
+      const role_cn = b.role === "main" ? "主组长" : "副组长";
+      if (b.language_missing) {
+        warnings.push({
+          code: "language_leader_missing",
+          group_no: g.group_no,
+          detail_en: `${where_en}: no ${languageLabel(g.language).native}-speaking ${role_cn} — seated one who doesn't speak it`,
+          detail_cn: `${where_cn}：没有会说${languageLabel(g.language).cn}的${role_cn}`,
+        });
+      }
+      if (b.got !== b.wanted) {
+        warnings.push({
+          code: "tier_borrowed",
+          group_no: g.group_no,
+          detail_en: `${where_en}: ${role_cn} is ${ZU_ZHANG_TIER_LABEL[b.got].en} (needs ${ZU_ZHANG_TIER_LABEL[b.wanted].en})`,
+          detail_cn: `${where_cn}：${role_cn}借用${ZU_ZHANG_TIER_LABEL[b.got].cn}（应为${ZU_ZHANG_TIER_LABEL[b.wanted].cn}）`,
+        });
+      }
+    }
+    if (!g.main_zu_zhang && !roster.some((z) => speaks(z.spoken_languages, g.language))) {
+      warnings.push({
+        code: "language_leader_missing",
+        group_no: g.group_no,
+        detail_en: `${where_en}: no 组长 at this event speaks ${languageLabel(g.language).native}`,
+        detail_cn: `${where_cn}：本场没有会说${languageLabel(g.language).cn}的组长`,
+      });
+    }
+    if (!g.main_zu_zhang) {
+      warnings.push({
+        code: "no_leader",
+        group_no: g.group_no,
+        detail_en: `${where_en}: no 组长 available`,
+        detail_cn: `${where_cn}：没有可用组长`,
+      });
+    }
+  }
+
+  const drafts: DraftGroup[] = groups
+    .filter((g) => g.members.length > 0)
+    .map((g) => ({
       group_no: g.group_no,
       group_class: g.group_class,
+      language: g.language,
       leader_participant_id: g.main_zu_zhang?.participant_id ?? null,
-      members: roles,
-      rationale_en: writeRationaleEn(g),
-      rationale_cn: writeRationaleCn(g),
-    };
-  });
+      members: applyCuratedRoles(g),
+      rationale_en: writeRationale(g, ctx, "en"),
+      rationale_cn: writeRationale(g, ctx, "cn"),
+    }));
 
   return {
     strategy: "balance",
@@ -332,23 +329,598 @@ export function balance(
     cushion_assignments: [],
     metadata: {
       n,
-      k: groups.length,
+      k: drafts.length,
       roster_shortfalls: shortfalls.length > 0 ? shortfalls : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      manual_placement: manual.map((p) => ({
+        participant_id: p.participant_id,
+        region_id: p.region_id,
+      })),
     },
   };
 }
 
+function groupLabel(g: WorkingGroup, lang: "en" | "cn"): string {
+  const cls = GROUP_CLASS_LABEL[g.group_class][lang];
+  if (g.language === DEFAULT_LANGUAGE) return cls;
+  const l = languageLabel(g.language);
+  return lang === "en" ? `${l.en} · ${cls}` : `${l.cn}组 · ${cls}`;
+}
+
 // =============================================================================
-// Roster shortfalls — exported helper so the curate modal can preview
-// requirements without running the whole algorithm.
+// Cohorts + seeding
+// =============================================================================
+
+function buildCohorts(auto: GroupingParticipant[], demoted: GroupingZuZhang[]): Cohorts {
+  const cohorts: Cohorts = {
+    main: { strategic: [], key: [], growth: [], maintenance: [] },
+    other: new Map(),
+  };
+  const add = (p: GroupingParticipant) => {
+    const lang = p.listening_language || DEFAULT_LANGUAGE;
+    if (lang === DEFAULT_LANGUAGE) {
+      cohorts.main[participantToClass(p)].push(p);
+    } else {
+      const list = cohorts.other.get(lang) ?? [];
+      list.push(p);
+      cohorts.other.set(lang, list);
+    }
+  };
+  for (const p of auto) add(p);
+  for (const z of demoted) add(demotedLeaderAsMember(z));
+  return cohorts;
+}
+
+// The most common type among a language group's members (ties → the
+// stronger type). Decides its leader tiers and floor-plan zone.
+function modeClass(members: GroupingParticipant[]): GroupClass {
+  const count: Record<GroupClass, number> = { strategic: 0, key: 0, growth: 0, maintenance: 0 };
+  for (const m of members) count[participantToClass(m)] += 1;
+  let best: GroupClass = "growth";
+  let bestN = 0;
+  for (const cls of CLASS_ORDER) {
+    if (count[cls] > bestN) {
+      best = cls;
+      bestN = count[cls];
+    }
+  }
+  return best;
+}
+
+function seedGroups(
+  roster: GroupingZuZhang[],
+  cohorts: Cohorts,
+  regularCapacity: number,
+  reserved: Set<number>,
+): {
+  groups: WorkingGroup[];
+  leftover: GroupingZuZhang[];
+  kByClass: Record<GroupClass, number>;
+} {
+  const kByClass: Record<GroupClass, number> = {
+    strategic: 0,
+    key: 0,
+    growth: 0,
+    maintenance: 0,
+  };
+
+  // Group shells, numbered default language by type first, then each
+  // other language.
+  const shells: Array<{ language: ClassLanguage; cls: GroupClass }> = [];
+  for (const cls of CLASS_ORDER) {
+    const k = Math.ceil(cohorts.main[cls].length / regularCapacity);
+    for (let i = 0; i < k; i += 1) shells.push({ language: DEFAULT_LANGUAGE, cls });
+  }
+  for (const lang of otherLanguagesInOrder(cohorts)) {
+    const cohort = [...(cohorts.other.get(lang) ?? [])].sort(compareStrength);
+    const k = Math.ceil(cohort.length / regularCapacity);
+    // Strongest students first, dealt into k near-equal chunks; each
+    // chunk's most common type becomes that group's type.
+    let start = 0;
+    for (let i = 0; i < k; i += 1) {
+      const size = Math.floor(cohort.length / k) + (i < cohort.length % k ? 1 : 0);
+      shells.push({ language: lang, cls: modeClass(cohort.slice(start, start + size)) });
+      start += size;
+    }
+  }
+
+  const groups: WorkingGroup[] = [];
+  let nextNo = 1;
+  for (const s of shells) {
+    while (reserved.has(nextNo)) nextNo += 1;
+    kByClass[s.cls] += 1;
+    groups.push({
+      group_no: nextNo,
+      group_class: s.cls,
+      language: s.language,
+      main_zu_zhang: null,
+      auxiliary_zu_zhang: null,
+      members: [],
+      borrowed: [],
+    });
+    nextNo += 1;
+  }
+
+  // Seeding order: other languages (scarcest speakers first), then the
+  // default language strongest type first, so the best leaders of a tier
+  // go to the strongest students.
+  const seedSets: WorkingGroup[][] = [
+    ...otherLanguagesBySpeakerScarcity(cohorts, roster).map((lang) =>
+      groups.filter((g) => g.language === lang),
+    ),
+    ...CLASS_ORDER.map((cls) =>
+      groups.filter((g) => g.language === DEFAULT_LANGUAGE && g.group_class === cls),
+    ),
+  ].filter((set) => set.length > 0);
+  const ordered = seedSets.flat();
+
+  const pool = bucketRosterByTier(roster);
+
+  // Pass 1 — exact tier AND speaks the language. Within a set: all mains,
+  // then all auxiliaries.
+  for (const set of seedSets) {
+    for (const g of set) {
+      g.main_zu_zhang = popPreferringDimensionSpread(
+        pool,
+        requiredLeaderTiers(g.group_class).main,
+        g.language,
+        set.filter((x) => x.main_zu_zhang && x.group_class === g.group_class),
+      );
+    }
+    for (const g of set) {
+      g.auxiliary_zu_zhang = popPreferringDimensionSpread(
+        pool,
+        requiredLeaderTiers(g.group_class).auxiliary,
+        g.language,
+        g.main_zu_zhang ? [{ main_zu_zhang: g.main_zu_zhang }] : [],
+      );
+    }
+  }
+
+  // Pass 2 — borrow another tier that speaks the language.
+  // Pass 3 — nobody speaks it: borrow anyone, flagged.
+  for (const speakingOnly of [true, false]) {
+    for (const role of ["main", "auxiliary"] as const) {
+      for (const g of ordered) {
+        const seat = role === "main" ? "main_zu_zhang" : "auxiliary_zu_zhang";
+        if (g[seat]) continue;
+        const wanted = requiredLeaderTiers(g.group_class)[role];
+        const got = borrowFrom(pool, wanted, speakingOnly ? g.language : null);
+        if (!got) continue;
+        g[seat] = got;
+        g.borrowed.push({
+          role,
+          wanted,
+          got: got.tier,
+          language_missing: !speaks(got.spoken_languages, g.language),
+        });
+      }
+    }
+  }
+
+  const leftover = TIER_LADDER.flatMap((t) => pool[t]);
+  return { groups, leftover, kByClass };
+}
+
+// The wanted tier first (pass 2 only — pass 1 already took exact-tier
+// speakers), then next tier down, further down, then the closest tier up.
+// `language` null = anyone.
+function borrowFrom(
+  pool: Record<ZuZhangTier, GroupingZuZhang[]>,
+  wanted: ZuZhangTier,
+  language: ClassLanguage | null,
+): GroupingZuZhang | null {
+  const idx = TIER_LADDER.indexOf(wanted);
+  const order = [
+    wanted,
+    ...TIER_LADDER.slice(idx + 1),
+    ...TIER_LADDER.slice(0, idx).reverse(),
+  ];
+  for (const t of order) {
+    const i = pool[t].findIndex((z) => language == null || speaks(z.spoken_languages, language));
+    if (i >= 0) return pool[t].splice(i, 1)[0];
+  }
+  return null;
+}
+
+function demotedLeaderAsMember(z: GroupingZuZhang): GroupingParticipant {
+  return {
+    participant_id: z.participant_id,
+    region_id: z.region_id,
+    overall_score: null,
+    influence_score: null,
+    financial_score: null,
+    motivations: [],
+    motivation_other: null,
+    sells_products: false,
+    is_old_student: false,
+    family_of_participant_id: null,
+    family_member_ids: [],
+    region: null,
+    pinned_group_no: null,
+    goal_dimensions: z.dimensions,
+    student_qualification_override: null,
+    energy_profile: null,
+    language_fluency: null,
+    conflict_member_ids: [],
+    suggested_leader_ids: [],
+    listening_language: z.listening_language,
+  };
+}
+
+// =============================================================================
+// Placement within one set (a 中文 type, or one other language)
+// =============================================================================
+
+function placeSet(
+  set: PlacementSet,
+  groupSizeMax: number,
+  ctx: Ctx,
+  groupByLeader: Map<string, WorkingGroup>,
+  regionByPid: Map<string, string | null>,
+): void {
+  const students = set.students;
+  const classGroups = set.groups;
+
+  // Rule 5 — rank groups by main-leader grade (best first) and students
+  // by strength (strongest first). A student's target is the group at the
+  // same relative rank.
+  const rankedGroups = [...classGroups].sort(
+    (a, b) =>
+      grade(b.main_zu_zhang) - grade(a.main_zu_zhang)
+      || grade(b.auxiliary_zu_zhang) - grade(a.auxiliary_zu_zhang)
+      || a.group_no - b.group_no,
+  );
+  const groupRank = new Map(rankedGroups.map((g, i) => [g.group_no, i]));
+  const byStrength = [...students].sort(compareStrength);
+  const target = new Map<string, number>();
+  byStrength.forEach((p, i) => {
+    target.set(
+      p.participant_id,
+      Math.floor((i * classGroups.length) / Math.max(1, byStrength.length)),
+    );
+  });
+
+  // Placement order: CS suggestions first (they claim specific seats),
+  // then students with a goal, then students with no goal — strongest
+  // first within each so they get first pick of the top groups.
+  const tierOf = (p: GroupingParticipant) =>
+    p.suggested_leader_ids.length > 0 ? 0 : p.goal_dimensions.length > 0 ? 1 : 2;
+  const order = [...byStrength].sort((a, b) => tierOf(a) - tierOf(b));
+
+  const seats = (g: WorkingGroup) =>
+    (g.main_zu_zhang ? 1 : 0) + (g.auxiliary_zu_zhang ? 1 : 0) + g.members.length;
+  const hasRoom = (g: WorkingGroup) => seats(g) < groupSizeMax;
+
+  for (const p of order) {
+    const notes: Reason[] = [];
+    const safe = (g: WorkingGroup) => !createsHardConflict(p, g, ctx);
+
+    // Rule 3 — CS-suggested 组长.
+    let placed: WorkingGroup | null = null;
+    for (const leaderId of p.suggested_leader_ids) {
+      const name = regionByPid.get(leaderId) ?? "suggested 组长";
+      const g = groupByLeader.get(leaderId);
+      if (!g) {
+        notes.push({
+          en: `suggested ${name} is not leading at this event`,
+          cn: `建议组长 ${name} 本场未带组`,
+        });
+        continue;
+      }
+      if (g.language !== set.language) {
+        notes.push({
+          en: `suggested ${name} leads a ${languageLabel(g.language).en} group, student listens in ${languageLabel(set.language).en}`,
+          cn: `建议组长 ${name} 带${languageLabel(g.language).cn}组，学员听${languageLabel(set.language).cn}`,
+        });
+        continue;
+      }
+      if (set.cls && g.group_class !== set.cls) {
+        const cls = set.cls;
+        notes.push({
+          en: `suggested ${name} leads ${GROUP_CLASS_LABEL[g.group_class].short_cn}, student is ${GROUP_CLASS_LABEL[cls].short_cn}`,
+          cn: `建议组长 ${name} 带${GROUP_CLASS_LABEL[g.group_class].cn}，学员属${GROUP_CLASS_LABEL[cls].cn}`,
+        });
+        continue;
+      }
+      if (!hasRoom(g)) {
+        notes.push({ en: `suggested ${name}'s group is full`, cn: `建议组长 ${name} 的组已满` });
+        continue;
+      }
+      if (!safe(g)) {
+        notes.push({
+          en: `suggested ${name}'s group has family / a conflict pair`,
+          cn: `建议组长 ${name} 的组有家人或冲突对象`,
+        });
+        continue;
+      }
+      placed = g;
+      g.members.push(p);
+      ctx.locked.add(p.participant_id);
+      ctx.reasons.set(p.participant_id, {
+        en: [`CS-suggested 组长 ${name}`, ...notes.map((x) => x.en)].join(" · "),
+        cn: [`客服建议组长 ${name}`, ...notes.map((x) => x.cn)].join(" · "),
+      });
+      break;
+    }
+    if (placed) continue;
+
+    // Rules 4 + 5.
+    let candidates = classGroups.filter((g) => hasRoom(g) && safe(g));
+    let overflow = false;
+    if (candidates.length === 0) {
+      candidates = classGroups.filter(hasRoom);
+      if (candidates.length === 0) {
+        candidates = [...classGroups];
+        overflow = true;
+      }
+      notes.push({ en: "no clean seat — check family / size", cn: "无合适空位，请检查家人/人数" });
+    }
+
+    const goal = p.goal_dimensions[0] ?? null;
+    if (goal) {
+      const covering = candidates.filter((g) => coverer(g, goal));
+      if (covering.length > 0) {
+        candidates = covering;
+      } else {
+        notes.push({
+          en: `no group with room covers ${GROWTH_DIMENSION_LABEL[goal].en}`,
+          cn: `没有可覆盖${GROWTH_DIMENSION_LABEL[goal].cn}的空位`,
+        });
+      }
+    }
+
+    const t = target.get(p.participant_id) ?? 0;
+    // Tie-break: a group whose leaders also cover the second goal.
+    const second = p.goal_dimensions[1] ?? null;
+    const coversSecond = (g: WorkingGroup) => (second && coverer(g, second) ? 0 : 1);
+    const pick = [...candidates].sort(
+      (a, b) =>
+        Math.abs((groupRank.get(a.group_no) ?? 0) - t)
+          - Math.abs((groupRank.get(b.group_no) ?? 0) - t)
+        || coversSecond(a) - coversSecond(b)
+        || seats(a) - seats(b)
+        || a.group_no - b.group_no,
+    )[0];
+    pick.members.push(p);
+    if (overflow) notes.push({ en: "group over size", cn: "超出人数上限" });
+    ctx.notes.set(p.participant_id, notes);
+  }
+}
+
+// Goal + grade reason for a student in their final group.
+function placementReason(p: GroupingParticipant, g: WorkingGroup, notes: Reason[]): Reason {
+  const parts: Reason[] = [];
+  const goal = p.goal_dimensions[0] ?? null;
+  const by = goal ? coverer(g, goal) : null;
+  if (goal && by) {
+    parts.push({
+      en: `main goal ${GROWTH_DIMENSION_LABEL[goal].en} ✓ ↔ ${by.region_id ?? "组长"}`,
+      cn: `主要目标${GROWTH_DIMENSION_LABEL[goal].cn} ✓ ↔ ${by.region_id ?? "组长"}`,
+    });
+  } else if (!goal) {
+    parts.push({ en: "no goal set", cn: "未填成长方向" });
+  }
+  const second = p.goal_dimensions[1] ?? null;
+  const by2 = second ? coverer(g, second) : null;
+  if (second && by2) {
+    parts.push({
+      en: `2nd goal ${GROWTH_DIMENSION_LABEL[second].en} ✓`,
+      cn: `次要目标${GROWTH_DIMENSION_LABEL[second].cn} ✓`,
+    });
+  }
+  const q = effectiveQualification(p);
+  const lg = g.main_zu_zhang?.grade;
+  parts.push({
+    en: `${q ? STUDENT_QUALIFICATION_LABEL[q].en : "unscored"} → ${lg != null ? `grade-${lg}` : "ungraded"} leader`,
+    cn: `${q ? STUDENT_QUALIFICATION_LABEL[q].cn : "未评分"} → ${lg != null ? `${lg} 级` : "未定级"}组长`,
+  });
+  const all = [...parts, ...notes];
+  return { en: all.map((x) => x.en).join(" · "), cn: all.map((x) => x.cn).join(" · ") };
+}
+
+function grade(z: GroupingZuZhang | null): number {
+  return z?.grade ?? 0;
+}
+
+function strengthScore(p: GroupingParticipant): [number, number, number] {
+  const q = effectiveQualification(p);
+  const fin = p.financial_score ?? 0;
+  const inf = p.influence_score ?? 0;
+  return [q ? STUDENT_QUALIFICATION_LABEL[q].score : 0, Math.max(fin, inf), fin + inf];
+}
+
+function compareStrength(a: GroupingParticipant, b: GroupingParticipant): number {
+  const sa = strengthScore(a);
+  const sb = strengthScore(b);
+  for (let i = 0; i < sa.length; i += 1) {
+    if (sa[i] !== sb[i]) return sb[i] - sa[i];
+  }
+  return (a.region_id ?? a.participant_id).localeCompare(b.region_id ?? b.participant_id);
+}
+
+// The 主组长 if they cover the goal, else the 副组长, else null.
+function coverer(g: WorkingGroup, goal: GrowthDimension): GroupingZuZhang | null {
+  if (g.main_zu_zhang?.dimensions.includes(goal)) return g.main_zu_zhang;
+  if (g.auxiliary_zu_zhang?.dimensions.includes(goal)) return g.auxiliary_zu_zhang;
+  return null;
+}
+
+// =============================================================================
+// Balancing swaps
+// =============================================================================
+
+// May `p` move from group `from` to group `to` without breaking rules 3–5?
+function softMoveOk(p: GroupingParticipant, from: WorkingGroup, to: WorkingGroup, ctx: Ctx): boolean {
+  if (ctx.locked.has(p.participant_id)) return false;
+  if (p.pinned_group_no != null) return false;
+  if (Math.abs(grade(from.main_zu_zhang) - grade(to.main_zu_zhang)) > 1) return false;
+  const goal = p.goal_dimensions[0];
+  if (goal && coverer(from, goal) && !coverer(to, goal)) return false;
+  return true;
+}
+
+function softSwapOk(
+  a: GroupingParticipant,
+  ga: WorkingGroup,
+  b: GroupingParticipant,
+  gb: WorkingGroup,
+  ctx: Ctx,
+): boolean {
+  return (
+    softMoveOk(a, ga, gb, ctx)
+    && softMoveOk(b, gb, ga, ctx)
+    && !createsHardConflict(a, gb, ctx, b)
+    && !createsHardConflict(b, ga, ctx, a)
+  );
+}
+
+// Family / conflict repair. Hard rules outrank goal and grade, so these
+// swaps only respect pins + suggestions, not the soft guards.
+function repairChainSplit(classGroups: WorkingGroup[], ctx: Ctx, kind: "family" | "conflict"): void {
+  const chains = kind === "family" ? ctx.familyChains : ctx.conflictChains;
+  for (let swaps = 0; swaps < 100; swaps += 1) {
+    let fixed = false;
+    for (const g of classGroups) {
+      const seen = new Set<string>();
+      let clash: GroupingParticipant | null = null;
+      for (const m of g.members) {
+        const c = chains.get(m.participant_id);
+        if (!c) continue;
+        if (seen.has(c) && !ctx.locked.has(m.participant_id)) {
+          clash = m;
+          break;
+        }
+        seen.add(c);
+      }
+      if (!clash) continue;
+      for (const other of classGroups) {
+        if (other === g) continue;
+        const partner = other.members.find(
+          (m) =>
+            !ctx.locked.has(m.participant_id)
+            && !createsHardConflict(clash!, other, ctx, m)
+            && !createsHardConflict(m, g, ctx, clash!),
+        );
+        if (partner) {
+          swapMembers(g, other, clash, partner);
+          fixed = true;
+          break;
+        }
+      }
+      if (fixed) break;
+    }
+    if (!fixed) return;
+  }
+}
+
+// No group is 100% new students while old students remain in the type.
+function repairOldStudentMix(classGroups: WorkingGroup[], ctx: Ctx): void {
+  for (const g of classGroups) {
+    if (g.members.some((m) => m.is_old_student)) continue;
+    const donors = classGroups
+      .filter((c) => c !== g && c.members.filter((m) => m.is_old_student).length >= 2)
+      .sort(
+        (a, b) =>
+          b.members.filter((m) => m.is_old_student).length
+          - a.members.filter((m) => m.is_old_student).length,
+      );
+    let done = false;
+    for (const donor of donors) {
+      for (const os of donor.members.filter((m) => m.is_old_student)) {
+        const out = g.members.find((m) => !m.is_old_student && softSwapOk(os, donor, m, g, ctx));
+        if (out) {
+          swapMembers(donor, g, os, out);
+          done = true;
+          break;
+        }
+      }
+      if (done) break;
+    }
+  }
+}
+
+// Spread high / medium / quiet energy evenly (soft).
+function repairEnergyDistribution(classGroups: WorkingGroup[], ctx: Ctx): void {
+  if (classGroups.length < 2) return;
+  const k = classGroups.length;
+  const kinds = ["high", "medium", "quiet"] as const;
+  const count = (g: WorkingGroup, b: (typeof kinds)[number]) =>
+    g.members.filter((m) => m.energy_profile === b).length;
+  const cap = Object.fromEntries(
+    kinds.map((b) => [b, Math.ceil(classGroups.reduce((s, g) => s + count(g, b), 0) / k)]),
+  ) as Record<(typeof kinds)[number], number>;
+
+  for (let swaps = 0; swaps < 30; swaps += 1) {
+    let moved = false;
+    for (const b of kinds) {
+      for (const donor of classGroups) {
+        if (count(donor, b) <= cap[b]) continue;
+        for (const receiver of classGroups) {
+          if (receiver === donor || count(receiver, b) >= cap[b]) continue;
+          let pair: [GroupingParticipant, GroupingParticipant] | null = null;
+          for (const out of donor.members.filter((m) => m.energy_profile === b)) {
+            const inn = receiver.members.find(
+              (m) => m.energy_profile !== b && softSwapOk(out, donor, m, receiver, ctx),
+            );
+            if (inn) {
+              pair = [out, inn];
+              break;
+            }
+          }
+          if (pair) {
+            swapMembers(donor, receiver, pair[0], pair[1]);
+            moved = true;
+            break;
+          }
+        }
+        if (moved) break;
+      }
+      if (moved) break;
+    }
+    if (!moved) return;
+  }
+}
+
+// Would `candidate` joining `group` put two members of one family or
+// conflict chain together? `leaving` (a swap partner) is ignored.
+function createsHardConflict(
+  candidate: GroupingParticipant,
+  group: WorkingGroup,
+  ctx: Ctx,
+  leaving?: GroupingParticipant,
+): boolean {
+  const others = group.members.filter(
+    (m) => m.participant_id !== candidate.participant_id && m.participant_id !== leaving?.participant_id,
+  );
+  const fam = ctx.familyChains.get(candidate.participant_id);
+  if (fam && others.some((m) => ctx.familyChains.get(m.participant_id) === fam)) return true;
+  const con = ctx.conflictChains.get(candidate.participant_id);
+  if (con && others.some((m) => ctx.conflictChains.get(m.participant_id) === con)) return true;
+  return false;
+}
+
+function swapMembers(
+  ga: WorkingGroup,
+  gb: WorkingGroup,
+  fromGa: GroupingParticipant,
+  fromGb: GroupingParticipant,
+): void {
+  ga.members = ga.members.filter((m) => m.participant_id !== fromGa.participant_id);
+  gb.members = gb.members.filter((m) => m.participant_id !== fromGb.participant_id);
+  ga.members.push(fromGb);
+  gb.members.push(fromGa);
+}
+
+// =============================================================================
+// Roster shortfalls — exported so the groups page can preview requirements
+// without running the whole algorithm.
 // =============================================================================
 
 export function computeRosterShortfalls(
-  roster: GroupingZuZhang[],
+  roster: Array<Pick<GroupingZuZhang, "tier">>,
   kByClass: Record<GroupClass, number>,
 ): RosterShortfall[] {
-  // Required = sum across classes by tier role.
-  // 维护型 mains are pooled across 成长 + 维护 (same tier required).
   const required: Array<{
     group_class: GroupClass;
     k_required: number;
@@ -360,17 +932,9 @@ export function computeRosterShortfalls(
     if (k === 0) continue;
     const { main, auxiliary } = requiredLeaderTiers(cls);
     required.push({ group_class: cls, k_required: k, tier: main, role: "main" });
-    required.push({
-      group_class: cls,
-      k_required: k,
-      tier: auxiliary,
-      role: "auxiliary",
-    });
+    required.push({ group_class: cls, k_required: k, tier: auxiliary, role: "auxiliary" });
   }
 
-  // Pool tier counts. Each 组长 counts once toward whichever role-slot
-  // they're allocated to — but for the SHORTFALL diagnostic we just
-  // compare aggregate availability vs aggregate demand per (tier, role).
   const haveByTier: Record<ZuZhangTier, number> = {
     key_recruitment: 0,
     recruitment: 0,
@@ -379,10 +943,6 @@ export function computeRosterShortfalls(
   };
   for (const z of roster) haveByTier[z.tier] += 1;
 
-  // Aggregate demand per tier across role slots. Note that a 感召型
-  // 组长 may be either a main (重点组) or an auxiliary (特级组), so we
-  // don't double-count or split — total demand for the tier is what
-  // matters.
   const demandByTier: Record<ZuZhangTier, number> = {
     key_recruitment: 0,
     recruitment: 0,
@@ -393,14 +953,9 @@ export function computeRosterShortfalls(
 
   const shortfalls: RosterShortfall[] = [];
   for (const r of required) {
-    // Available = haveByTier[tier], proportionally allocated to this
-    // role's k_required share of demandByTier[tier].
     const totalDemand = demandByTier[r.tier];
     if (totalDemand === 0) continue;
-    const totalHave = haveByTier[r.tier];
-    // Per-role share = floor((have * k_required) / totalDemand) —
-    // worst case for diagnostic purposes.
-    const share = Math.floor((totalHave * r.k_required) / totalDemand);
+    const share = Math.floor((haveByTier[r.tier] * r.k_required) / totalDemand);
     if (share < r.k_required) {
       shortfalls.push({
         group_class: r.group_class,
@@ -419,9 +974,7 @@ export function computeRosterShortfalls(
 // Helpers
 // =============================================================================
 
-function bucketRosterByTier(
-  roster: GroupingZuZhang[],
-): Record<ZuZhangTier, GroupingZuZhang[]> {
+function bucketRosterByTier(roster: GroupingZuZhang[]): Record<ZuZhangTier, GroupingZuZhang[]> {
   const out: Record<ZuZhangTier, GroupingZuZhang[]> = {
     key_recruitment: [],
     recruitment: [],
@@ -429,706 +982,149 @@ function bucketRosterByTier(
     auxiliary: [],
   };
   for (const z of roster) out[z.tier].push(z);
-  // Sort each tier bucket by grade desc (nulls last) so pool.shift() in
-  // popPreferringDimensionSpread picks the highest-graded leader first
-  // when there's no comparison group to spread against.
-  for (const tier of Object.keys(out) as ZuZhangTier[]) {
-    out[tier].sort((a, b) => (b.grade ?? 0) - (a.grade ?? 0));
+  // Highest grade first; region_id for determinism.
+  for (const tier of TIER_LADDER) {
+    out[tier].sort(
+      (a, b) =>
+        (b.grade ?? 0) - (a.grade ?? 0)
+        || (a.region_id ?? a.participant_id).localeCompare(b.region_id ?? b.participant_id),
+    );
   }
   return out;
 }
 
-// Pick a 组长 of `tier` from the bucket; prefer one whose dimensions
-// least overlap with already-seeded groups in the same class (broadens
-// coverage). Returns null if the bucket is empty (graceful degraded
-// mode — group will lack that role).
+// Pick a 组长 of `tier` who speaks `language`, preferring one whose
+// strengths add dimensions the comparison groups don't cover yet; ties go
+// to the higher grade (the pool is grade-sorted).
 function popPreferringDimensionSpread(
   bucket: Record<ZuZhangTier, GroupingZuZhang[]>,
   tier: ZuZhangTier,
+  language: ClassLanguage,
   comparisonGroups: Array<{ main_zu_zhang: GroupingZuZhang | null }>,
 ): GroupingZuZhang | null {
   const pool = bucket[tier];
-  if (pool.length === 0) return null;
-  if (comparisonGroups.length === 0) {
-    return pool.shift() ?? null;
-  }
-  const seenDimensions = new Set<GrowthDimension>();
+  const seen = new Set<GrowthDimension>();
   for (const g of comparisonGroups) {
-    if (!g.main_zu_zhang) continue;
-    for (const d of g.main_zu_zhang.dimensions) seenDimensions.add(d);
+    for (const d of g.main_zu_zhang?.dimensions ?? []) seen.add(d);
   }
-  // Score each candidate by NEW dimensions they bring; lower score
-  // means more redundant; we want the highest score. Tiebreak by grade
-  // desc so within equal-coverage candidates the strongest leader wins.
-  let bestIndex = 0;
-  let bestNewCount = -1;
+  let bestIndex = -1;
+  let bestNew = -1;
   let bestGrade = -1;
   for (let i = 0; i < pool.length; i += 1) {
-    const newCount = pool[i].dimensions.filter((d) => !seenDimensions.has(d))
-      .length;
-    const grade = pool[i].grade ?? 0;
-    if (
-      newCount > bestNewCount
-      || (newCount === bestNewCount && grade > bestGrade)
-    ) {
-      bestNewCount = newCount;
-      bestGrade = grade;
+    if (!speaks(pool[i].spoken_languages, language)) continue;
+    const fresh = pool[i].dimensions.filter((d) => !seen.has(d)).length;
+    const g = pool[i].grade ?? 0;
+    if (fresh > bestNew || (fresh === bestNew && g > bestGrade)) {
+      bestNew = fresh;
+      bestGrade = g;
       bestIndex = i;
     }
   }
+  if (bestIndex < 0) return null;
   const [picked] = pool.splice(bestIndex, 1);
   return picked;
 }
 
-// Used only for dimension-spread comparison when seeding auxiliary
-// against an already-seeded main within a class.
-function emptyWorkingGroupShape(
-  cls: GroupClass,
-  main: GroupingZuZhang,
-): WorkingGroup {
-  return {
-    group_no: 0,
-    group_class: cls,
-    main_zu_zhang: main,
-    auxiliary_zu_zhang: null,
-    members: [],
+// Connected components over family edges (legacy single edge + join table).
+function buildFamilyChains(participants: GroupingParticipant[]): Map<string, string> {
+  const adj = new Map<string, Set<string>>();
+  const link = (a: string, b: string) => {
+    if (a === b) return;
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a)!.add(b);
+    adj.get(b)!.add(a);
   };
-}
-
-// Phase A — pick a target group for a participant within their class.
-// Preference order:
-//   1. Group whose main 组长 covers the participant's primary goal
-//      AND group has spare capacity AND no family conflict.
-//   2. Group whose auxiliary 组长 covers the primary goal (same gates).
-//   3. Smallest group with capacity AND no family conflict.
-//   4. Smallest group (accept family/capacity overflow; Phase C repairs).
-//
-// Each filter step requires `members.length < groupSizeMax`. The
-// algorithm degrades gracefully if every group is full (e.g. when
-// surplus 组长 demoted to 'growth' push the bucket over the policy
-// total) by falling through to step 4.
-function pickGroupForParticipant(
-  p: GroupingParticipant,
-  classGroups: WorkingGroup[],
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-  groupSizeMax: number,
-): WorkingGroup {
-  const primaryGoal = p.goal_dimensions[0] ?? null;
-  const pFamilyChain = familyChains.get(p.participant_id);
-  const pConflictChain = conflictChains.get(p.participant_id);
-
-  // Hard-safe: respects BOTH family-split and conflict-pair-split rules.
-  const hardSafe = (g: WorkingGroup): boolean => {
-    if (pFamilyChain) {
-      const familyHit = g.members.some(
-        (m) => familyChains.get(m.participant_id) === pFamilyChain,
-      );
-      if (familyHit) return false;
-    }
-    if (pConflictChain) {
-      const conflictHit = g.members.some(
-        (m) => conflictChains.get(m.participant_id) === pConflictChain,
-      );
-      if (conflictHit) return false;
-    }
-    return true;
-  };
-  // Account for the seeded leader pair when checking capacity — those
-  // already occupy 1-2 seats per group before any regular member lands.
-  const seatedHead = (g: WorkingGroup): number =>
-    (g.main_zu_zhang ? 1 : 0) + (g.auxiliary_zu_zhang ? 1 : 0);
-  const hasCapacity = (g: WorkingGroup): boolean =>
-    g.members.length + seatedHead(g) < groupSizeMax;
-
-  if (primaryGoal) {
-    const mainMatch = classGroups
-      .filter((g) => hardSafe(g) && hasCapacity(g))
-      .filter(
-        (g) =>
-          g.main_zu_zhang
-          && g.main_zu_zhang.dimensions.includes(primaryGoal),
-      )
-      .sort((a, b) => a.members.length - b.members.length)[0];
-    if (mainMatch) return mainMatch;
-
-    const auxMatch = classGroups
-      .filter((g) => hardSafe(g) && hasCapacity(g))
-      .filter(
-        (g) =>
-          g.auxiliary_zu_zhang
-          && g.auxiliary_zu_zhang.dimensions.includes(primaryGoal),
-      )
-      .sort((a, b) => a.members.length - b.members.length)[0];
-    if (auxMatch) return auxMatch;
+  for (const p of participants) {
+    if (p.family_of_participant_id) link(p.participant_id, p.family_of_participant_id);
+    for (const o of p.family_member_ids) link(p.participant_id, o);
   }
-
-  const safeGroup = classGroups
-    .filter((g) => hardSafe(g) && hasCapacity(g))
-    .sort((a, b) => a.members.length - b.members.length)[0];
-  if (safeGroup) return safeGroup;
-
-  const anyWithCapacity = classGroups
-    .filter((g) => hasCapacity(g))
-    .sort((a, b) => a.members.length - b.members.length)[0];
-  if (anyWithCapacity) return anyWithCapacity;
-
-  // Every group full — last resort. Take the smallest and accept overflow;
-  // validation will surface group_too_large for admin to handle.
-  return [...classGroups].sort(
-    (a, b) => a.members.length - b.members.length,
-  )[0];
+  return components(participants, adj);
 }
 
-// Phase B — for 特级 + 重点, ensure priority participants are spread
-// evenly. No group should hold more than ceil(priority_count / k) of
-// them.
-function rebalancePriority(
-  classGroups: WorkingGroup[],
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-): void {
-  const priorityMembers = classGroups
-    .flatMap((g) => g.members.filter((m) => isPriority(m)).map((m) => ({ g, m })));
-  if (priorityMembers.length === 0) return;
-  const cap = Math.ceil(priorityMembers.length / classGroups.length);
-
-  let stable = false;
-  let swaps = 0;
-  while (!stable && swaps < 50) {
-    stable = true;
-    for (const g of classGroups) {
-      const groupPriority = g.members.filter((m) => isPriority(m));
-      if (groupPriority.length <= cap) continue;
-      // Find a sibling group with fewer priority members AND a
-      // non-priority swap candidate to receive.
-      const donor = g;
-      const receiverCandidates = classGroups
-        .filter((c) => c.group_no !== g.group_no)
-        .map((c) => ({
-          c,
-          priorityCount: c.members.filter((m) => isPriority(m)).length,
-        }))
-        .filter((x) => x.priorityCount < cap)
-        .sort((a, b) => a.priorityCount - b.priorityCount);
-      let swapped = false;
-      for (const { c } of receiverCandidates) {
-        const moveOut = donor.members.find(
-          (m) => isPriority(m) && m.pinned_group_no == null,
-        );
-        if (!moveOut) continue;
-        const moveIn = c.members.find(
-          (m) => !isPriority(m) && m.pinned_group_no == null,
-        );
-        if (!moveIn) continue;
-        if (createsHardConflict(moveOut, c, familyChains, conflictChains)) continue;
-        if (createsHardConflict(moveIn, donor, familyChains, conflictChains)) continue;
-        swapMembers(donor, c, moveOut, moveIn);
-        swaps += 1;
-        stable = false;
-        swapped = true;
-        break;
-      }
-      if (swapped) break;
-    }
-  }
-}
-
-// Phase C — repair family-split violations within a class.
-function repairFamilySplit(
-  classGroups: WorkingGroup[],
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-): void {
-  let stable = false;
-  let swaps = 0;
-  while (!stable && swaps < 100) {
-    stable = true;
-    for (const g of classGroups) {
-      const seen = new Map<string, GroupingParticipant>();
-      let conflict: GroupingParticipant | null = null;
-      for (const m of g.members) {
-        const chain = familyChains.get(m.participant_id);
-        if (!chain) continue;
-        if (seen.has(chain)) {
-          conflict = m;
-          break;
-        }
-        seen.set(chain, m);
-      }
-      if (!conflict) continue;
-      // Find a swap target in another group within the same class. The
-      // swap target must be hard-safe in BOTH directions so the swap
-      // doesn't fix a family violation while creating a conflict-pair
-      // one (or vice versa).
-      const target = findHardSafeSwapTarget(
-        classGroups,
-        g.group_no,
-        conflict,
-        familyChains,
-        conflictChains,
-        "family",
-      );
-      if (!target) continue;
-      const targetGroup = classGroups.find((cg) =>
-        cg.members.some((m) => m.participant_id === target.participant_id),
-      )!;
-      swapMembers(g, targetGroup, conflict, target);
-      swaps += 1;
-      stable = false;
-      break;
-    }
-  }
-}
-
-// Phase C2 — repair conflict-pair violations within a class. Mirrors
-// repairFamilySplit but scans for conflict-chain collisions.
-function repairConflictSplit(
-  classGroups: WorkingGroup[],
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-): void {
-  let stable = false;
-  let swaps = 0;
-  while (!stable && swaps < 100) {
-    stable = true;
-    for (const g of classGroups) {
-      const seen = new Map<string, GroupingParticipant>();
-      let conflict: GroupingParticipant | null = null;
-      for (const m of g.members) {
-        const chain = conflictChains.get(m.participant_id);
-        if (!chain) continue;
-        if (seen.has(chain)) {
-          conflict = m;
-          break;
-        }
-        seen.set(chain, m);
-      }
-      if (!conflict) continue;
-      const target = findHardSafeSwapTarget(
-        classGroups,
-        g.group_no,
-        conflict,
-        familyChains,
-        conflictChains,
-        "conflict",
-      );
-      if (!target) continue;
-      const targetGroup = classGroups.find((cg) =>
-        cg.members.some((m) => m.participant_id === target.participant_id),
-      )!;
-      swapMembers(g, targetGroup, conflict, target);
-      swaps += 1;
-      stable = false;
-      break;
-    }
-  }
-}
-
-// Phase E — ensure no group is 100% new students if old students
-// remain available within the class.
-function repairOldStudentMix(
-  classGroups: WorkingGroup[],
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-): void {
-  for (const g of classGroups) {
-    const hasOs = g.members.some((m) => m.is_old_student);
-    if (hasOs) continue;
-    const donor = classGroups
-      .filter((c) => c.group_no !== g.group_no)
-      .map((c) => ({
-        c,
-        osCount: c.members.filter((m) => m.is_old_student).length,
-      }))
-      .filter((x) => x.osCount >= 2)
-      .sort((a, b) => b.osCount - a.osCount)[0];
-    if (!donor) continue;
-    const osPick = donor.c.members.find(
-      (m) =>
-        m.is_old_student
-        && m.pinned_group_no == null
-        && !createsHardConflict(m, g, familyChains, conflictChains),
-    );
-    if (!osPick) continue;
-    const swapOut = g.members.find(
-      (m) =>
-        !m.is_old_student
-        && m.pinned_group_no == null
-        && !createsHardConflict(m, donor.c, familyChains, conflictChains),
-    );
-    if (!swapOut) continue;
-    swapMembers(g, donor.c, osPick, swapOut);
-  }
-}
-
-// Phase F — soft balance of energy_profile (high/medium/quiet) across
-// groups within a class. Mirrors the OS-mix idea: if a group has too
-// many of one bucket vs. the per-group average, swap with a sibling
-// group that has the opposite imbalance. Bounded iterations; no
-// validation error if it can't converge — soft constraint.
-function repairEnergyDistribution(
-  classGroups: WorkingGroup[],
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-): void {
-  if (classGroups.length < 2) return;
-  const k = classGroups.length;
-  type Bucket = "high" | "medium" | "quiet";
-  const buckets: Bucket[] = ["high", "medium", "quiet"];
-
-  // Per-class target: ceil(global_count / k) for each bucket.
-  const totals: Record<Bucket, number> = { high: 0, medium: 0, quiet: 0 };
-  for (const g of classGroups) {
-    for (const m of g.members) {
-      if (m.energy_profile) totals[m.energy_profile] += 1;
-    }
-  }
-  const cap: Record<Bucket, number> = {
-    high: Math.ceil(totals.high / k),
-    medium: Math.ceil(totals.medium / k),
-    quiet: Math.ceil(totals.quiet / k),
-  };
-
-  let stable = false;
-  let swaps = 0;
-  while (!stable && swaps < 30) {
-    stable = true;
-    for (const bucket of buckets) {
-      for (const donor of classGroups) {
-        const donorCount = donor.members.filter(
-          (m) => m.energy_profile === bucket,
-        ).length;
-        if (donorCount <= cap[bucket]) continue;
-        const receiver = classGroups
-          .filter((c) => c.group_no !== donor.group_no)
-          .map((c) => ({
-            c,
-            count: c.members.filter((m) => m.energy_profile === bucket).length,
-          }))
-          .filter((x) => x.count < cap[bucket])
-          .sort((a, b) => a.count - b.count)[0];
-        if (!receiver) continue;
-        const moveOut = donor.members.find(
-          (m) => m.energy_profile === bucket && m.pinned_group_no == null,
-        );
-        if (!moveOut) continue;
-        const moveIn = receiver.c.members.find(
-          (m) => m.energy_profile !== bucket && m.pinned_group_no == null,
-        );
-        if (!moveIn) continue;
-        if (createsHardConflict(moveOut, receiver.c, familyChains, conflictChains))
-          continue;
-        if (createsHardConflict(moveIn, donor, familyChains, conflictChains))
-          continue;
-        swapMembers(donor, receiver.c, moveOut, moveIn);
-        swaps += 1;
-        stable = false;
-      }
-    }
-  }
-}
-
-// Phase G — soft language fluency mix. For each group within a class,
-// guarantee ≥1 person who can converse in EACH language present in the
-// wider class enrolment. "both" counts toward both languages.
-//
-// Skipped when the class has only one language present (no mix to
-// enforce).
-function repairLanguageMix(
-  classGroups: WorkingGroup[],
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-): void {
-  if (classGroups.length < 2) return;
-  // Snapshot which languages are present anywhere in the class.
-  const present = { en: false, cn: false };
-  for (const g of classGroups) {
-    for (const m of g.members) {
-      if (m.language_fluency === "en" || m.language_fluency === "both")
-        present.en = true;
-      if (m.language_fluency === "cn" || m.language_fluency === "both")
-        present.cn = true;
-    }
-  }
-  if (!present.en || !present.cn) return; // monolingual class — skip
-
-  const speaksEn = (m: GroupingParticipant) =>
-    m.language_fluency === "en" || m.language_fluency === "both";
-  const speaksCn = (m: GroupingParticipant) =>
-    m.language_fluency === "cn" || m.language_fluency === "both";
-
-  const groupHasEn = (g: WorkingGroup) => g.members.some(speaksEn);
-  const groupHasCn = (g: WorkingGroup) => g.members.some(speaksCn);
-
-  let stable = false;
-  let swaps = 0;
-  while (!stable && swaps < 30) {
-    stable = true;
-    for (const g of classGroups) {
-      const needsLang: "en" | "cn" | null = !groupHasEn(g)
-        ? "en"
-        : !groupHasCn(g)
-          ? "cn"
-          : null;
-      if (!needsLang) continue;
-      // Find a donor group with surplus speakers of `needsLang`.
-      const donorList = classGroups
-        .filter((c) => c.group_no !== g.group_no)
-        .map((c) => ({
-          c,
-          surplus: c.members.filter((m) =>
-            needsLang === "en" ? speaksEn(m) : speaksCn(m),
-          ).length,
-        }))
-        .filter((x) => x.surplus >= 2)
-        .sort((a, b) => b.surplus - a.surplus);
-      let swapped = false;
-      for (const { c: donor } of donorList) {
-        // Move someone fluent in needsLang OUT of donor INTO g.
-        const moveOut = donor.members.find(
-          (m) =>
-            (needsLang === "en" ? speaksEn(m) : speaksCn(m))
-            && m.pinned_group_no == null,
-        );
-        if (!moveOut) continue;
-        // And move someone NOT-fluent-in-needsLang from g into donor.
-        // (any member is fine; we just want to keep group sizes equal.)
-        const moveIn = g.members.find(
-          (m) =>
-            !(needsLang === "en" ? speaksEn(m) : speaksCn(m))
-            && m.pinned_group_no == null,
-        );
-        if (!moveIn) continue;
-        if (createsHardConflict(moveOut, g, familyChains, conflictChains)) continue;
-        if (createsHardConflict(moveIn, donor, familyChains, conflictChains)) continue;
-        swapMembers(g, donor, moveIn, moveOut);
-        swaps += 1;
-        stable = false;
-        swapped = true;
-        break;
-      }
-      if (swapped) continue;
-    }
-  }
-}
-
-// Find a swap partner in a sibling group that respects BOTH family and
-// conflict-pair constraints in BOTH directions. The `repairing` arg
-// signals which constraint we're prioritising fixing — but all rules
-// must hold afterwards regardless.
-function findHardSafeSwapTarget(
-  classGroups: WorkingGroup[],
-  excludeGroupNo: number,
-  movingOut: GroupingParticipant,
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-  _repairing: "family" | "conflict",
-): GroupingParticipant | null {
-  const movingFamily = familyChains.get(movingOut.participant_id);
-  const movingConflict = conflictChains.get(movingOut.participant_id);
-  const sourceGroup = classGroups.find((cg) => cg.group_no === excludeGroupNo)!;
-  const candidates = classGroups
-    .filter((g) => g.group_no !== excludeGroupNo)
-    .sort((a, b) => b.members.length - a.members.length);
-  for (const g of candidates) {
-    for (const m of g.members) {
-      if (m.pinned_group_no != null) continue;
-      // movingOut going INTO g: must not collide on either chain with g's
-      // existing members.
-      const mFamily = familyChains.get(m.participant_id);
-      const mConflict = conflictChains.get(m.participant_id);
-      if (movingFamily && g.members.some(
-        (other) =>
-          other.participant_id !== m.participant_id
-          && familyChains.get(other.participant_id) === movingFamily,
-      )) continue;
-      if (movingConflict && g.members.some(
-        (other) =>
-          other.participant_id !== m.participant_id
-          && conflictChains.get(other.participant_id) === movingConflict,
-      )) continue;
-      // m going INTO sourceGroup: must not collide with anyone there
-      // (excluding movingOut who's leaving).
-      if (mFamily && sourceGroup.members.some(
-        (cur) =>
-          cur.participant_id !== movingOut.participant_id
-          && familyChains.get(cur.participant_id) === mFamily,
-      )) continue;
-      if (mConflict && sourceGroup.members.some(
-        (cur) =>
-          cur.participant_id !== movingOut.participant_id
-          && conflictChains.get(cur.participant_id) === mConflict,
-      )) continue;
-      return m;
-    }
-  }
-  return null;
-}
-
-// Returns true if dropping `candidate` into `group` would put two
-// members of the same family-chain OR conflict-chain together.
-function createsHardConflict(
-  candidate: GroupingParticipant,
-  group: WorkingGroup,
-  familyChains: Map<string, string>,
-  conflictChains: Map<string, string>,
-): boolean {
-  const familyChain = familyChains.get(candidate.participant_id);
-  if (familyChain && group.members.some(
-    (m) =>
-      m.participant_id !== candidate.participant_id
-      && familyChains.get(m.participant_id) === familyChain,
-  )) return true;
-  const conflictChain = conflictChains.get(candidate.participant_id);
-  if (conflictChain && group.members.some(
-    (m) =>
-      m.participant_id !== candidate.participant_id
-      && conflictChains.get(m.participant_id) === conflictChain,
-  )) return true;
-  return false;
-}
-
-function swapMembers(
-  ga: WorkingGroup,
-  gb: WorkingGroup,
-  fromGa: GroupingParticipant,
-  fromGb: GroupingParticipant,
-): void {
-  ga.members = ga.members.filter(
-    (m) => m.participant_id !== fromGa.participant_id,
-  );
-  gb.members = gb.members.filter(
-    (m) => m.participant_id !== fromGb.participant_id,
-  );
-  ga.members.push(fromGb);
-  gb.members.push(fromGa);
-}
-
-// Walk family edges (legacy single-edge column + multi-edge join table)
-// to assign a stable chain-key per connected component. Two participants
-// share a chain iff they're in the same component — exactly the "must
-// split" relationship per spec.
-function buildFamilyChains(
-  participants: GroupingParticipant[],
-): Map<string, string> {
+function buildConflictChains(participants: GroupingParticipant[]): Map<string, string> {
   const adj = new Map<string, Set<string>>();
   for (const p of participants) {
-    if (!adj.has(p.participant_id)) adj.set(p.participant_id, new Set());
-    if (p.family_of_participant_id) {
-      const a = p.participant_id;
-      const b = p.family_of_participant_id;
-      if (!adj.has(b)) adj.set(b, new Set());
-      adj.get(a)!.add(b);
-      adj.get(b)!.add(a);
-    }
-    for (const other of p.family_member_ids) {
-      if (other === p.participant_id) continue;
-      if (!adj.has(other)) adj.set(other, new Set());
-      adj.get(p.participant_id)!.add(other);
-      adj.get(other)!.add(p.participant_id);
+    for (const o of p.conflict_member_ids) {
+      if (o === p.participant_id) continue;
+      if (!adj.has(p.participant_id)) adj.set(p.participant_id, new Set());
+      if (!adj.has(o)) adj.set(o, new Set());
+      adj.get(p.participant_id)!.add(o);
+      adj.get(o)!.add(p.participant_id);
     }
   }
+  return components(participants, adj);
+}
+
+function components(
+  participants: GroupingParticipant[],
+  adj: Map<string, Set<string>>,
+): Map<string, string> {
   const chains = new Map<string, string>();
   for (const p of participants) {
-    if (chains.has(p.participant_id)) continue;
+    if (chains.has(p.participant_id) || !adj.has(p.participant_id)) continue;
     const root = p.participant_id;
     const queue = [root];
     while (queue.length > 0) {
       const cur = queue.shift()!;
       if (chains.has(cur)) continue;
       chains.set(cur, root);
-      for (const neigh of adj.get(cur) ?? []) {
-        if (!chains.has(neigh)) queue.push(neigh);
-      }
+      for (const next of adj.get(cur) ?? []) if (!chains.has(next)) queue.push(next);
     }
   }
-  const filtered = new Map<string, string>();
-  for (const [pid, chain] of chains) {
-    if ((adj.get(pid)?.size ?? 0) > 0) filtered.set(pid, chain);
-  }
-  return filtered;
+  return chains;
 }
 
-// Same shape as buildFamilyChains but using the conflict_member_ids
-// adjacency. Connected components → must split. Mirror of family logic.
-function buildConflictChains(
-  participants: GroupingParticipant[],
-): Map<string, string> {
-  const adj = new Map<string, Set<string>>();
-  for (const p of participants) {
-    if (!adj.has(p.participant_id)) adj.set(p.participant_id, new Set());
-    for (const other of p.conflict_member_ids) {
-      if (other === p.participant_id) continue;
-      if (!adj.has(other)) adj.set(other, new Set());
-      adj.get(p.participant_id)!.add(other);
-      adj.get(other)!.add(p.participant_id);
+// =============================================================================
+// Rationale — a summary line, then one "• <region_id> — <reason>" line per
+// placed student. The groups page splits these back out.
+// =============================================================================
+
+function writeRationale(g: WorkingGroup, ctx: Ctx, lang: "en" | "cn"): string {
+  const cls = groupLabel(g, lang === "en" ? "en" : "cn");
+  const main = g.main_zu_zhang;
+  const tier = main ? ZU_ZHANG_TIER_LABEL[main.tier][lang] : null;
+  const dims = new Set<GrowthDimension>([
+    ...(main?.dimensions ?? []),
+    ...(g.auxiliary_zu_zhang?.dimensions ?? []),
+  ]);
+  const dimText = [...dims].map((d) => GROWTH_DIMENSION_LABEL[d][lang]).join(" / ");
+  const old = g.members.filter((m) => m.is_old_student).length;
+  const fresh = g.members.length - old;
+  const borrowed = g.borrowed.flatMap((b) => {
+    const out: string[] = [];
+    if (b.language_missing) {
+      out.push(
+        lang === "en"
+          ? `⚠ ${b.role === "main" ? "Main" : "Auxiliary"} leader doesn't speak ${languageLabel(g.language).en}.`
+          : `⚠ ${b.role === "main" ? "主组长" : "副组长"}不会说${languageLabel(g.language).cn}。`,
+      );
     }
-  }
-  const chains = new Map<string, string>();
-  for (const p of participants) {
-    if (chains.has(p.participant_id)) continue;
-    const root = p.participant_id;
-    const queue = [root];
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      if (chains.has(cur)) continue;
-      chains.set(cur, root);
-      for (const neigh of adj.get(cur) ?? []) {
-        if (!chains.has(neigh)) queue.push(neigh);
-      }
+    if (b.got !== b.wanted) {
+      out.push(
+        lang === "en"
+          ? `⚠ ${b.role === "main" ? "Main" : "Auxiliary"} leader borrowed: ${ZU_ZHANG_TIER_LABEL[b.got].en} (needs ${ZU_ZHANG_TIER_LABEL[b.wanted].en}).`
+          : `⚠ ${b.role === "main" ? "主组长" : "副组长"}借用${ZU_ZHANG_TIER_LABEL[b.got].cn}（应为${ZU_ZHANG_TIER_LABEL[b.wanted].cn}）。`,
+      );
     }
-  }
-  const filtered = new Map<string, string>();
-  for (const [pid, chain] of chains) {
-    if ((adj.get(pid)?.size ?? 0) > 0) filtered.set(pid, chain);
-  }
-  return filtered;
-}
+    return out;
+  });
 
-function writeRationaleEn(g: WorkingGroup): string {
-  const cls = GROUP_CLASS_LABEL[g.group_class].en;
-  const mainTier = g.main_zu_zhang
-    ? ZU_ZHANG_TIER_LABEL[g.main_zu_zhang.tier].en
-    : null;
-  const mainId = g.main_zu_zhang?.region_id ?? "—";
-  const dims = collectGroupDimensions(g);
-  const dimText =
-    dims.length > 0
-      ? dims.map((d) => GROWTH_DIMENSION_LABEL[d].en).join(" / ")
-      : "no declared focus";
-  const oldCount = g.members.filter((m) => m.is_old_student).length;
-  const newCount = g.members.length - oldCount;
-  const priorityCount = g.members.filter((m) => isPriority(m)).length;
-  return `${cls} group hosted by ${mainId}${
-    mainTier ? ` (${mainTier})` : ""
-  }. Focus dimensions: ${dimText}. ${oldCount} old + ${newCount} new students; ${priorityCount} priority.`;
-}
+  const summary =
+    lang === "en"
+      ? `${cls} group led by ${main?.region_id ?? "—"}${tier ? ` (${tier}${main?.grade != null ? `, grade ${main.grade}` : ""})` : ""}. Strengths: ${dimText || "none set"}. ${old} old + ${fresh} new.`
+      : `${cls}，由 ${main?.region_id ?? "—"}${tier ? `（${tier}${main?.grade != null ? `，${main.grade} 级` : ""}）` : ""}担任组长。专长：${dimText || "未设"}。旧生 ${old} 位，新生 ${fresh} 位。`;
 
-function writeRationaleCn(g: WorkingGroup): string {
-  const cls = GROUP_CLASS_LABEL[g.group_class].cn;
-  const mainTier = g.main_zu_zhang
-    ? ZU_ZHANG_TIER_LABEL[g.main_zu_zhang.tier].cn
-    : null;
-  const mainId = g.main_zu_zhang?.region_id ?? "—";
-  const dims = collectGroupDimensions(g);
-  const dimText =
-    dims.length > 0
-      ? dims.map((d) => GROWTH_DIMENSION_LABEL[d].cn).join(" / ")
-      : "未声明方向";
-  const oldCount = g.members.filter((m) => m.is_old_student).length;
-  const newCount = g.members.length - oldCount;
-  const priorityCount = g.members.filter((m) => isPriority(m)).length;
-  return `${cls}，由 ${mainId}${
-    mainTier ? `（${mainTier}）` : ""
-  }担任组长。覆盖方向：${dimText}。包含 ${oldCount} 位旧生与 ${newCount} 位新生；其中 ${priorityCount} 位重点学员。`;
-}
-
-function collectGroupDimensions(g: WorkingGroup): GrowthDimension[] {
-  const set = new Set<GrowthDimension>();
-  if (g.main_zu_zhang) for (const d of g.main_zu_zhang.dimensions) set.add(d);
-  if (g.auxiliary_zu_zhang) {
-    for (const d of g.auxiliary_zu_zhang.dimensions) set.add(d);
+  const lines = [...borrowed, summary];
+  const sorted = [...g.members].sort((a, b) =>
+    (a.region_id ?? "").localeCompare(b.region_id ?? ""),
+  );
+  for (const m of sorted) {
+    if (!m.region_id) continue;
+    const r =
+      ctx.reasons.get(m.participant_id)
+      ?? placementReason(m, g, ctx.notes.get(m.participant_id) ?? []);
+    lines.push(`• ${m.region_id} — ${r[lang]}`);
   }
-  return Array.from(set);
+  return lines.join("\n");
 }

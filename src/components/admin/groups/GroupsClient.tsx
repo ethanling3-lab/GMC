@@ -1,6 +1,12 @@
 "use client";
 
 import { motivationCn } from "@/lib/participants/motivations";
+import {
+  DEFAULT_LANGUAGE,
+  languageLabel,
+  speaks,
+  spokenLabel,
+} from "@/lib/participants/languages";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
@@ -90,12 +96,14 @@ function memberFromUnassigned(
     effective_class: u.effective_class,
     motivations: [],
     motivation_other: null,
-    sells_products: false,
+    sells_products: u.sells_products,
     has_special_contribution: false,
     times_led_groups: 0,
     family_partner_region_ids: [],
     energy_profile: null,
     language_fluency: null,
+    listening_language: u.listening_language,
+    spoken_languages: [],
     conflict_partner_region_ids: [],
     duplicate_partners: [],
   };
@@ -112,6 +120,8 @@ function unassignedFromMember(m: GroupBuilderMember): GroupBuilderUnassigned {
     qualification: m.qualification,
     effective_class: m.effective_class,
     zu_zhang_tier: m.zu_zhang_tier,
+    sells_products: m.sells_products,
+    listening_language: m.listening_language,
   };
 }
 
@@ -721,6 +731,7 @@ export function GroupsClient(props: Props) {
           grade: m.zu_zhang_grade,
           dimensions: m.zu_zhang_dimensions,
           core_traits: [],
+          spoken_languages: m.spoken_languages,
           times_led_groups: m.times_led_groups,
           current_group_no: g.group_no,
           current_role: m.role,
@@ -742,6 +753,7 @@ export function GroupsClient(props: Props) {
         grade: null,
         dimensions: [],
         core_traits: [],
+        spoken_languages: [],
         times_led_groups: 0,
         current_group_no: null,
         current_role: null,
@@ -1223,7 +1235,7 @@ export function GroupsClient(props: Props) {
     if (busy) return;
     const confirmMsg = viewGroups.length > 0
       ? "Re-generate groups? Existing groups + assignments will be replaced."
-      : "Generate groups now? This will run the LLM and may take 20–30 seconds.";
+      : "Generate groups now?";
     if (!window.confirm(confirmMsg)) return;
     setError(null);
     setBusy(true);
@@ -1237,16 +1249,21 @@ export function GroupsClient(props: Props) {
         detail?: string;
         strategy?: string;
         groups_inserted?: number;
-        llm_fallback_reason?: string | null;
+        warnings?: Array<{ detail_en: string }>;
+        manual_placement?: number;
       };
       if (!res.ok) {
         setError(json.detail ?? json.error ?? "Generate failed");
         return;
       }
-      const fallbackNote = json.llm_fallback_reason
-        ? ` (LLM fell back: ${json.llm_fallback_reason})`
-        : "";
-      setError(`✓ Generated ${json.groups_inserted ?? 0} groups via ${json.strategy ?? "?"}${fallbackNote}`);
+      const parts = [`✓ Generated ${json.groups_inserted ?? 0} groups`];
+      if (json.manual_placement) {
+        parts.push(`${json.manual_placement} flagged ⚠ left to place by hand`);
+      }
+      if (json.warnings?.length) {
+        parts.push(`${json.warnings.length} borrowed / missing 组长 — see the amber chips`);
+      }
+      setError(parts.join(" · "));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
@@ -1438,6 +1455,7 @@ export function GroupsClient(props: Props) {
           {props.canEdit ? (
             <UnassignedPool
               items={view.unassigned}
+              groups={viewGroups}
               onAdd={handleAddMember}
               groupNos={viewGroups.map((g) => g.group_no)}
               labelOfGroupNo={labelOfGroupNo}
@@ -1505,11 +1523,13 @@ export function GroupsClient(props: Props) {
 
 function UnassignedPool({
   items,
+  groups,
   onAdd,
   groupNos,
   labelOfGroupNo,
 }: {
   items: GroupBuilderUnassigned[];
+  groups: GroupBuilderGroup[];
   onAdd: (participantId: string, toGroupNo: number) => Promise<void>;
   groupNos: number[];
   labelOfGroupNo: (groupNo: number) => string;
@@ -1524,13 +1544,21 @@ function UnassignedPool({
           {items.length}
         </span>
       </div>
+      {items.some((p) => p.sells_products) ? (
+        <CautionTray
+          items={items.filter((p) => p.sells_products)}
+          groups={groups}
+          onAdd={onAdd}
+          labelOfGroupNo={labelOfGroupNo}
+        />
+      ) : null}
       {items.length === 0 ? (
         <p className="text-[11.5px] text-[var(--ink-faint)]">
           Everyone is assigned. Use a member&rsquo;s menu → Unassign to move them here.
         </p>
-      ) : (
+      ) : items.every((p) => p.sells_products) ? null : (
         <div className="flex flex-wrap gap-1.5">
-          {items.map((p) => (
+          {items.filter((p) => !p.sells_products).map((p) => (
             <UnassignedChip
               key={p.participant_id}
               p={p}
@@ -1542,6 +1570,94 @@ function UnassignedPool({
         </div>
       )}
     </section>
+  );
+}
+
+// 待人工分配 — caution-flagged people (注意：可能拉保险/直销/传销). The
+// generator never auto-places them; the admin picks a group. Suggested:
+// groups of their type with no other flagged member, most experienced
+// 主组长 first (times led, then grade).
+function suggestGroupsForCaution(
+  p: GroupBuilderUnassigned,
+  groups: GroupBuilderGroup[],
+): GroupBuilderGroup[] {
+  const main = (g: GroupBuilderGroup) => g.members.find((m) => m.role === "zu_zhang");
+  const lang = p.listening_language || DEFAULT_LANGUAGE;
+  return groups
+    .filter((g) => groupLanguage(g) === lang)
+    .filter((g) => lang !== DEFAULT_LANGUAGE || g.group_class === p.effective_class)
+    .filter((g) => !g.members.some((m) => m.sells_products))
+    .sort(
+      (a, b) =>
+        (main(b)?.times_led_groups ?? 0) - (main(a)?.times_led_groups ?? 0)
+        || (main(b)?.zu_zhang_grade ?? 0) - (main(a)?.zu_zhang_grade ?? 0)
+        || a.members.length - b.members.length
+        || a.group_no - b.group_no,
+    )
+    .slice(0, 3);
+}
+
+function CautionTray({
+  items,
+  groups,
+  onAdd,
+  labelOfGroupNo,
+}: {
+  items: GroupBuilderUnassigned[];
+  groups: GroupBuilderGroup[];
+  onAdd: (participantId: string, toGroupNo: number) => Promise<void>;
+  labelOfGroupNo: (groupNo: number) => string;
+}) {
+  return (
+    <div className="mb-3 rounded-[var(--radius-md)] border border-[var(--gold)]/50 bg-[var(--gold-soft)]/60 px-3 py-2.5">
+      <div className="text-[11.5px] text-[var(--gold-deep)]">
+        <span aria-hidden="true">⚠ </span>
+        Place manually · 待人工分配
+        <span className="ml-2 text-[var(--ink-mute)]">
+          Flagged 可能拉保险/直销/传销 — not auto-grouped. Pick a group for each.
+        </span>
+      </div>
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {items.map((p) => {
+          const name = p.name_cn ?? p.name_en ?? p.region_id ?? "—";
+          const picks = suggestGroupsForCaution(p, groups);
+          return (
+            <li key={p.participant_id} className="flex items-center gap-2 flex-wrap text-[12px] text-[var(--ink)]">
+              <span className="font-mono text-[10.5px] text-[var(--cinnabar-deep)]">{p.region_id ?? "—"}</span>
+              <span>{name}</span>
+              <span className="text-[10.5px] text-[var(--ink-mute)]">
+                {GROUP_CLASS_LABEL[p.effective_class].cn}
+              </span>
+              {picks.length === 0 ? (
+                <span className="text-[11px] text-[var(--ink-faint)]">
+                  No matching group ({(p.listening_language || DEFAULT_LANGUAGE) === DEFAULT_LANGUAGE ? GROUP_CLASS_LABEL[p.effective_class].cn : languageLabel(p.listening_language).native}) without another flagged member.
+                </span>
+              ) : (
+                picks.map((g) => {
+                  const lead = g.members.find((m) => m.role === "zu_zhang");
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => onAdd(p.participant_id, g.group_no)}
+                      className="inline-flex items-center gap-1 h-[22px] px-2 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[11px] text-[var(--ink)] hover:border-[var(--cinnabar)]/45 hover:text-[var(--cinnabar-deep)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.97] transition-[border-color,color,transform] duration-[var(--dur-fast)]"
+                      title={lead ? `组长 ${lead.region_id ?? ""} · led ${lead.times_led_groups}×` : "No 组长 yet"}
+                    >
+                      → {labelOfGroupNo(g.group_no)}
+                      {lead ? (
+                        <span className="text-[10px] text-[var(--ink-mute)]">
+                          {lead.region_id} · 带组{lead.times_led_groups}次
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -1960,6 +2076,23 @@ function GroupCard({
   const groupRegionSet = new Set(
     group.members.map((m) => m.region_id).filter((r): r is string => !!r),
   );
+  const groupLang = groupLanguage(group);
+  const leadersNotSpeaking = group.members.filter(
+    (m) =>
+      (m.role === "zu_zhang" || m.role === "fu_zu_zhang")
+      && !speaks(m.spoken_languages, groupLang),
+  );
+  const reasonsEn = reasonsOf(group.rationale_en);
+  const reasonsCn = reasonsOf(group.rationale_cn);
+  // Tier gap: a seated leader whose tier isn't the one this group type
+  // calls for (borrowed by the generator, or placed by hand).
+  const requiredTiers = requiredLeaderTiers(group.group_class);
+  const borrowedLeaders = group.members.filter(
+    (m) =>
+      m.zu_zhang_tier
+      && ((m.role === "zu_zhang" && m.zu_zhang_tier !== requiredTiers.main)
+        || (m.role === "fu_zu_zhang" && m.zu_zhang_tier !== requiredTiers.auxiliary)),
+  );
   const familyTogether = group.members.filter((m) =>
     m.family_partner_region_ids.some((r) => groupRegionSet.has(r)),
   );
@@ -2064,6 +2197,37 @@ function GroupCard({
                 missing 副组长
               </span>
             )
+          ) : null}
+          {groupLang !== DEFAULT_LANGUAGE ? (
+            <span
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[9.5px] tracking-[0.04em] text-[var(--cinnabar-deep)]"
+              title={`Members listen in ${languageLabel(groupLang).en}`}
+            >
+              {languageLabel(groupLang).short} · {languageLabel(groupLang).native}
+            </span>
+          ) : null}
+          {leadersNotSpeaking.length > 0 ? (
+            <span
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/55 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)]"
+              title={leadersNotSpeaking
+                .map((m) => `${m.role === "zu_zhang" ? "主组长" : "副组长"} ${m.region_id ?? ""} speaks ${spokenLabel(m.spoken_languages) || "—"}`)
+                .join("\n")}
+            >
+              ⚠ 组长不会说{languageLabel(groupLang).cn}
+            </span>
+          ) : null}
+          {borrowedLeaders.length > 0 ? (
+            <span
+              className="inline-flex items-center h-[18px] px-1.5 rounded-[var(--radius-pill)] border border-[var(--gold)]/55 bg-[var(--gold-soft)] text-[9.5px] tracking-[0.04em] text-[var(--gold-deep)]"
+              title={borrowedLeaders
+                .map(
+                  (m) =>
+                    `${m.role === "zu_zhang" ? "主组长" : "副组长"} ${m.region_id ?? ""} is ${ZU_ZHANG_TIER_LABEL[m.zu_zhang_tier!].cn}; ${GROUP_CLASS_LABEL[group.group_class].cn} needs ${ZU_ZHANG_TIER_LABEL[m.role === "zu_zhang" ? requiredTiers.main : requiredTiers.auxiliary].cn}`,
+                )
+                .join("\n")}
+            >
+              ⚠ 借用组长 · borrowed tier
+            </span>
           ) : null}
           {familyTogether.length > 0 ? (
             <span
@@ -2183,14 +2347,14 @@ function GroupCard({
         </div>
       ) : (
         <>
-          {group.rationale_en ? (
-            <p className="mb-1.5 text-[11.5px] leading-[1.5] text-[var(--ink-soft)]">
-              {group.rationale_en}
+          {summaryOf(group.rationale_en) ? (
+            <p className="mb-1.5 text-[11.5px] leading-[1.5] text-[var(--ink-soft)] whitespace-pre-line">
+              {summaryOf(group.rationale_en)}
             </p>
           ) : null}
-          {group.rationale_cn ? (
-            <p className="mb-3 text-[11.5px] leading-[1.5] text-[var(--ink-mute)]">
-              {group.rationale_cn}
+          {summaryOf(group.rationale_cn) ? (
+            <p className="mb-3 text-[11.5px] leading-[1.5] text-[var(--ink-mute)] whitespace-pre-line">
+              {summaryOf(group.rationale_cn)}
             </p>
           ) : null}
         </>
@@ -2247,6 +2411,14 @@ function GroupCard({
                 <MemberRow
                   key={m.assignment_id}
                   member={m}
+                  reason={
+                    m.region_id
+                      ? {
+                          en: reasonsEn.get(m.region_id) ?? null,
+                          cn: reasonsCn.get(m.region_id) ?? null,
+                        }
+                      : null
+                  }
                   groupClass={group.group_class}
                   groupNo={group.group_no}
                   groupNos={groupNos}
@@ -2311,6 +2483,7 @@ function memberLabel(m: GroupBuilderMember): string {
 
 function MemberRow({
   member,
+  reason,
   groupClass,
   groupNo,
   groupNos,
@@ -2331,6 +2504,8 @@ function MemberRow({
   setExpanded,
 }: {
   member: GroupBuilderMember;
+  // Placement reason from the generator ("• <region_id> — …" rationale lines).
+  reason: { en: string | null; cn: string | null } | null;
   groupClass: GroupClass;
   groupNo: number;
   groupNos: number[];
@@ -2695,7 +2870,7 @@ function MemberRow({
       {isExpanded ? (
         <tr className="border-b border-[var(--paper-shadow)]/40 bg-[var(--paper)]/60">
           <td colSpan={canEdit ? 8 : 7} className="px-3 py-2.5">
-            <MemberDetail member={member} />
+            <MemberDetail member={member} reason={reason} />
           </td>
         </tr>
       ) : null}
@@ -2703,7 +2878,13 @@ function MemberRow({
   );
 }
 
-function MemberDetail({ member }: { member: GroupBuilderMember }) {
+function MemberDetail({
+  member,
+  reason,
+}: {
+  member: GroupBuilderMember;
+  reason: { en: string | null; cn: string | null } | null;
+}) {
   const fin = member.financial_score ?? 0;
   const inf = member.influence_score ?? 0;
   const overrode =
@@ -2747,6 +2928,16 @@ function MemberDetail({ member }: { member: GroupBuilderMember }) {
           <span className="text-[var(--ink-faint)]">—</span>
         )}
       </DetailRow>
+      <DetailRow label="Listens in · 听课语言">
+        <span className="text-[var(--ink)]">
+          {languageLabel(member.listening_language || DEFAULT_LANGUAGE).native}
+        </span>
+        {member.role !== "participant" && member.spoken_languages.length > 0 ? (
+          <span className="ml-2 text-[10px] text-[var(--ink-mute)]">
+            speaks {spokenLabel(member.spoken_languages)}
+          </span>
+        ) : null}
+      </DetailRow>
       <DetailRow label="Old student · 老学员">
         {member.is_old_student ? (
           <span className="text-[var(--cinnabar-deep)]">Yes · 是</span>
@@ -2779,6 +2970,19 @@ function MemberDetail({ member }: { member: GroupBuilderMember }) {
           </span>
         )}
       </DetailRow>
+      {reason?.en || reason?.cn ? (
+        <div className="md:col-span-2 flex items-baseline gap-3 min-w-0">
+          <span className="shrink-0 w-[120px] text-[9.5px] tracking-[0.18em] uppercase text-[var(--ink-faint)]">
+            Why here · 分组原因
+          </span>
+          <span className="min-w-0 flex-1 text-[var(--ink)] leading-[1.5]">
+            {reason.en}
+            {reason.cn ? (
+              <span className="block text-[var(--ink-mute)]">{reason.cn}</span>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
       <DetailRow label="Family · 家人">
         {member.family_partner_region_ids.length === 0 ? (
           <span className="text-[var(--ink-faint)]">—</span>
@@ -3186,7 +3390,7 @@ function DimensionCoverageStrip({ group }: { group: GroupBuilderGroup }) {
     <div className="flex items-center gap-1.5 mb-2 text-[10px] text-[var(--ink-mute)]">
       <span className="tracking-[0.16em] uppercase">Coverage</span>
       <div className="flex items-center gap-1">
-        {(["financial", "relationship", "health", "inner_peace"] as GrowthDimension[]).map(
+        {(["financial", "relationship", "health", "inner_peace", "spiritual"] as GrowthDimension[]).map(
           (d) => {
             const has = coverage.has(d);
             return (
@@ -3215,4 +3419,43 @@ function DimensionCoverageStrip({ group }: { group: GroupBuilderGroup }) {
       ) : null}
     </div>
   );
+}
+
+// Generated rationale = summary line(s), then "• <region_id> — <reason>"
+// per member. The card shows the summary; reasons go on member rows.
+function summaryOf(rationale: string | null | undefined): string {
+  return (rationale ?? "")
+    .split("\n")
+    .filter((l) => !l.startsWith("• "))
+    .join("\n")
+    .trim();
+}
+
+function reasonsOf(rationale: string | null | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of (rationale ?? "").split("\n")) {
+    const m = /^• (\S+) — (.+)$/.exec(line);
+    if (m) out.set(m[1], m[2]);
+  }
+  return out;
+}
+
+// A group's class language = its students' most common listening language
+// (leaders excluded — they may speak several). Ties → the default.
+function groupLanguage(g: GroupBuilderGroup): string {
+  const count = new Map<string, number>();
+  for (const m of g.members) {
+    if (m.role === "zu_zhang" || m.role === "fu_zu_zhang") continue;
+    const l = m.listening_language || DEFAULT_LANGUAGE;
+    count.set(l, (count.get(l) ?? 0) + 1);
+  }
+  let best = DEFAULT_LANGUAGE;
+  let bestN = count.get(DEFAULT_LANGUAGE) ?? 0;
+  for (const [l, n] of count) {
+    if (n > bestN) {
+      best = l;
+      bestN = n;
+    }
+  }
+  return best;
 }

@@ -37,13 +37,14 @@ export type ZuZhangTier =
   | "maintenance"
   | "auxiliary";
 
-// Four growth dimensions. 组长 cover an array of these (multi-valued);
+// Five growth dimensions (spiritual added in 073). 组长 cover an array of these (multi-valued);
 // participants declare an ordered array (index 0 = primary goal).
 export type GrowthDimension =
   | "financial"     // 財富
   | "relationship"  // 关系
   | "health"        // 健康
-  | "inner_peace";  // 内心平静
+  | "inner_peace"   // 内心平静
+  | "spiritual";    // 灵性学习 (migration 073)
 
 // Five-tier qualification ladder. Maps from max(financial, influence):
 //   1 → basic, 2 → rising, 3 → elite, 4 → excellence, 5 → strategic
@@ -120,6 +121,16 @@ export type GroupingParticipant = {
   energy_profile: "high" | "medium" | "quiet" | null;
   language_fluency: "en" | "cn" | "both" | null;
   conflict_member_ids: string[];
+
+  // CS-suggested 组长 (migration 072), ordered — first = preferred.
+  // Participant ids of leaders; grouping places the student with them
+  // when they lead a group of the student's type with room.
+  suggested_leader_ids: string[];
+
+  // Migration 074 — the language they listen to the class in. Grouping
+  // rule 1 (HARD): English / Vietnamese listeners get their own groups.
+  // Any language code (see src/lib/participants/languages.ts).
+  listening_language: string;
 };
 
 // One curated 组长 in the per-event roster. Algorithm seeds groups
@@ -140,6 +151,10 @@ export type GroupingZuZhang = {
   // Categorical core traits (multi-select). Future matching algorithm
   // input.
   core_traits: ZuZhangCoreTrait[];
+  // Migration 074 — languages this 组长 can lead in, and the language they
+  // listen in (used if they're surplus and seated as a member).
+  spoken_languages: string[];
+  listening_language: string;
   // Convenience flags computed from tier:
   //   is_main = tier in {key_recruitment, recruitment, maintenance}
   //   is_auxiliary = tier === 'auxiliary'
@@ -147,7 +162,7 @@ export type GroupingZuZhang = {
   is_auxiliary: boolean;
 };
 
-// Per-event constraint config used by both balance.ts and llm-grouping.ts.
+// Per-event constraint config used by balance.ts.
 export type GroupingConfig = {
   group_size_min: number;
   group_size_max: number;
@@ -168,6 +183,9 @@ export type DraftGroup = {
   members: DraftMember[];
   rationale_en: string;
   rationale_cn: string;
+  // Generator-only: the group's class language. Not persisted — the
+  // groups page derives it from members' listening languages.
+  language?: string;
 };
 
 export type GroupingStrategy = "llm" | "balance" | "cushion_rank";
@@ -186,7 +204,18 @@ export type GroupingResult = {
     validation_errors?: string[];
     // M6.0 — surface roster shortfalls so the route can return them.
     roster_shortfalls?: RosterShortfall[];
+    // Grouping rework — borrowed tiers / leaderless groups.
+    warnings?: GroupingWarning[];
+    // Caution-flagged people left for the admin to place by hand.
+    manual_placement?: Array<{ participant_id: string; region_id: string | null }>;
   };
+};
+
+export type GroupingWarning = {
+  code: "tier_borrowed" | "no_leader" | "language_leader_missing";
+  group_no: number;
+  detail_en: string;
+  detail_cn: string;
 };
 
 // Cushion-mode produces these directly (one per seated cushion).
@@ -278,17 +307,6 @@ export function participantToClass(p: {
   return qualificationToClass(effectiveQualification(p));
 }
 
-// Priority = max(financial, influence) ≥ 4 (Excellence or Strategic).
-// Either dimension alone qualifies — NOT a composite sum.
-export function isPriority(p: {
-  financial_score: number | null;
-  influence_score: number | null;
-}): boolean {
-  const fin = p.financial_score ?? 0;
-  const inf = p.influence_score ?? 0;
-  return Math.max(fin, inf) >= 4;
-}
-
 // Required leader-tier pairing for each group class.
 //   特级 → key_recruitment + recruitment
 //   重点 → recruitment + maintenance
@@ -356,6 +374,7 @@ export const GROWTH_DIMENSION_LABEL: Record<
   relationship: { en: "Relationship", cn: "关系", short_cn: "关", icon: "❤️" },
   health: { en: "Health", cn: "健康", short_cn: "健", icon: "⚕️" },
   inner_peace: { en: "Inner Peace", cn: "内心平静", short_cn: "心", icon: "🧘" },
+  spiritual: { en: "Spiritual Learning", cn: "灵性学习", short_cn: "灵", icon: "📿" },
 };
 
 export const ZU_ZHANG_TRAIT_LABEL: Record<

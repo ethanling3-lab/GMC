@@ -5,10 +5,12 @@
 //      class-bucketing, leader pairing per class, family split, pin
 //      respect, dimension matching.
 //   2. cushion-rank.ts on 30 cushions in 3 rows + 30 participants.
-//   3. runLlmGrouping on the same 50 — exercises the Anthropic round-
-//      trip end-to-end against claude-opus-4-7.
+//   3. Grouping rework rules (2026-11-24): CS-suggested 组长, main goal
+//      coverage, stronger students → higher-grade leaders, caution flag
+//      left for manual placement, tier borrowing, pins with reserved
+//      group numbers, determinism.
 //
-// Run with: npx tsx scripts/smoke-grouping.ts [--no-llm]
+// Run with: npx tsx scripts/smoke-grouping.ts
 
 import { balance } from "../src/lib/grouping/balance.ts";
 import { cushionRank } from "../src/lib/grouping/cushion-rank.ts";
@@ -18,15 +20,12 @@ import {
   scoreToQualification,
 } from "../src/lib/grouping/types.ts";
 import { validateGrouping } from "../src/lib/grouping/validate.ts";
-// llm-grouping imports "server-only" which throws under tsx; pulled in
-// lazily inside checkLlm() to keep the deterministic checks runnable
-// when --no-llm is passed.
 
 // -----------------------------------------------------------------------------
 // Synthetic dataset — M6.0 schema (1-5 scores + goal_dimensions)
 // -----------------------------------------------------------------------------
 
-const ALL_DIMENSIONS = ["financial", "relationship", "health", "inner_peace"];
+const ALL_DIMENSIONS = ["financial", "relationship", "health", "inner_peace", "spiritual"];
 
 function buildSynthetic(n) {
   const regions = ["MY", "SG", "TW", "HK", "CN"];
@@ -65,6 +64,8 @@ function buildSynthetic(n) {
       energy_profile: energyCycle[i % energyCycle.length],
       language_fluency: languageCycle[i % languageCycle.length],
       conflict_member_ids: [],
+      suggested_leader_ids: [],
+      listening_language: "zh",
     });
   }
   // Sprinkle 3 family pairs spanning qualification classes (so the
@@ -266,7 +267,16 @@ function checkBalance() {
     }
   }
 
-  const validation = validateGrouping(result.groups, participants, roster, config);
+  // Caution-flagged people are left for manual placement by design.
+  const manual = new Set((result.metadata.manual_placement ?? []).map((m) => m.participant_id));
+  const expectedFlagged = participants.filter((p) => p.sells_products && p.pinned_group_no == null).length;
+  console.log(`  manual tray: ${manual.size} (expected ${expectedFlagged})`);
+  const validation = validateGrouping(
+    result.groups,
+    participants.filter((p) => !manual.has(p.participant_id)),
+    roster,
+    config,
+  );
   if (validation.valid) {
     console.log("✓ validation passed");
   } else {
@@ -427,10 +437,10 @@ function checkBalance() {
   const matchRate = totalRegulars > 0 ? Math.round((matched / totalRegulars) * 100) : 0;
   console.log(`  · dimension match rate: ${matched}/${totalRegulars} (${matchRate}%)`);
 
-  // Grade priority check — for each tier, the FIRST 组长 of that tier
-  // consumed by the algorithm (in any role, group_no ascending) should
-  // be the highest-graded leader in that tier's bucket. This is the
-  // queue-position invariant M6.6 floor-plan auto-place depends on.
+  // Grade priority check — for each tier, the FIRST main seat of that
+  // tier (group_no ascending) holds the highest-graded leader seated as a
+  // main in that tier. Auxiliary seats are exempt: they prefer a leader
+  // who adds new strengths (goal coverage outranks grade).
   let gradeOk = true;
   const TIERS_TO_CHECK = [
     "key_recruitment",
@@ -439,7 +449,12 @@ function checkBalance() {
     "auxiliary",
   ] as const;
   for (const t of TIERS_TO_CHECK) {
-    const bucket = roster.filter((r) => r.tier === t);
+    const mainIds = new Set(
+      result.groups
+        .map((g) => g.members.find((m) => m.role === "zu_zhang")?.participant_id)
+        .filter(Boolean),
+    );
+    const bucket = roster.filter((r) => r.tier === t && mainIds.has(r.participant_id));
     if (bucket.length === 0) continue;
     const expectedTopGrade = bucket.reduce(
       (m, r) => Math.max(m, r.grade ?? 0),
@@ -449,8 +464,7 @@ function checkBalance() {
     let firstConsumedRegion: string | null = null;
     outer: for (const g of result.groups) {
       const leader = g.members.find((m) => m.role === "zu_zhang");
-      const aux = g.members.find((m) => m.role === "fu_zu_zhang");
-      for (const m of [leader, aux]) {
+      for (const m of [leader]) {
         if (!m) continue;
         const r = roster.find((x) => x.participant_id === m.participant_id);
         if (r?.tier === t) {
@@ -504,50 +518,207 @@ function checkCushion() {
 }
 
 // -----------------------------------------------------------------------------
-// Check 3 — runLlmGrouping (real Anthropic call)
+// Check 3 — grouping rework rules
 // -----------------------------------------------------------------------------
 
-async function checkLlm() {
-  console.log("\n=== Check 3: runLlmGrouping (50 pax + curated roster, real Anthropic call) ===");
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.log("✗ ANTHROPIC_API_KEY not set — skipping");
-    return false;
-  }
-  // Bypass server-only sentinel for tsx import.
-  process.env.NEXT_RUNTIME = "nodejs";
-  const path = (await import("node:path")).resolve(
-    "node_modules/server-only/index.js",
-  );
-  // @ts-expect-error — node-internal cache surface
-  delete require.cache?.[path];
-  // @ts-expect-error — overwrite with noop
-  require.cache[path] = { exports: {}, loaded: true, id: path, filename: path };
+function student(id, fin, goals, extra = {}) {
+  return {
+    participant_id: id,
+    region_id: id,
+    overall_score: null,
+    influence_score: fin,
+    financial_score: fin,
+    motivations: [],
+    motivation_other: null,
+    sells_products: false,
+    is_old_student: false,
+    family_of_participant_id: null,
+    family_member_ids: [],
+    region: null,
+    pinned_group_no: null,
+    goal_dimensions: goals,
+    student_qualification_override: null,
+    energy_profile: null,
+    language_fluency: null,
+    conflict_member_ids: [],
+    suggested_leader_ids: [],
+    listening_language: "zh",
+    ...extra,
+  };
+}
 
-  const { runLlmGrouping } = await import("../src/lib/grouping/llm-grouping.ts");
-  const participants = buildSynthetic(50);
-  const roster = buildRoster();
-  const config = { group_size_min: 5, group_size_max: 12 };
-  const t0 = Date.now();
-  const out = await runLlmGrouping({ participants, roster, config });
-  const elapsed = Date.now() - t0;
-  console.log(`elapsed=${elapsed}ms tokens_in=${out.tokens_in} tokens_out=${out.tokens_out} cache_read=${out.cache_read_tokens}`);
-  console.log(`retries=${out.retries} failure_reason=${out.failure_reason ?? "—"}`);
-  if (!out.result) {
-    console.log("✗ LLM returned null");
-    if (out.validation_errors.length > 0) {
-      console.log(`  validation errors:`);
-      for (const e of out.validation_errors) console.log(`    ${e}`);
+function leader(id, tier, grade, dims, spoken = ["zh"]) {
+  return {
+    participant_id: id,
+    region_id: id,
+    tier,
+    grade,
+    dimensions: dims,
+    core_traits: [],
+    spoken_languages: spoken,
+    listening_language: spoken[0],
+    is_main: tier !== "auxiliary",
+    is_auxiliary: tier === "auxiliary",
+  };
+}
+
+function checkRules() {
+  console.log("\n=== Check 3: grouping rework rules ===");
+  let ok = true;
+  const fail = (msg) => {
+    ok = false;
+    console.log(`  ✗ ${msg}`);
+  };
+  const pass = (msg) => console.log(`  ✓ ${msg}`);
+  const config = { group_size_min: 3, group_size_max: 6 }; // 4 regular seats
+
+  // Three 特级 groups: main KR grades 5 / 4 / 3 with distinct strengths.
+  const roster = [
+    leader("KR5", "key_recruitment", 5, ["financial"]),
+    leader("KR4", "key_recruitment", 4, ["health"]),
+    leader("KR3", "key_recruitment", 3, ["relationship"]),
+    leader("RC5", "recruitment", 5, ["inner_peace"]),
+    leader("RC4", "recruitment", 4, ["inner_peace"]),
+    leader("RC3", "recruitment", 3, ["inner_peace"]),
+  ];
+  const students = [
+    student("S01", 5, ["financial"]), // strongest, goal covered by KR5
+    student("S02", 5, ["health"]),
+    student("S03", 5, ["relationship"]),
+    student("S04", 4, ["financial"]),
+    student("S05", 4, ["health"]),
+    student("S06", 4, ["relationship"]),
+    student("S07", 4, ["inner_peace"]),
+    student("S08", 4, []), // no goal
+    student("S09", 4, ["financial"], { suggested_leader_ids: ["KR3"] }), // suggestion beats goal
+    student("S10", 4, ["health"], { suggested_leader_ids: ["NOPE"] }), // leader not serving
+    student("S11", 4, ["financial"], { sells_products: true }), // caution → manual
+    student("S12", 4, ["health"], { pinned_group_no: 3 }), // pin with reserved #1
+  ];
+  const all = [...students, ...roster.map((z) => student(z.participant_id, 5, []))];
+
+  const result = balance(all, roster, config, { reserved_group_nos: [1] });
+  const groupOf = (pid) => result.groups.find((g) => g.members.some((m) => m.participant_id === pid));
+  const mainOf = (g) => g?.members.find((m) => m.role === "zu_zhang")?.participant_id;
+  const reasonOf = (pid) => {
+    const g = groupOf(pid);
+    const line = (g?.rationale_en ?? "").split("\n").find((l) => l.startsWith(`• ${pid} — `));
+    return line ?? "";
+  };
+  console.log(`  groups: ${result.groups.map((g) => `#${g.group_no}(${mainOf(g)})=${g.members.map((m) => m.participant_id).join(",")}`).join("  ")}`);
+
+  // Group numbers skip the reserved #1.
+  if (result.groups.some((g) => g.group_no === 1)) fail("group #1 was reserved but used");
+  else pass("reserved group number skipped");
+
+  // Pin lands in the group the admin sees as #3.
+  if (groupOf("S12")?.group_no === 3) pass("pin to #3 honoured");
+  else fail(`S12 pinned to #3 but in #${groupOf("S12")?.group_no}`);
+
+  // Suggestion beats goal.
+  if (mainOf(groupOf("S09")) === "KR3") pass(`suggested 组长 honoured — ${reasonOf("S09")}`);
+  else fail(`S09 suggested KR3 but under ${mainOf(groupOf("S09"))}`);
+  if (/not leading at this event/.test(reasonOf("S10"))) pass("unserved suggestion explained in reason");
+  else fail(`S10 reason missing the suggestion note: ${reasonOf("S10")}`);
+
+  // Caution flag → manual tray, not placed.
+  const manual = (result.metadata.manual_placement ?? []).map((m) => m.participant_id);
+  if (!groupOf("S11") && manual.includes("S11")) pass("caution-flagged student left for manual placement");
+  else fail("S11 (flagged) was auto-placed");
+
+  // Main goal covered whenever a covering group had room.
+  for (const s of students) {
+    const g = groupOf(s.participant_id);
+    if (!g || s.suggested_leader_ids.length || s.pinned_group_no) continue;
+    const goal = s.goal_dimensions[0];
+    if (!goal) continue;
+    const leaders = g.members.filter((m) => m.role !== "participant").map((m) => roster.find((z) => z.participant_id === m.participant_id));
+    const covered = leaders.some((z) => z?.dimensions.includes(goal));
+    if (!covered && !/no group with room covers/.test(reasonOf(s.participant_id))) {
+      fail(`${s.participant_id} goal ${goal} not covered and no reason given`);
     }
-    return false;
   }
-  console.log(
-    `groups: ${out.result.groups.map((g) => `#${g.group_no}/${GROUP_CLASS_LABEL[g.group_class].cn}=${g.members.length}`).join(", ")}`,
-  );
-  if (out.result.groups[0]) {
-    console.log(`first group rationale (en): ${out.result.groups[0].rationale_en}`);
-    console.log(`first group rationale (cn): ${out.result.groups[0].rationale_cn}`);
+  pass("main goals covered (or explained)");
+
+  // Strongest student with a financial goal sits under the grade-5 leader.
+  if (mainOf(groupOf("S01")) === "KR5") pass("strongest student → grade-5 leader");
+  else fail(`S01 under ${mainOf(groupOf("S01"))}, expected KR5`);
+
+  // Every placed student has a reason line.
+  const missing = students.filter((s) => groupOf(s.participant_id) && !reasonOf(s.participant_id));
+  if (missing.length === 0) pass("every placed student has a reason");
+  else fail(`no reason for ${missing.map((s) => s.participant_id).join(", ")}`);
+
+  // Determinism.
+  const again = balance(all, roster, config, { reserved_group_nos: [1] });
+  if (JSON.stringify(again) === JSON.stringify(result)) pass("same input → identical output");
+  else fail("output differs between identical runs");
+
+  // Tier gap: no key_recruitment → borrow recruitment for the 特级 main + warn.
+  const roster2 = [
+    leader("RC9", "recruitment", 5, ["financial"]),
+    leader("RC8", "recruitment", 4, ["health"]),
+  ];
+  const students2 = [student("T01", 5, ["financial"]), student("T02", 5, ["health"])];
+  const all2 = [...students2, ...roster2.map((z) => student(z.participant_id, 5, []))];
+  const r2 = balance(all2, roster2, config);
+  const borrowed = (r2.metadata.warnings ?? []).filter((w) => w.code === "tier_borrowed");
+  const g2 = r2.groups[0];
+  if (g2 && mainOf(g2) && borrowed.length > 0) {
+    pass(`missing 重点感召型 → borrowed (${borrowed.map((w) => w.detail_en).join("; ")})`);
+  } else {
+    fail("tier gap did not borrow / warn");
   }
-  return true;
+  if (/borrowed/.test(g2?.rationale_en ?? "")) pass("borrow shown in group rationale");
+  else fail("borrow missing from rationale");
+
+  // ---- Language groups (universal) ----
+  const roster3 = [
+    leader("ZH5", "key_recruitment", 5, ["financial"]),
+    leader("ZH4", "recruitment", 4, ["health"]),
+    leader("BI5", "key_recruitment", 5, ["health"], ["zh", "en"]), // bilingual
+    leader("EN3", "recruitment", 3, ["relationship"], ["en"]),
+    leader("VI4", "maintenance", 4, ["inner_peace"], ["vi", "zh"]),
+  ];
+  const students3 = [
+    student("C01", 5, ["financial"]),
+    student("C02", 5, ["health"]),
+    student("E01", 5, ["health"], { listening_language: "en" }),
+    student("E02", 2, ["financial"], { listening_language: "en" }), // other type, same language
+    student("E03", 1, [], { listening_language: "en", suggested_leader_ids: ["ZH5"] }), // can't cross language
+    student("V01", 3, ["inner_peace"], { listening_language: "vi" }),
+    student("V02", 4, [], { listening_language: "vi" }),
+    student("M01", 3, [], { listening_language: "ms" }), // a language nobody speaks
+  ];
+  const all3 = [...students3, ...roster3.map((z) => student(z.participant_id, 5, [], { listening_language: z.listening_language }))];
+  const r3 = balance(all3, roster3, config);
+  const g3 = (pid) => r3.groups.find((g) => g.members.some((m) => m.participant_id === pid));
+  console.log(`  language groups: ${r3.groups.map((g) => `#${g.group_no}[${g.language}/${g.group_class}]=${g.members.map((m) => m.participant_id).join(",")}`).join("  ")}`);
+  const langOk = students3.every((s) => g3(s.participant_id)?.language === s.listening_language);
+  if (langOk) pass("every student sits in a group of their listening language");
+  else fail("a student landed in another language's group");
+  const enGroup = g3("E01");
+  if (enGroup && g3("E02") === enGroup) pass("English listeners of different types share the English group");
+  else fail("English listeners split by type");
+  const speaker = (g) => {
+    const main = g?.members.find((m) => m.role === "zu_zhang");
+    const z = roster3.find((x) => x.participant_id === main?.participant_id);
+    return z && g ? z.spoken_languages.includes(g.language) : false;
+  };
+  if (["E01", "V01", "C01"].every((pid) => speaker(g3(pid)))) pass("EN / VI / 中文 groups each led by a speaker");
+  else fail("a language group's 主组长 doesn't speak its language");
+  const reasonE03 = (g3("E03")?.rationale_en ?? "").split("\n").find((l) => l.startsWith("• E03 — ")) ?? "";
+  if (mainOf(g3("E03")) !== "ZH5" && /student listens in English/.test(reasonE03)) pass("suggestion never crosses language (explained)");
+  else fail(`E03 suggestion crossed language or unexplained: ${reasonE03}`);
+  const missingLang = (r3.metadata.warnings ?? []).filter((w) => w.code === "language_leader_missing");
+  if (missingLang.some((w) => /Melayu/.test(w.detail_en))) pass(`no Malay speaker → warned (${missingLang[0].detail_en})`);
+  else fail("missing-speaker language not warned");
+  const v3 = validateGrouping(r3.groups, all3.filter((p) => !roster3.some((z) => z.participant_id === p.participant_id)), roster3, config);
+  const langErrs = v3.errors.filter((e) => e.code === "language_mismatch");
+  if (langErrs.length === 0) pass("validator: no language mismatches");
+  else fail(`validator language errors: ${langErrs.map((e) => e.detail).join("; ")}`);
+
+  return ok;
 }
 
 // -----------------------------------------------------------------------------
@@ -555,9 +726,6 @@ async function checkLlm() {
 // -----------------------------------------------------------------------------
 
 async function main() {
-  const args = process.argv.slice(2);
-  const skipLlm = args.includes("--no-llm");
-
   // Sanity-check our synthetic generator: print qualification distribution.
   const sample = buildSynthetic(50);
   const qDist = { basic: 0, rising: 0, elite: 0, excellence: 0, strategic: 0, unscored: 0 };
@@ -569,12 +737,7 @@ async function main() {
 
   const r1 = checkBalance();
   const r2 = checkCushion();
-  let r3 = true;
-  if (!skipLlm) {
-    r3 = await checkLlm();
-  } else {
-    console.log("\n=== Check 3 skipped (--no-llm) ===");
-  }
+  const r3 = checkRules();
 
   console.log(`\n${r1 && r2 && r3 ? "✓ ALL CHECKS PASSED" : "✗ SOME CHECKS FAILED"}`);
   process.exit(r1 && r2 && r3 ? 0 : 1);

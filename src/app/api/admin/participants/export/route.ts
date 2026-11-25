@@ -47,10 +47,13 @@ type RawRow = {
   has_special_contribution: boolean;
   upgrade_potential: string | null;
   times_led_groups: number;
+  listening_language: string | null;
+  spoken_languages: string[] | null;
 };
 
-type ExportRow = Omit<RawRow, "zu_zhang_dimensions" | "goal_dimensions" | "motivations"> & {
+type ExportRow = Omit<RawRow, "zu_zhang_dimensions" | "goal_dimensions" | "motivations" | "spoken_languages"> & {
   motivations: string;
+  spoken_languages: string;
   qualification: StudentQualification | null;
   default_class: GroupClass;
   zu_zhang_dimensions: string;
@@ -77,6 +80,8 @@ const HEADER_TO_COLUMN: Readonly<Record<string, keyof ExportRow>> = {
   has_special_contribution: "has_special_contribution",
   upgrade_potential: "upgrade_potential",
   times_led_groups: "times_led_groups",
+  listening_language: "listening_language",
+  spoken_languages: "spoken_languages",
   is_old_student: "is_old_student",
   created_at: "created_at",
 };
@@ -137,6 +142,8 @@ export async function GET(req: Request) {
     "has_special_contribution",
     "upgrade_potential",
     "times_led_groups",
+    "listening_language",
+    "spoken_languages",
   ].join(", ");
 
   let q = supabase.from("participants").select(columns);
@@ -175,6 +182,7 @@ export async function GET(req: Request) {
       zu_zhang_dimensions: (r.zu_zhang_dimensions ?? []).join("|"),
       goal_dimensions: (r.goal_dimensions ?? []).join("|"),
       motivations: (r.motivations ?? []).join("|"),
+      spoken_languages: (r.spoken_languages ?? []).join("|"),
     };
   });
 

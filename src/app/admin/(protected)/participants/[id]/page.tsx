@@ -87,6 +87,8 @@ type Participant = {
   is_old_student: boolean;
   energy_profile: "high" | "medium" | "quiet" | null;
   language_fluency: "en" | "cn" | "both" | null;
+  listening_language: string | null;
+  spoken_languages: string[] | null;
   family_of_participant_id: string | null;
   referrer_id: string | null;
   personality: string | null;
@@ -427,6 +429,8 @@ export default async function ParticipantDetailPage({ params }: Props) {
               region: p.region,
               sub_region: p.sub_region,
               language_fluency: p.language_fluency,
+              listening_language: p.listening_language ?? "zh",
+              spoken_languages: p.spoken_languages ?? ["zh"],
               gender: p.gender,
               birth_date: p.birth_date,
               occupation: p.occupation,
@@ -469,6 +473,7 @@ export default async function ParticipantDetailPage({ params }: Props) {
               zu_zhang_dimensions: p.zu_zhang_dimensions ?? [],
               zu_zhang_core_traits: p.zu_zhang_core_traits ?? [],
               times_led_groups: p.times_led_groups ?? 0,
+              spoken_languages: p.spoken_languages ?? ["zh"],
             }}
           />
 

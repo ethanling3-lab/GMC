@@ -17,6 +17,7 @@ export const GROWTH_DIMENSIONS = [
   "relationship",
   "health",
   "inner_peace",
+  "spiritual",
 ] as const;
 
 export const STUDENT_QUALIFICATIONS = [
@@ -139,12 +140,12 @@ export const ParticipantUpdateSchema = z
     zu_zhang_grade: z
       .union([z.number().int().min(1).max(5), z.null()])
       .optional(),
-    zu_zhang_dimensions: z.array(z.enum(GROWTH_DIMENSIONS)).max(4).optional(),
+    zu_zhang_dimensions: z.array(z.enum(GROWTH_DIMENSIONS)).max(GROWTH_DIMENSIONS.length).optional(),
     zu_zhang_core_traits: z
       .array(z.enum(ZU_ZHANG_CORE_TRAITS))
       .max(5)
       .optional(),
-    goal_dimensions: z.array(z.enum(GROWTH_DIMENSIONS)).max(4).optional(),
+    goal_dimensions: z.array(z.enum(GROWTH_DIMENSIONS)).max(GROWTH_DIMENSIONS.length).optional(),
     student_qualification: z
       .union([z.enum(STUDENT_QUALIFICATIONS), z.null()])
       .optional(),
@@ -190,6 +191,10 @@ export const ParticipantUpdateSchema = z
     language_fluency: z
       .union([z.enum(LANGUAGE_FLUENCIES), z.null()])
       .optional(),
+    // Migration 074 — any 2–3 letter language code (universal; the picker
+    // offers CLASS_LANGUAGES).
+    listening_language: z.string().regex(/^[a-z]{2,3}$/).optional(),
+    spoken_languages: z.array(z.string().regex(/^[a-z]{2,3}$/)).max(10).optional(),
     // Conflict pairs — same shape as family_member_ids: full desired
     // set; PATCH route reconciles vs participant_conflict_pairs.
     conflict_member_ids: z.array(z.string().uuid()).max(50).optional(),
@@ -267,6 +272,8 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "referrer_contact",
   "energy_profile",
   "language_fluency",
+  "listening_language",
+  "spoken_languages",
   "conflict_member_ids",
   "suggested_leader_ids",
   "facial_recognition_consent",

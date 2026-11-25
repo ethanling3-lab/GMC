@@ -1,5 +1,6 @@
 "use client";
 
+import { spokenLabel } from "@/lib/participants/languages";
 import { useState } from "react";
 import {
   GROWTH_DIMENSION_LABEL,
@@ -46,6 +47,9 @@ export type ZuZhangProfileData = {
   zu_zhang_dimensions: GrowthDimension[];
   zu_zhang_core_traits: ZuZhangCoreTrait[];
   times_led_groups: number;
+  // Read-only here (edited on the Identity card): decides which language
+  // groups this 组长 can lead.
+  spoken_languages: string[];
 };
 
 const TIER_OPTIONS: Array<{ value: ZuZhangTier | ""; label: string }> = [
@@ -61,6 +65,7 @@ const DIMENSIONS: GrowthDimension[] = [
   "relationship",
   "health",
   "inner_peace",
+  "spiritual",
 ];
 
 const CORE_TRAITS: ZuZhangCoreTrait[] = [
@@ -404,6 +409,10 @@ export function ZuZhangProfileEditor({
                         )
                         .join(" · ")
                 }
+              />
+              <ReadRow
+                label="Leads in · 可带语言"
+                value={spokenLabel(initial.spoken_languages) || "—"}
               />
               <ReadRow
                 label="Core Traits · 核心特质"

@@ -1,9 +1,8 @@
-// Post-LLM constraint validation. Pure function — no DB.
+// Constraint check on generated groups. Pure function — no DB.
 //
-// Runs after the LLM returns a proposed assignment via the
-// assign_groups tool. If any rule fails, llm-grouping.ts feeds the
-// error list back to the model as a tool_result and asks it to retry.
-// After 3 failed retries the route falls back to balance.ts.
+// The generate route runs it on balance.ts output and reports what it
+// finds (advisory: borrowed tiers and the caution-flag manual tray are
+// expected findings).
 //
 // M6.0 rules (replaces score-derived leader rules):
 //   1. Every enrolled participant assigned exactly once.
@@ -23,11 +22,12 @@
 //   7. Each member's qualification class must match their group's
 //      class — UNLESS pinned_group_no overrides it (warning, not
 //      hard fail).
-//   8. No 特级 / 重点 group has > ceil(class_priority / k_class)
-//      priority members (max(fin, inf) ≥ 4 spread).
+//   8. (removed 2026-11-24 — stronger students now go to higher-grade
+//      leaders instead of being spread evenly)
 //   9. All pinned_group_no respected.
 
-import { isPriority, participantToClass, requiredLeaderTiers } from "./types";
+import { participantToClass, requiredLeaderTiers } from "./types";
+import { DEFAULT_LANGUAGE, speaks } from "../participants/languages";
 import type {
   DraftGroup,
   GroupingConfig,
@@ -52,8 +52,9 @@ export type ValidationError = {
     | "fu_zu_zhang_not_in_roster"
     | "fu_zu_zhang_tier_mismatch"
     | "class_qualification_mismatch"
-    | "priority_cluster"
-    | "pin_violated";
+    | "pin_violated"
+    | "language_mismatch"
+    | "leader_language_mismatch";
   group_no?: number;
   region_id?: string;
   detail: string;
@@ -257,6 +258,8 @@ export function validateGrouping(
         // Pin overrides — soft warning surfaced elsewhere if needed.
         continue;
       }
+      // Other-language groups mix types by design (language beats type).
+      if (p.listening_language && p.listening_language !== DEFAULT_LANGUAGE) continue;
       const expectedClass = participantToClass(p);
       if (expectedClass !== g.group_class) {
         errors.push({
@@ -269,33 +272,31 @@ export function validateGrouping(
     }
   }
 
-  // Rule 8 — priority spread within 特级 + 重点.
-  for (const cls of ["strategic", "key"] as const) {
-    const classGroups = groups.filter((g) => g.group_class === cls);
-    if (classGroups.length === 0) continue;
-    const totalPriority = classGroups.reduce(
-      (acc, g) =>
-        acc
-        + g.members.filter((m) => {
-          const p = participantById.get(m.participant_id);
-          return p ? isPriority(p) : false;
-        }).length,
-      0,
-    );
-    if (totalPriority === 0) continue;
-    const cap = Math.ceil(totalPriority / classGroups.length);
-    for (const g of classGroups) {
-      const count = g.members.filter((m) => {
-        const p = participantById.get(m.participant_id);
-        return p ? isPriority(p) : false;
-      }).length;
-      if (count > cap) {
+  // Rule 10 — language (HARD): every student listens in the group's
+  // language, and the 主组长 speaks it.
+  for (const g of groups) {
+    if (!g.language) continue;
+    for (const m of g.members) {
+      const p = participantById.get(m.participant_id);
+      if (p && m.role === "participant" && p.pinned_group_no !== g.group_no
+        && (p.listening_language || DEFAULT_LANGUAGE) !== g.language) {
         errors.push({
-          code: "priority_cluster",
+          code: "language_mismatch",
           group_no: g.group_no,
-          detail: `${cls} group ${g.group_no} has ${count} priority members; cap is ${cap} (total ${totalPriority} across ${classGroups.length} groups)`,
+          region_id: m.region_id ?? undefined,
+          detail: `${m.region_id ?? m.participant_id} listens in ${p.listening_language} but group ${g.group_no} is ${g.language}`,
         });
       }
+    }
+    const main = g.members.find((m) => m.role === "zu_zhang");
+    const z = main ? rosterByPid.get(main.participant_id) : undefined;
+    if (z && !speaks(z.spoken_languages, g.language)) {
+      errors.push({
+        code: "leader_language_mismatch",
+        group_no: g.group_no,
+        region_id: z.region_id ?? undefined,
+        detail: `group ${g.group_no} (${g.language}) 主组长 ${z.region_id ?? z.participant_id} doesn't speak it`,
+      });
     }
   }
 

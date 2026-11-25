@@ -1,4 +1,5 @@
 import { motivationsLabel } from "@/lib/participants/motivations";
+import { DEFAULT_LANGUAGE, languageLabel, spokenLabel } from "@/lib/participants/languages";
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { createSupabaseServerClient } from "@/lib/supabase";
@@ -97,6 +98,8 @@ export async function GET(_req: Request, { params }: RouteCtx) {
         Motivation: motivationsLabel(m.motivations, m.motivation_other),
         "Caution (may recruit)": m.sells_products ? "Yes" : "",
         Old: m.is_old_student ? "Yes" : "",
+        "Listens in": languageLabel(m.listening_language || DEFAULT_LANGUAGE).native,
+        Speaks: spokenLabel(m.spoken_languages),
         "Primary Goal": primaryGoal ? GROWTH_DIMENSION_LABEL[primaryGoal].cn : "",
         "Secondary Goal": secondaryGoal ? GROWTH_DIMENSION_LABEL[secondaryGoal].cn : "",
         Pinned:
@@ -132,6 +135,8 @@ export async function GET(_req: Request, { params }: RouteCtx) {
       "Motivation",
       "Caution (may recruit)",
       "Old",
+      "Listens in",
+      "Speaks",
       "Primary Goal",
       "Secondary Goal",
       "Pinned",

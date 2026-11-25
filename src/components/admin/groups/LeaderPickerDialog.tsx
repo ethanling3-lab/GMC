@@ -1,5 +1,6 @@
 "use client";
 
+import { spokenLabel } from "@/lib/participants/languages";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { GroupBuilderLeaderCandidate } from "@/lib/grouping/load-groups";
@@ -383,6 +384,11 @@ export function LeaderPickerDialog({
                         </span>
                       </span>
                       <span className="mt-1 flex items-center gap-2.5 flex-wrap text-[10.5px] text-[var(--ink-faint)]">
+                        {c.spoken_languages.length > 0 ? (
+                          <span title="Languages this 组长 can lead in">
+                            {spokenLabel(c.spoken_languages)}
+                          </span>
+                        ) : null}
                         <span>
                           {c.current_group_no == null
                             ? "unassigned · 未编排"

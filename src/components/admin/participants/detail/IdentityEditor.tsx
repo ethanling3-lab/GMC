@@ -15,6 +15,8 @@ import {
   REGIONS,
 } from "@/lib/participant-import-schema";
 import { LANGUAGE_FLUENCIES } from "@/lib/participant-update-schema";
+import { DEFAULT_LANGUAGE, languageLabel, spokenLabel } from "@/lib/participants/languages";
+import { LISTENING_LANGUAGE_OPTIONS, SpokenLanguagesPicker } from "./LanguageFields";
 
 // Single source of truth for identity-shaped facts about a participant.
 // Combines: name, contact, region+sub-region, gender, birth, occupation,
@@ -32,6 +34,10 @@ export type IdentityData = {
   region: string | null;
   sub_region: string | null;
   language_fluency: (typeof LANGUAGE_FLUENCIES)[number] | null;
+  // Migration 074 — class language they listen in + languages they speak
+  // (grouping ties listeners to a 组长 who speaks the language).
+  listening_language: string;
+  spoken_languages: string[];
   gender: string | null;
   birth_date: string | null;
   occupation: string | null;
@@ -60,11 +66,6 @@ const GENDER_OPTIONS = GENDERS.map((g) => ({
   label: g.charAt(0).toUpperCase() + g.slice(1),
 }));
 
-const LANGUAGE_FLUENCY_OPTIONS = [
-  { value: "cn" as const, label: "中文 · Chinese" },
-  { value: "en" as const, label: "English" },
-  { value: "both" as const, label: "中英文 · Both" },
-];
 
 function computeAge(birth: string | null): number | null {
   if (!birth) return null;
@@ -114,7 +115,8 @@ export function IdentityEditor({
       phone: trim(draft.phone),
       region: draft.region,
       sub_region: trim(draft.sub_region),
-      language_fluency: draft.language_fluency,
+      listening_language: draft.listening_language || DEFAULT_LANGUAGE,
+      spoken_languages: draft.spoken_languages,
       gender: draft.gender,
       birth_date: draft.birth_date,
       occupation: trim(draft.occupation),
@@ -218,15 +220,27 @@ export function IdentityEditor({
                 placeholder="北马 / 中马 / 南马"
               />
             </LabelRow>
-            <LabelRow label="Language · 上课语种">
+          </div>
+
+          {/* Row C2 — class languages (grouping) */}
+          <div className="grid md:grid-cols-3 gap-x-6 gap-y-5">
+            <LabelRow label="Listens in · 听课语言">
               <Select
-                value={draft.language_fluency}
+                value={draft.listening_language || DEFAULT_LANGUAGE}
                 onChange={(v) =>
-                  setDraft({ ...draft, language_fluency: v })
+                  setDraft({ ...draft, listening_language: v ?? DEFAULT_LANGUAGE })
                 }
-                options={LANGUAGE_FLUENCY_OPTIONS}
+                options={LISTENING_LANGUAGE_OPTIONS}
               />
             </LabelRow>
+            <div className="md:col-span-2">
+              <LabelRow label="Speaks · 会说" group>
+                <SpokenLanguagesPicker
+                  value={draft.spoken_languages}
+                  onChange={(v) => setDraft({ ...draft, spoken_languages: v })}
+                />
+              </LabelRow>
+            </div>
           </div>
 
           {/* Row D — gender + birth + religion */}
@@ -348,10 +362,11 @@ export function IdentityEditor({
                 <Empty />
               )}
             </Field>
-            <Field label="Language" labelZh="上课语种">
-              {initial.language_fluency
-                ? labelFluency(initial.language_fluency)
-                : <Empty />}
+            <Field label="Listens in" labelZh="听课语言">
+              {languageLabel(initial.listening_language || DEFAULT_LANGUAGE).native}
+            </Field>
+            <Field label="Speaks" labelZh="会说">
+              {spokenLabel(initial.spoken_languages) || <Empty />}
             </Field>
             <Field label="Gender">
               {initial.gender
@@ -396,13 +411,3 @@ export function IdentityEditor({
   );
 }
 
-function labelFluency(v: "en" | "cn" | "both"): string {
-  switch (v) {
-    case "cn":
-      return "中文 · Chinese";
-    case "en":
-      return "English";
-    case "both":
-      return "中英文 · Both";
-  }
-}
