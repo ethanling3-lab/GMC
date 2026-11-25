@@ -15,7 +15,8 @@ import {
 } from "@/lib/participants-write";
 import { isEventFull } from "@/lib/event-capacity";
 import { setMarketingStatus } from "@/lib/whatsapp/consent";
-import { amountDueFor, resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
+import type { PriceTier } from "@/lib/pricing/tiers";
+import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { registrationBlock } from "@/lib/event-registration-window";
 
 export const runtime = "nodejs";
@@ -58,6 +59,8 @@ export async function POST(req: NextRequest) {
         price?: number | string | null;
         misc_fee?: number | string | null;
         price_tiers?: PriceTier[] | null;
+        course_id?: string | null;
+        start_date?: string | null;
       }
     | null = null;
   // When the tiered-pricing columns (migration 042) aren't present we skip
@@ -67,7 +70,7 @@ export async function POST(req: NextRequest) {
     const primary = await supabase
       .from("events")
       .select(
-        "id, status, requires_approval, enrollment_opens_at, enrollment_closes_at, capacity, form_schema, price, misc_fee, price_tiers",
+        "id, status, requires_approval, enrollment_opens_at, enrollment_closes_at, capacity, form_schema, price, misc_fee, price_tiers, course_id, start_date",
       )
       .eq("slug", presliced.data.event_slug)
       .maybeSingle();
@@ -217,21 +220,12 @@ export async function POST(req: NextRequest) {
   const confirmationToken = createToken("confirm_registration", `${participantId}:${event.id}`);
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
-  // Resolve the price tier from the participant's record so the amount
-  // owed is correct when the pay link is later generated. New public
-  // leads (no programme_tier) resolve to the new-student / default tier.
-  let priceTierKey: string | null = null;
-  let amountDue: number | null = null;
+  // Price via the one shared rule (src/lib/pricing/resolve-server.ts) so
+  // the amount owed is right when the pay link is generated, and record
+  // why (price_basis, migration 081).
+  let pricing: Awaited<ReturnType<typeof resolveEnrollmentPrice>> | null = null;
   if (tieredAvailable) {
-    const { data: pricing } = await supabase
-      .from("participants")
-      .select("is_old_student, programme_expires_at, programmes(slug)")
-      .eq("id", participantId)
-      .maybeSingle();
-    const priced = { price: event.price, misc_fee: event.misc_fee, price_tiers: event.price_tiers };
-    const tier = resolvePriceTier(priced, pricingParticipantFromRow(pricing));
-    priceTierKey = tier?.tier_key ?? null;
-    amountDue = amountDueFor(priced, tier);
+    pricing = await resolveEnrollmentPrice(event, participantId);
   }
 
   // Pin `event` here so the narrowing survives into the closure below.
@@ -244,9 +238,10 @@ export async function POST(req: NextRequest) {
       confirmation_token: confirmationToken,
       confirmation_token_expires_at: expiresAt,
     };
-    if (tieredAvailable) {
-      payload.price_tier_key = priceTierKey;
-      payload.amount_due = amountDue;
+    if (pricing) {
+      payload.price_tier_key = pricing.price_tier_key;
+      payload.amount_due = pricing.amount_due;
+      payload.price_basis = pricing.price_basis;
     }
     if (includeAnswers) payload.form_answers = input.answers ?? {};
     return supabase

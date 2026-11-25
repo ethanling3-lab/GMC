@@ -17,6 +17,8 @@ import { ProfileEditor } from "@/components/admin/participants/detail/ProfileEdi
 import type { SuggestedLeader } from "@/components/admin/participants/detail/SuggestedLeadersPicker";
 import type { AttendedCourse } from "@/components/admin/participants/detail/ProfileEditor";
 import { ScoringEditor } from "@/components/admin/participants/detail/ScoringEditor";
+import { describePriceCategory } from "@/lib/pricing/resolve-server";
+import { listCourses } from "@/lib/programmes/courses";
 import { ZuZhangProfileEditor } from "@/components/admin/participants/detail/ZuZhangProfileEditor";
 import type {
   GrowthDimension,
@@ -444,6 +446,7 @@ export default async function ParticipantDetailPage({ params }: Props) {
 
           <ScoringEditor
             participantId={p.id}
+            priceCategory={await describePriceCategory(p.id)}
             programmes={programmeOptions}
             initial={{
               financial_score: p.financial_score,
@@ -479,6 +482,7 @@ export default async function ParticipantDetailPage({ params }: Props) {
 
           <ProfileEditor
             participantId={p.id}
+            courses={(await listCourses()).map((c) => ({ id: c.id, name_cn: c.name_cn, name_en: c.name_en }))}
             initial={{
               health_status: p.health_status,
               family_situation: p.family_situation,

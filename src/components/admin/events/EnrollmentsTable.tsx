@@ -28,7 +28,7 @@ import {
   RejectReasonModal,
   type RejectReasonValue,
 } from "./RejectReasonModal";
-import type { PriceTier } from "@/lib/pricing/tiers";
+import { describeBasis, type PriceBasis, type PriceTier } from "@/lib/pricing/tiers";
 
 type ParticipantRef = {
   id: string;
@@ -79,6 +79,8 @@ export type EnrollmentRow = {
    * Optional so pre-042 schemas still work. */
   amount_due?: number | string | null;
   price_tier_key?: string | null;
+  /** Why this price (migration 081). Null for older enrollments. */
+  price_basis?: PriceBasis | null;
   paid_at: string | null;
   confirmed_at: string | null;
   approved_at: string | null;
@@ -111,6 +113,8 @@ type Props = {
   formSchema: unknown;
   /** Event's tiered-pricing rows (migration 042). Empty = single-price event. */
   priceTiers?: PriceTier[];
+  /** Programme slug → Chinese name, for the "why this price" line. */
+  programmeNames?: Record<string, string>;
   referrerById: Record<string, ReferrerRef>;
   latestNotificationByEnrollment?: Record<string, LatestNotification>;
 };
@@ -276,11 +280,19 @@ export function EnrollmentsTable({
   hasFilter,
   formSchema,
   priceTiers = [],
+  programmeNames = {},
   referrerById,
   latestNotificationByEnrollment = {},
 }: Props) {
   const router = useRouter();
   const tierByKey = new Map(priceTiers.map((t) => [t.key, t]));
+  const tierLabel = (key: string | null | undefined): string | null => {
+    if (!key) return null;
+    const t = tierByKey.get(key);
+    return t ? t.label_cn || t.label_en : null;
+  };
+  const whyPrice = (b: PriceBasis | null | undefined): string =>
+    b ? describeBasis(b, (slug) => programmeNames[slug] ?? slug) : "Priced before price records were kept";
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<BulkAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -599,18 +611,25 @@ export function EnrollmentsTable({
   // Tier-override editor — window.prompt picker (matches the Pin editor
   // pattern). Only offered when the event defines price tiers. Admin types
   // the number of the tier (or blank to clear → falls back to event price).
-  async function editPriceTier(id: string, currentKey: string | null | undefined) {
+  async function editPriceTier(id: string, currentKey: string | null | undefined, currentRepeat = false) {
     if (!canEdit || priceTiers.length === 0) return;
     const menu = priceTiers
-      .map((t, i) => `${i + 1}. ${t.label_cn || t.label_en} — ${t.amount}`)
+      .map(
+        (t, i) =>
+          `${i + 1}. ${t.label_cn || t.label_en} — 会务费 + ${t.amount}` +
+          (t.repeat_amount != null ? `   (${i + 1}r = 复训 会务费 + ${t.repeat_amount})` : ""),
+      )
       .join("\n");
     const currentIdx = priceTiers.findIndex((t) => t.key === currentKey);
     const raw = window.prompt(
-      `Set price tier (blank to clear):\n${menu}`,
-      currentIdx >= 0 ? String(currentIdx + 1) : "",
+      `Set price (blank to clear):\n${menu}`,
+      currentIdx >= 0 ? `${currentIdx + 1}${currentRepeat ? "r" : ""}` : "",
     );
     if (raw === null) return;
-    const trimmed = raw.trim();
+    let trimmed = raw.trim().toLowerCase();
+    // "2r" = row 2's 复训 price.
+    const repeat = /^\d+r$/.test(trimmed);
+    if (repeat) trimmed = trimmed.slice(0, -1);
     let nextKey: string | null;
     if (trimmed === "" || trimmed === "0") {
       nextKey = null;
@@ -621,18 +640,28 @@ export function EnrollmentsTable({
         return;
       }
       nextKey = priceTiers[idx].key;
+      if (repeat && priceTiers[idx].repeat_amount == null) {
+        setError(`Row ${idx + 1} has no 复训 price.`);
+        return;
+      }
     }
-    if ((currentKey ?? null) === nextKey) return;
+    if ((currentKey ?? null) === nextKey && repeat === currentRepeat) return;
+    const reason = window.prompt("Reason for changing this price (kept in the audit log):");
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      setError("Give a short reason (3+ characters) for the price change.");
+      return;
+    }
     setError(null);
     try {
       const res = await fetch(`/api/admin/enrollments/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ price_tier_key: nextKey }),
+        body: JSON.stringify({ price_tier_key: nextKey, price_repeat: repeat, price_reason: reason.trim() }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload?.error ?? `Couldn't update tier (${res.status})`);
+        throw new Error(payload?.detail ?? payload?.error ?? `Couldn't update tier (${res.status})`);
       }
       router.refresh();
       setToast({
@@ -1179,8 +1208,8 @@ export function EnrollmentsTable({
                         canEdit ? (
                           <button
                             type="button"
-                            onClick={() => editPriceTier(r.id, r.price_tier_key)}
-                            title="Click to change price tier"
+                            onClick={() => editPriceTier(r.id, r.price_tier_key, !!r.price_basis?.repeat)}
+                            title={`${whyPrice(r.price_basis)}\nClick to change the price`}
                             className="mt-1 group inline-flex items-center gap-1 px-1.5 py-0.5 -mr-1.5 rounded-[var(--radius-sm)] text-[11px] text-[var(--ink-mute)] hover:bg-[var(--cinnabar-wash)]/60 hover:text-[var(--cinnabar-deep)] transition-colors duration-[var(--dur-fast)]"
                           >
                             <span className="text-[9.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
@@ -1191,14 +1220,15 @@ export function EnrollmentsTable({
                                 ? Number(r.amount_due).toLocaleString(undefined, { maximumFractionDigits: 2 })
                                 : "—"}
                             </span>
-                            {r.price_tier_key && tierByKey.get(r.price_tier_key) ? (
+                            {tierLabel(r.price_tier_key) ? (
                               <span className="text-[var(--ink-faint)]">
-                                · {tierByKey.get(r.price_tier_key)!.label_cn || tierByKey.get(r.price_tier_key)!.label_en}
+                                · {tierLabel(r.price_tier_key)}
+                                {r.price_basis?.repeat ? " · 复训" : ""}
                               </span>
                             ) : null}
                           </button>
                         ) : (
-                          <div className="mt-1 text-[11px] text-[var(--ink-mute)]">
+                          <div className="mt-1 text-[11px] text-[var(--ink-mute)]" title={whyPrice(r.price_basis)}>
                             <span className="text-[9.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
                               due{" "}
                             </span>

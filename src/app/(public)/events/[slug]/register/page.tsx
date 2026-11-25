@@ -6,12 +6,8 @@ import { loadSelfProfile } from "@/lib/participant-self";
 import { QuickRegisterConfirm } from "./QuickRegisterConfirm";
 import { registrationBlock } from "@/lib/event-registration-window";
 import { currentEventSlug } from "@/lib/event-slug";
-import {
-  amountDueFor,
-  pricingParticipantFromRow,
-  resolvePriceTier,
-  type PriceTier,
-} from "@/lib/pricing/tiers";
+import type { PriceTier } from "@/lib/pricing/tiers";
+import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 
 export const metadata: Metadata = { title: "Register · 报名 — GMC" };
 export const dynamic = "force-dynamic";
@@ -58,7 +54,7 @@ export default async function EventRegisterPage({ params }: PageProps) {
   const { data: event } = await service
     .from("events")
     .select(
-      "id, slug, status, title_en, title_cn, start_date, end_date, venue, price, misc_fee, price_tiers, currency, capacity, requires_approval, enrollment_opens_at, enrollment_closes_at",
+      "id, slug, status, title_en, title_cn, start_date, end_date, venue, price, misc_fee, price_tiers, course_id, currency, capacity, requires_approval, enrollment_opens_at, enrollment_closes_at",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -103,22 +99,18 @@ export default async function EventRegisterPage({ params }: PageProps) {
   const profile = await loadSelfProfile(participant.id);
   if (!profile) notFound();
 
-  // Show the amount this person will actually be charged.
-  const { data: pricingRow } = await service
-    .from("participants")
-    .select("is_old_student, programme_expires_at, programmes(slug)")
-    .eq("id", participant.id)
-    .maybeSingle();
+  // Show the amount this person will actually be charged — same shared
+  // rule the register API uses, so preview and charge always match.
   const priced = event as {
+    id: string;
     price: number | string | null;
     misc_fee: number | string | null;
     price_tiers: PriceTier[] | null;
+    course_id: string | null;
+    start_date: string | null;
     currency: string | null;
   };
-  const amountDue = amountDueFor(
-    priced,
-    resolvePriceTier(priced, pricingParticipantFromRow(pricingRow)),
-  );
+  const { amount_due: amountDue } = await resolveEnrollmentPrice(priced, participant.id, service);
 
   return (
     <section className="min-h-[calc(100dvh-160px)] px-4 md:px-8 py-10 max-w-[720px] mx-auto">

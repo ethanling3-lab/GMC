@@ -175,6 +175,7 @@ type PriceCategoryOption = { key: string; cn: string; en: string };
 
 // Base (non-programme) pricing categories, always available.
 const BASE_PRICE_CATEGORIES: PriceCategoryOption[] = [
+  { key: "classic_member", cn: "经典永流传", en: "Classic member (programme expired)" },
   { key: "returning_student", cn: "老学员", en: "Returning student" },
   { key: "new_student", cn: "新人", en: "New student" },
   { key: "default", cn: "其他", en: "Everyone else" },
@@ -302,7 +303,6 @@ export function EventEditor({
         departure_day: draft.departure_day,
         enrollment_opens_at: draft.enrollment_opens_at,
         enrollment_closes_at: draft.enrollment_closes_at,
-        capacity: draft.capacity,
         price: draft.price,
         misc_fee: draft.misc_fee ?? 0,
         currency: draft.currency,
@@ -977,21 +977,43 @@ export function EventEditor({
       </Section>
 
       {/* Commerce */}
-      <Section title="Commerce" titleZh="费用" description="Pricing, capacity, and payment methods.">
+      <Section title="Commerce" titleZh="费用" description="Registration, pricing and payment methods.">
+        {/* Registration open/closed — flips the event status between Open
+            and Closed. A closed event stays on the public site with
+            "Registration closed", and the register page refuses sign-ups. */}
+        {draft.status === "open" || draft.status === "closed" ? (
+          <div className="flex items-center justify-between gap-4 flex-wrap rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] px-4 py-3">
+            <div>
+              <div className="text-[13px] text-[var(--ink)]">
+                Registration · 报名{" "}
+                <span className={draft.status === "open" ? "text-[#3a6b3b]" : "text-[var(--cinnabar-deep)]"}>
+                  {draft.status === "open" ? "Open · 开放中" : "Closed · 已截止"}
+                </span>
+              </div>
+              <div className="mt-0.5 text-[11.5px] text-[var(--ink-faint)]">
+                {draft.status === "open"
+                  ? "People can register on the public page."
+                  : "The public page shows “Registration closed · 报名已截止”. No new sign-ups."}
+              </div>
+            </div>
+            {canEdit ? (
+              <button
+                type="button"
+                disabled={savingStatus}
+                onClick={() => onChangeStatus(draft.status === "open" ? "closed" : "open")}
+                className="inline-flex items-center h-9 px-4 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] text-[12.5px] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:text-[var(--cinnabar-deep)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] disabled:opacity-50 transition-[border-color,color,transform] duration-[var(--dur-fast)]"
+              >
+                {draft.status === "open" ? "Close registration" : "Reopen registration"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <Field label="Capacity" labelZh="名额">
-            <input
-              type="number"
-              min={0}
-              value={draft.capacity ?? ""}
-              onChange={(e) =>
-                update("capacity", e.target.value === "" ? null : Number(e.target.value))
-              }
-              disabled={!canEdit}
-              className={inputCls("tabular-nums")}
-            />
-          </Field>
-          <Field label="Price" labelZh="价格">
+          <Field
+            label="Course fee"
+            labelZh="课程费"
+            hint="Added to the 会务费. Used only when the event has no tiers — on tiered events the 其他 tier does this job."
+          >
             <input
               type="number"
               step="0.01"
@@ -1038,7 +1060,7 @@ export function EventEditor({
         <Field
           label="Tiered pricing — course fee"
           labelZh="分级定价 · 课程费"
-          hint="Optional. Each row sets the COURSE FEE (on top of the misc fee) for the chosen programme tiers — total = misc fee + course fee. The right tier is auto-applied from the participant's programme. Leave empty to charge the single Price above for everyone."
+          hint="Optional. Each row sets the course fee (added to the 会务费) for the chosen categories. 初训 is the first-time fee; 复训 (optional) is charged automatically to people who have taken this course before. The right row is picked from the participant's programme / history. Leave empty to charge the course fee above to everyone."
         >
           <PriceTiersEditor
             value={draft.price_tiers ?? []}
@@ -1050,6 +1072,7 @@ export function EventEditor({
             labelOf={labelOfCategory}
           />
         </Field>
+
 
         <Field label="Payment methods" labelZh="支付方式">
           <div className="flex flex-wrap gap-2">
@@ -1441,6 +1464,7 @@ function PriceTiersEditor({
     rowId: string;
     key: string;
     amount: string; // string for free typing; parsed on emit
+    repeat: string; // 复训 course fee, optional
     applies_to: ParticipantPriceCategory[];
     custom_label: string; // shown only when "default" (其他) is selected
   };
@@ -1449,6 +1473,7 @@ function PriceTiersEditor({
       rowId: `r${i}`,
       key: t.key,
       amount: t.amount != null ? String(t.amount) : "",
+      repeat: t.repeat_amount != null ? String(t.repeat_amount) : "",
       applies_to: t.applies_to ?? [],
       custom_label: t.custom_label ?? "",
     })),
@@ -1473,11 +1498,13 @@ function PriceTiersEditor({
       const derivedEn = r.applies_to
         .map((c) => labelOf(c).en)
         .join(" / ");
+      const repeat = r.repeat.trim() === "" ? null : Number(r.repeat);
       out.push({
         key: r.key,
         label_cn: custom || derived,
         label_en: custom || derivedEn,
         amount,
+        ...(repeat != null && Number.isFinite(repeat) && repeat >= 0 ? { repeat_amount: repeat } : {}),
         applies_to: r.applies_to,
         ...(custom ? { custom_label: custom } : {}),
       });
@@ -1515,6 +1542,7 @@ function PriceTiersEditor({
         rowId: `r${Date.now()}`,
         key: `tier-${Date.now()}`,
         amount: "",
+        repeat: "",
         applies_to: [],
         custom_label: "",
       },
@@ -1536,7 +1564,7 @@ function PriceTiersEditor({
     <div className="flex flex-col gap-3">
       {rows.length === 0 ? (
         <p className="text-[12px] text-[var(--ink-faint)] italic">
-          No tiers — everyone pays the single Price above.
+          No tiers — everyone pays the 会务费 + the course fee above.
         </p>
       ) : null}
       {rows.map((r, i) => (
@@ -1566,14 +1594,30 @@ function PriceTiersEditor({
                 value={r.amount}
                 onChange={(e) => updateRow(i, { amount: e.target.value })}
                 disabled={disabled}
-                placeholder="course fee"
-                title="Course fee — added on top of the misc fee"
+                placeholder="初训"
+                title="初训 course fee — added on top of the 会务费"
+                className={inputCls("tabular-nums")}
+              />
+            </div>
+            <div className="w-[110px] shrink-0">
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                value={r.repeat}
+                onChange={(e) => updateRow(i, { repeat: e.target.value })}
+                disabled={disabled}
+                placeholder="复训"
+                title="复训 course fee for people who have taken this course before (checked in at an earlier run, or in their attended-courses record). Leave blank to charge 初训 to everyone."
                 className={inputCls("tabular-nums")}
               />
             </div>
             {Number.isFinite(Number(r.amount)) && r.amount !== "" ? (
               <span className="shrink-0 text-[11px] tabular-nums text-[var(--ink-mute)] whitespace-nowrap">
                 = {currency} {(miscFee + Number(r.amount)).toLocaleString()}
+                {r.repeat.trim() !== "" && Number.isFinite(Number(r.repeat))
+                  ? ` · 复训 ${(miscFee + Number(r.repeat)).toLocaleString()}`
+                  : ""}
               </span>
             ) : null}
             {!disabled ? (

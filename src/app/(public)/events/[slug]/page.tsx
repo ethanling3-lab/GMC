@@ -54,7 +54,7 @@ async function loadEvent(slug: string): Promise<EventRow | null> {
       .from("events")
       .select(`${base}, price_tiers, misc_fee`)
       .eq("slug", slug)
-      .eq("status", "open")
+      .in("status", ["open", "closed"]) // closed = shown as "Registration closed"
       .maybeSingle();
     // Pre-042 fallback — drop price_tiers if the column doesn't exist yet.
     if (res.error && (res.error as { code?: string }).code === "42703") {
@@ -62,7 +62,7 @@ async function loadEvent(slug: string): Promise<EventRow | null> {
         .from("events")
         .select(base)
         .eq("slug", slug)
-        .eq("status", "open")
+        .in("status", ["open", "closed"]) // closed = shown as "Registration closed"
         .maybeSingle();
     }
     if (res.error || !res.data) return null;
@@ -242,7 +242,9 @@ export default async function EventDetailPage({ params }: PageProps) {
     });
 
   const registerHref = `/register?event=${encodeURIComponent(event.slug)}`;
-  const regBlock = registrationBlock(event);
+  // Staff closed registration (event status "closed"), or outside the
+  // open/close dates.
+  const regBlock = event.status === "closed" ? "closed" : registrationBlock(event);
 
   const bodyParagraphs = body
     .split(/\n{2,}/)

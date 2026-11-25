@@ -14,7 +14,7 @@ import {
   notifyPaymentReceived,
 } from "@/lib/enrollment-notifications";
 import { createPaymentAccessToken } from "@/lib/tokens";
-import { amountDueFor, resolvePriceTier, pricingParticipantFromRow } from "@/lib/pricing/tiers";
+import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { writeAuditLog } from "@/lib/audit";
 import { ensureRegionId } from "@/lib/region-id";
 import { participantEmailLocale } from "@/lib/i18n";
@@ -90,7 +90,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const { data: event, error: eventErr } = await service
     .from("events")
     .select(
-      "id, slug, status, requires_approval, capacity, currency, price, misc_fee, price_tiers, title_en, title_cn, start_date, end_date",
+      "id, slug, status, requires_approval, capacity, currency, price, misc_fee, price_tiers, course_id, title_en, title_cn, start_date, end_date",
     )
     .eq("id", eventId)
     .maybeSingle();
@@ -167,15 +167,8 @@ export async function POST(req: Request, { params }: RouteCtx) {
     );
   }
 
-  // Resolve the price tier from the participant's record (programme_tier,
-  // else new/returning) so amount_due is correct. Falls back to event.price.
-  const { data: pricingRow } = await service
-    .from("participants")
-    .select("is_old_student, programme_expires_at, programmes(slug)")
-    .eq("id", participantId)
-    .maybeSingle();
-  const tier = resolvePriceTier(event, pricingParticipantFromRow(pricingRow));
-  const amountDue = amountDueFor(event, tier);
+  // Price via the one shared rule (src/lib/pricing/resolve-server.ts).
+  const pricing = await resolveEnrollmentPrice(event, participantId, service);
 
   // Build the insert payload from the chosen initial state. Mirrors the
   // PATCH route's per-action mutation logic so a manually-created "approved"
@@ -184,8 +177,9 @@ export async function POST(req: Request, { params }: RouteCtx) {
   const enrollPayload: Record<string, unknown> = {
     participant_id: participantId,
     event_id: event.id,
-    price_tier_key: tier?.tier_key ?? null,
-    amount_due: amountDue,
+    price_tier_key: pricing.price_tier_key,
+    amount_due: pricing.amount_due,
+    price_basis: pricing.price_basis,
   };
 
   if (body.initial_state === "pending") {
@@ -286,7 +280,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
     try {
       if (body.initial_state === "approved") {
         const token = createPaymentAccessToken(enrollment.id, PAYMENT_TOKEN_TTL_MS);
-        const amountLabel = fmtAmount(amountDue, event.currency, locale);
+        const amountLabel = fmtAmount(pricing.amount_due, event.currency, locale);
         await notifyApproved({
           enrollment: enr,
           participant: pRow,
@@ -296,7 +290,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
         });
       } else if (body.initial_state === "paid") {
         const amountLabel = fmtAmount(
-          body.amount_paid ?? amountDue,
+          body.amount_paid ?? pricing.amount_due,
           event.currency,
           locale,
         );

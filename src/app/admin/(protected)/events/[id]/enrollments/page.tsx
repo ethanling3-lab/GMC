@@ -12,6 +12,7 @@ import {
   type LatestNotification,
   type ReferrerRef,
 } from "@/components/admin/events/EnrollmentsTable";
+import { PriceCheckPanel } from "@/components/admin/events/PriceCheckPanel";
 import { EnrollmentsToolbar } from "@/components/admin/events/EnrollmentsToolbar";
 import type { PriceTier } from "@/lib/pricing/tiers";
 import { STATUS_LABEL as EVENT_STATUS_LABEL, TYPE_LABEL } from "@/lib/events-shared";
@@ -158,6 +159,8 @@ export default async function EventEnrollmentsPage({
       stripForm: boolean;
       stripReferrer: boolean;
     }[] = [
+      // price_basis (migration 081) — why each person got their price.
+      { cols: () => enrollmentColsWithBoth(participantFull).replace("price_tier_key,", "price_tier_key, price_basis,"), stripSlip: false, stripForm: false, stripReferrer: false },
       { cols: () => enrollmentColsWithBoth(participantFull), stripSlip: false, stripForm: false, stripReferrer: false },
       { cols: () => enrollmentColsWithBoth(participantLegacy), stripSlip: false, stripForm: false, stripReferrer: true },
       { cols: () => enrollmentColsWithSchema(participantFull), stripSlip: true, stripForm: false, stripReferrer: false },
@@ -213,6 +216,12 @@ export default async function EventEnrollmentsPage({
         .filter((v): v is string => typeof v === "string" && v.length > 0),
     ),
   );
+  // Programme names for the "why this price" line on each row.
+  const programmeNames: Record<string, string> = {};
+  {
+    const { data: progs } = await supabase.from("programmes").select("slug, name_cn");
+    for (const p of (progs ?? []) as Array<{ slug: string; name_cn: string }>) programmeNames[p.slug] = p.name_cn;
+  }
   const referrerById: Record<string, ReferrerRef> = {};
   if (referrerIds.length > 0) {
     const { data: refRows, error: refErr } = await supabase
@@ -425,8 +434,11 @@ export default async function EventEnrollmentsPage({
         </div>
       </div>
 
+      {admin.role === "super_admin" ? <PriceCheckPanel eventId={event.id} /> : null}
+
       <EnrollmentsTable
         eventId={event.id}
+        programmeNames={programmeNames}
         rows={rows}
         canEdit={admin.role === "super_admin"}
         hasFilter={statusFilter !== null || q.length > 0}

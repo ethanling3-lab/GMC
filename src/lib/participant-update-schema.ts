@@ -47,6 +47,10 @@ export const LANGUAGE_FLUENCIES = ["en", "cn", "both"] as const;
 // per-course programme_tier tag was retired with the programme-enum cutover.
 const attendedCourseEntry = z.object({
   course_name: z.string().trim().min(1).max(200),
+  // Link to the course list (migration 079). Only linked entries count
+  // as "taken this course before" for 复训 pricing; free-text ones are
+  // shown but never priced on.
+  course_id: z.string().uuid().nullable().optional(),
   date: z
     .union([z.string().trim().max(20), z.null()])
     .optional(),

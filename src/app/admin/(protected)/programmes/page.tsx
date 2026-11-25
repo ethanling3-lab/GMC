@@ -3,7 +3,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-guard";
 import { listProgrammes } from "@/lib/programmes/programmes";
 import { validityLabel } from "@/lib/programmes/types";
-import { courseCountsByProgramme } from "@/lib/programmes/courses";
+import { courseCountsByProgramme, listUnlinkedCourseHistory } from "@/lib/programmes/courses";
 
 export const metadata: Metadata = { title: "Programmes" };
 export const dynamic = "force-dynamic";
@@ -15,10 +15,13 @@ function fmtSgd(n: number): string {
 export default async function ProgrammesPage() {
   const admin = await requireAdmin();
   const canManage = admin.role === "super_admin" || admin.role === "regional_lead";
-  const [programmes, courseCounts] = await Promise.all([
+  const [programmes, courseCounts, unlinked] = await Promise.all([
     listProgrammes({ includeInactive: true }),
     courseCountsByProgramme(),
+    // Names participants, so Super Admin only (CS see their own customers).
+    admin.role === "super_admin" ? listUnlinkedCourseHistory() : Promise.resolve([]),
   ]);
+  const unlinkedEntries = unlinked.reduce((n, u) => n + u.entries.length, 0);
 
   return (
     <div>
@@ -124,6 +127,55 @@ export default async function ProgrammesPage() {
           </tbody>
         </table>
       </section>
+
+      {admin.role === "super_admin" ? (
+        <section className="mt-10">
+          <h2 className="font-display text-[22px] tracking-[-0.01em] text-[var(--ink)]">
+            Course history check <span className="text-[15px] text-[var(--ink-mute)]">· 曾参加课程核对</span>
+          </h2>
+          <p className="mt-2 text-[13px] leading-[1.7] text-[var(--ink-soft)] max-w-[75ch]">
+            复训 prices go to people who checked in at an earlier run of the course, or whose course history has that
+            course <em>picked from the course list</em>. Entries typed in by hand don&apos;t count, so nobody gets a 复训
+            price on a guess. Fix the entries below by opening the person and picking the course.
+          </p>
+          {unlinked.length === 0 ? (
+            <p className="mt-4 text-[13px] text-[#3a6b3b]">✓ Every course-history entry is linked to the course list.</p>
+          ) : (
+            <div className="mt-4 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] overflow-hidden">
+              <div className="px-5 py-3 text-[12.5px] text-[#B45309] border-b border-[var(--paper-shadow)]">
+                {unlinkedEntries} entr{unlinkedEntries === 1 ? "y" : "ies"} for {unlinked.length} participant
+                {unlinked.length === 1 ? "" : "s"} won&apos;t count for 复训 pricing.
+              </div>
+              <ul>
+                {unlinked.map((u) => (
+                  <li key={u.participant_id} className="px-5 py-3 border-t first:border-t-0 border-[var(--paper-shadow)]/70 flex items-start gap-4 flex-wrap">
+                    <Link
+                      href={`/admin/participants/${u.participant_id}`}
+                      className="min-w-[180px] text-[13.5px] text-[var(--ink)] hover:text-[var(--cinnabar-deep)] rounded-sm focus-visible:shadow-[var(--shadow-focus)]"
+                    >
+                      {u.name}
+                      {u.region_id ? <span className="ml-2 font-mono text-[11.5px] text-[var(--ink-mute)]">{u.region_id}</span> : null}
+                    </Link>
+                    <div className="flex-1 flex flex-wrap gap-1.5">
+                      {u.entries.map((e, i) => (
+                        <span
+                          key={i}
+                          className="rounded-full border border-[var(--paper-shadow)] px-2.5 py-0.5 text-[11.5px] text-[var(--ink-soft)]"
+                          title={e.problem === "course_missing" ? "Linked course was deleted" : "Typed in, not linked"}
+                        >
+                          {e.course_name}
+                          {e.date ? ` · ${e.date}` : ""}
+                          <span className="ml-1 text-[#B45309]">{e.problem === "course_missing" ? "course deleted" : "not linked"}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

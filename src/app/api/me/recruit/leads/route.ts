@@ -7,7 +7,8 @@ import { upsertParticipant } from "@/lib/participants-write";
 import { createPaymentAccessToken } from "@/lib/tokens";
 import { writeAuditLog } from "@/lib/audit";
 import { isEligibleVolunteer } from "@/lib/participant-recruit";
-import { amountDueFor, resolvePriceTier, type PriceTier } from "@/lib/pricing/tiers";
+import type { PriceTier } from "@/lib/pricing/tiers";
+import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { registrationBlock } from "@/lib/event-registration-window";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
 
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
   // Load event.
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, enrollment_opens_at, enrollment_closes_at")
+    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, course_id, start_date, enrollment_opens_at, enrollment_closes_at")
     .eq("slug", body.event_slug)
     .maybeSingle();
   if (!event) {
@@ -79,6 +80,8 @@ export async function POST(req: Request) {
     price: number | string | null;
     misc_fee: number | string | null;
     price_tiers: PriceTier[] | null;
+    course_id: string | null;
+    start_date: string | null;
     enrollment_opens_at: string | null;
     enrollment_closes_at: string | null;
   };
@@ -134,11 +137,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "already_enrolled" }, { status: 409 });
   }
 
-  // Resolve pricing for the new lead. A freshly-recruited lead has no
-  // programme, so this resolves to the new-student / default tier (parity
-  // with the public + logged-in register flows).
-  const tier = resolvePriceTier(ev, null);
-  const amountDue = amountDueFor(ev, tier);
+  // Price via the one shared rule. The upsert may have matched an existing
+  // participant (with a programme or past check-ins), so price the real
+  // record rather than assuming a stranger.
+  const pricing = await resolveEnrollmentPrice(ev, upsert.id, service);
 
   const status = ev.requires_approval ? "pending_approval" : "approved";
   const { data: enrollment, error: insErr } = await service
@@ -149,8 +151,9 @@ export async function POST(req: Request) {
       status,
       payment_status: "none",
       recruited_via_portal: true,
-      price_tier_key: tier?.tier_key ?? null,
-      amount_due: amountDue,
+      price_tier_key: pricing.price_tier_key,
+      amount_due: pricing.amount_due,
+      price_basis: pricing.price_basis,
       cs_followup_notes: `recruited via portal by ${volunteer.region_id ?? volunteer.id.slice(0, 8)}`,
     })
     .select("id")

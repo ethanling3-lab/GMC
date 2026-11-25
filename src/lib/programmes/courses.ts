@@ -368,3 +368,49 @@ export async function removeProgrammeCourse(
   });
   return {};
 }
+
+export type UnlinkedHistory = {
+  participant_id: string;
+  region_id: string | null;
+  name: string;
+  entries: Array<{ course_name: string; date: string | null; problem: "not_linked" | "course_missing" }>;
+};
+
+/**
+ * Course-history entries that can't count for 复训 pricing: typed in
+ * without a link to the course list, or linked to a course that no longer
+ * exists. Shown on the Programmes page so staff can fix them.
+ */
+export async function listUnlinkedCourseHistory(): Promise<UnlinkedHistory[]> {
+  const supabase = createSupabaseServiceClient();
+  const courses = new Set((await listCourses()).map((c) => c.id));
+  const out: UnlinkedHistory[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("participants")
+      .select("id, region_id, name_cn, name_en, attended_courses")
+      .neq("attended_courses", "[]")
+      .order("region_id", { ascending: true })
+      .range(from, from + 999)
+      .returns<
+        Array<{
+          id: string;
+          region_id: string | null;
+          name_cn: string | null;
+          name_en: string | null;
+          attended_courses: Array<{ course_name?: string; course_id?: string | null; date?: string | null }> | null;
+        }>
+      >();
+    if (error) return out;
+    for (const p of data ?? []) {
+      const entries: UnlinkedHistory["entries"] = [];
+      for (const a of p.attended_courses ?? []) {
+        if (!a?.course_id) entries.push({ course_name: a?.course_name ?? "—", date: a?.date ?? null, problem: "not_linked" });
+        else if (!courses.has(a.course_id)) entries.push({ course_name: a.course_name ?? "—", date: a.date ?? null, problem: "course_missing" });
+      }
+      if (entries.length > 0) out.push({ participant_id: p.id, region_id: p.region_id, name: p.name_cn || p.name_en || "—", entries });
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  return out;
+}

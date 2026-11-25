@@ -3,7 +3,8 @@ import { requireParticipant } from "@/lib/participant-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { isEventFull } from "@/lib/event-capacity";
 import { createPaymentAccessToken } from "@/lib/tokens";
-import { amountDueFor, resolvePriceTier, pricingParticipantFromRow, type PriceTier } from "@/lib/pricing/tiers";
+import type { PriceTier } from "@/lib/pricing/tiers";
+import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { registrationBlock } from "@/lib/event-registration-window";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export async function POST(_req: Request, { params }: RouteCtx) {
   const service = createSupabaseServiceClient();
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, enrollment_opens_at, enrollment_closes_at")
+    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, course_id, start_date, enrollment_opens_at, enrollment_closes_at")
     .eq("slug", slug)
     .maybeSingle();
   if (!event) {
@@ -45,6 +46,8 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     price: number | string | null;
     misc_fee: number | string | null;
     price_tiers: PriceTier[] | null;
+    course_id: string | null;
+    start_date: string | null;
     enrollment_opens_at: string | null;
     enrollment_closes_at: string | null;
   };
@@ -69,15 +72,9 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "already_enrolled" }, { status: 409 });
   }
 
-  // Resolve the price tier from the participant's record (programme_tier,
-  // else new/returning). Falls back to the single event.price.
-  const { data: pricing } = await service
-    .from("participants")
-    .select("is_old_student, programme_expires_at, programmes(slug)")
-    .eq("id", participant.id)
-    .maybeSingle();
-  const tier = resolvePriceTier(ev, pricingParticipantFromRow(pricing));
-  const amountDue = amountDueFor(ev, tier);
+  // Price via the one shared rule (src/lib/pricing/resolve-server.ts).
+  const pricing = await resolveEnrollmentPrice(ev, participant.id, service);
+  const amountDue = pricing.amount_due;
 
   const status = ev.requires_approval ? "pending_approval" : "approved";
   const { data: enrollment, error: insErr } = await service
@@ -87,8 +84,9 @@ export async function POST(_req: Request, { params }: RouteCtx) {
       event_id: ev.id,
       status,
       payment_status: "none",
-      price_tier_key: tier?.tier_key ?? null,
+      price_tier_key: pricing.price_tier_key,
       amount_due: amountDue,
+      price_basis: pricing.price_basis,
     })
     .select("id")
     .single();

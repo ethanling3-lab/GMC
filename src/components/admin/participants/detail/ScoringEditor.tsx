@@ -10,6 +10,7 @@ import type {
   UpgradePotential,
 } from "@/lib/grouping/types";
 import { validityLabel } from "@/lib/programmes/types";
+import { sgDay, validUntilDay } from "@/lib/pricing/tiers";
 import { CardShell } from "./CardShell";
 import { ScoreBar } from "./ScoreBar";
 import { LabelRow, NumberInput, Toggle } from "./FormControls";
@@ -85,9 +86,11 @@ function validityStatus(
 ): { text: string; tone: "ok" | "warn" | "muted" } {
   if (validityMonths == null) return { text: "No expiry · 永久有效", tone: "muted" };
   if (!expiresAt) return { text: "Anchors on first payment · 付款后生效", tone: "warn" };
-  const expired = new Date(expiresAt).getTime() <= Date.now();
+  // Valid through its last day (SGT), same rule as pricing.
+  const until = validUntilDay(expiresAt);
+  const expired = until != null && until < sgDay();
   return expired
-    ? { text: `Expired ${fmtDate(expiresAt)} · 已过期（按新/老学员计价）`, tone: "warn" }
+    ? { text: `Expired ${fmtDate(expiresAt)} · 已过期 → 经典永流传`, tone: "warn" }
     : { text: `Valid until ${fmtDate(expiresAt)} · 有效至`, tone: "ok" };
 }
 
@@ -121,10 +124,13 @@ export function ScoringEditor({
   participantId,
   initial,
   programmes,
+  priceCategory,
 }: {
   participantId: string;
   initial: ScoringData;
   programmes: ProgrammeOption[];
+  /** How pricing sees them today, e.g. "经典永流传 — 荣贵 expired 30 Jun 2027". */
+  priceCategory?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ScoringData>(initial);
@@ -398,6 +404,15 @@ export function ScoringEditor({
                 </>
               ) : null}
             </div>
+            {priceCategory ? (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
+                  Price category
+                  <span className="ml-1.5 text-[var(--ink-faint)]/70 normal-case tracking-[0.14em]">价格类别</span>
+                </span>
+                <span className="text-[14px] text-[var(--ink)]">{priceCategory}</span>
+              </div>
+            ) : null}
             <div className="flex flex-col gap-1.5">
               <span className="text-[10px] tracking-[0.2em] uppercase text-[var(--ink-faint)]">
                 Upgrade potential

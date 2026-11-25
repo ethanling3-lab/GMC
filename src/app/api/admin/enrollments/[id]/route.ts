@@ -20,8 +20,11 @@ import { createPaymentAccessToken } from "@/lib/tokens";
 import {
   enrollmentAmountDue,
   findTierByKey,
+  pricingDay,
+  type PriceBasis,
   type PriceTier,
 } from "@/lib/pricing/tiers";
+import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { writeAuditLog, type AuditAction } from "@/lib/audit";
 import { participantEmailLocale } from "@/lib/i18n";
 import { ensureRegionId } from "@/lib/region-id";
@@ -48,7 +51,13 @@ const PatchBody = z
     amount_paid: z.number().min(0).max(1_000_000).optional(),
     // Admin override of the applied price tier; recomputes amount_due.
     // null clears the tier (falls back to the single event price).
+    // Needs price_reason (audited).
     price_tier_key: z.string().trim().min(1).max(64).nullable().optional(),
+    // Re-run the price rules for this enrollment (Price check fix).
+    reprice: z.literal(true).optional(),
+    // With price_tier_key: use that tier's 复训 (repeat) price.
+    price_repeat: z.boolean().optional(),
+    price_reason: z.string().trim().min(3).max(300).optional(),
     payment_method: z
       .enum(["hitpay", "stripe", "bank_transfer", "tt"])
       .optional(),
@@ -75,6 +84,7 @@ const PatchBody = z
       b.action !== undefined
       || b.amount_paid !== undefined
       || b.price_tier_key !== undefined
+      || b.reprice !== undefined
       || b.pinned_group_no !== undefined
       || b.serving_as_zu_zhang !== undefined
       || b.zu_zhang_tier_for_event !== undefined
@@ -120,7 +130,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
   const { data: row, error: loadErr } = await service
     .from("enrollments")
     .select(
-      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, price_tier_key, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, region, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price, price_tiers)",
+      "id, event_id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, price_tier_key, confirmed_at, participant:participants(id, region_id, name_en, name_cn, email, phone, region, language_fluency), event:events(id, slug, title_en, title_cn, start_date, end_date, currency, price, misc_fee, price_tiers, course_id)",
     )
     .eq("id", enrollmentId)
     .maybeSingle();
@@ -157,30 +167,69 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     });
   }
 
-  // Tier-override edit path — admin changes the applied price tier, which
-  // recomputes amount_due. No state transition, no notifications.
-  if (body.action === undefined && body.price_tier_key !== undefined) {
-    const ev = (row as unknown as { event: EventShape | null }).event;
-    let amountDue: number | null;
-    if (body.price_tier_key === null) {
-      amountDue =
-        ev?.price != null && Number.isFinite(Number(ev.price))
-          ? Number(ev.price)
-          : null;
-    } else {
-      const tier = findTierByKey(ev ?? {}, body.price_tier_key);
-      if (!tier) {
-        return NextResponse.json({ error: "tier_not_found" }, { status: 400 });
-      }
-      amountDue = Number(tier.amount);
+  // Price edit paths — no state transition, no notifications. Both need a
+  // reason and are audited, and both record a price_basis.
+  //  • price_tier_key: staff pick a tier (or
+  //    null = single price). Amount = 会务费 + that tier's course fee.
+  //  • reprice: re-run the shared rules (the Price check "apply" button).
+  if (body.action === undefined && (body.price_tier_key !== undefined || body.reprice)) {
+    if (!body.price_reason) {
+      return NextResponse.json(
+        { error: "reason_required", detail: "Say why the price is being changed." },
+        { status: 400 },
+      );
     }
+    const ev = (row as unknown as { event: EventShape | null }).event;
+    if (!ev) return NextResponse.json({ error: "event_not_found" }, { status: 404 });
+    const misc = Number(ev.misc_fee ?? 0) || 0;
+    let nextKey: string | null;
+    let amountDue: number | null;
+    let basis: PriceBasis;
+    if (body.reprice) {
+      const r = await resolveEnrollmentPrice(ev, row.participant_id as string, service);
+      nextKey = r.price_tier_key;
+      amountDue = r.amount_due;
+      basis = r.price_basis;
+    } else {
+      nextKey = body.price_tier_key ?? null;
+      let courseFee: number | null;
+      if (nextKey === null) {
+        courseFee = ev.price != null && Number.isFinite(Number(ev.price)) ? Number(ev.price) : null;
+      } else {
+        const tier = findTierByKey(ev, nextKey);
+        if (!tier) {
+          return NextResponse.json({ error: "tier_not_found" }, { status: 400 });
+        }
+        if (body.price_repeat && tier.repeat_amount == null) {
+          return NextResponse.json({ error: "no_repeat_price", detail: "That tier has no 复训 price." }, { status: 400 });
+        }
+        courseFee = body.price_repeat ? Number(tier.repeat_amount) : Number(tier.amount);
+      }
+      // 会务费 + course fee, matching resolvePrice (was course fee only).
+      amountDue = courseFee == null ? null : misc + courseFee;
+      basis = {
+        v: 1,
+        rule: "override",
+        category: "default",
+        programme_slug: null,
+        valid_until: null,
+        on_date: pricingDay(ev),
+        course_id: ev.course_id ?? null,
+        tier_key: nextKey,
+        repeat: !!body.price_repeat,
+        misc_fee: misc,
+        course_fee: courseFee,
+        amount: amountDue,
+      };
+    }
+    basis = { ...basis, override: { by: admin.id, reason: body.price_reason, at: new Date().toISOString() } };
     const beforeRow = row as {
       price_tier_key?: string | null;
       amount_due?: number | string | null;
     };
     const { error: updErr } = await service
       .from("enrollments")
-      .update({ price_tier_key: body.price_tier_key, amount_due: amountDue })
+      .update({ price_tier_key: nextKey, amount_due: amountDue, price_basis: basis })
       .eq("id", enrollmentId);
     if (updErr) {
       return NextResponse.json({ error: updErr.message }, { status: 500 });
@@ -194,13 +243,18 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         price_tier_key: beforeRow.price_tier_key ?? null,
         amount_due: beforeRow.amount_due ?? null,
       },
-      after: { price_tier_key: body.price_tier_key, amount_due: amountDue },
-      metadata: { event_id: row.event_id, via: "tier_edit" },
+      after: { price_tier_key: nextKey, amount_due: amountDue },
+      metadata: {
+        event_id: row.event_id,
+        via: body.reprice ? "reprice" : "tier_edit",
+        reason: body.price_reason,
+        rule: basis.rule,
+      },
     });
     return NextResponse.json({
       ok: true,
       id: enrollmentId,
-      price_tier_key: body.price_tier_key,
+      price_tier_key: nextKey,
       amount_due: amountDue,
     });
   }
@@ -499,5 +553,7 @@ type EventShape = {
   end_date: string | null;
   currency: string | null;
   price: number | string | null;
+  misc_fee?: number | string | null;
   price_tiers?: PriceTier[] | null;
+  course_id?: string | null;
 };

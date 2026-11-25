@@ -33,15 +33,13 @@ export type EventCreate = z.infer<typeof EventCreateSchema>;
 // Tiered pricing (migration 042). One event can carry several price
 // tiers; `applies_to` maps each to participant categories so checkout
 // auto-resolves the right amount. See lib/pricing/tiers.ts.
-const PRICE_TIER_CATEGORIES = [
-  "abundance",
-  "glorious_family",
-  "elite_cultural_heritage",
-  "glorious_cultural_heritage",
-  "returning_student",
-  "new_student",
-  "default",
-] as const;
+// A category is a base one (classic_member / returning_student /
+// new_student / default) or any programme slug — programmes are rows in
+// the Programmes table, so a new one must be priceable without a code
+// change. Same shape as programmes_slug_shape (migration 043).
+const PriceTierCategory = z.string().regex(/^[a-z0-9][a-z0-9_]{0,49}$/, {
+  message: "Unknown price category",
+});
 
 export const PriceTierSchema = z.object({
   key: z
@@ -55,7 +53,9 @@ export const PriceTierSchema = z.object({
   label_en: z.string().trim().max(120),
   label_cn: z.string().trim().max(120),
   amount: z.number().min(0).max(1_000_000),
-  applies_to: z.array(z.enum(PRICE_TIER_CATEGORIES)).max(7),
+  // 复训 (repeat) course fee — optional.
+  repeat_amount: z.number().min(0).max(1_000_000).nullable().optional(),
+  applies_to: z.array(PriceTierCategory).max(20),
   custom_label: z.string().trim().max(120).optional(),
 });
 

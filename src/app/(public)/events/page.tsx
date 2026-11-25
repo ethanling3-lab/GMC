@@ -17,10 +17,15 @@ async function loadOpenEvents(locale: "zh" | "en") {
       .select(
         "slug, title_cn, title_en, heading_cn, heading_en, poster_url, city, country, start_date, end_date, arrival_day, departure_day, type, mode, status, requires_approval, enrollment_opens_at, enrollment_closes_at",
       )
-      .eq("status", "open")
+      // Closed = staff closed registration; still listed (marked closed)
+      // until the event has ended.
+      .in("status", ["open", "closed"])
       .order("start_date", { ascending: true });
     if (error || !data) return [];
-    return data.map((e) => ({
+    const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    return data
+      .filter((e) => e.status === "open" || (e.end_date ?? e.start_date ?? today) >= today)
+      .map((e) => ({
       ...e,
       title: (locale === "zh" ? e.title_cn : e.title_en) ?? e.title_en ?? e.title_cn ?? e.slug,
       heading: (locale === "zh" ? e.heading_cn : e.heading_en) ?? null,
@@ -260,8 +265,8 @@ export default async function EventsPage() {
                   ) : null}
 
                   <div className="mt-auto pt-6">
-                    {registrationBlock(e) ? (
-                      <RegistrationUnavailable block={registrationBlock(e)!} locale={locale} className="h-11" />
+                    {e.status === "closed" || registrationBlock(e) ? (
+                      <RegistrationUnavailable block={e.status === "closed" ? "closed" : registrationBlock(e)!} locale={locale} className="h-11" />
                     ) : (
                     <Link
                       href={`/register?event=${encodeURIComponent(e.slug)}`}

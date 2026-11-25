@@ -29,8 +29,16 @@ import {
 
 export type AttendedCourse = {
   course_name: string;
+  // Linked course (migration 079). Unlinked = typed "Other", which is
+  // shown but does not count for 复训 pricing.
+  course_id?: string | null;
   date?: string | null;
 };
+
+/** A course on the programmes' course lists, for the picker. */
+export type CourseChoice = { id: string; name_cn: string; name_en: string | null };
+
+const OTHER = "__other__";
 
 export type ProfileData = {
   // Personal info (新 fields from migration 032)
@@ -62,10 +70,13 @@ const INPUT_BASE =
 export function ProfileEditor({
   participantId,
   initial,
+  courses = [],
 }: {
   participantId: string;
   initial: ProfileData;
+  courses?: CourseChoice[];
 }) {
+  const courseById = new Map(courses.map((c) => [c.id, c]));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ProfileData>(initial);
   const { saving, error, setError, patch } = useParticipantPatch(participantId);
@@ -79,10 +90,16 @@ export function ProfileEditor({
   async function save() {
     const trim = (s: string | null) => s?.trim() || null;
     const cleaned = draft.attended_courses
-      .map((c) => ({
-        course_name: c.course_name.trim(),
-        date: c.date?.trim() || null,
-      }))
+      .map((c) => {
+        // A linked entry always carries the course's current Chinese name.
+        const linked = c.course_id ? courseById.get(c.course_id) : undefined;
+        // Unlinked ("Other") entries omit course_id entirely.
+        return {
+          course_name: (linked?.name_cn ?? c.course_name).trim(),
+          ...(linked ? { course_id: linked.id } : {}),
+          date: c.date?.trim() || null,
+        };
+      })
       .filter((c) => c.course_name !== "");
 
     const ok = await patch({
@@ -124,7 +141,7 @@ export function ProfileEditor({
       ...draft,
       attended_courses: [
         ...draft.attended_courses,
-        { course_name: "", date: null },
+        { course_name: "", course_id: null, date: null },
       ],
     });
   }
@@ -291,17 +308,42 @@ export function ProfileEditor({
               </p>
             ) : (
               <div className="flex flex-col gap-2">
-                {draft.attended_courses.map((c, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={c.course_name}
-                      onChange={(e) =>
-                        updateCourse(i, { course_name: e.target.value })
-                      }
-                      placeholder="丰盛系列 · Abundance Series"
-                      className={`${INPUT_BASE} flex-1 min-w-0`}
-                    />
+                {draft.attended_courses.map((c, i) => {
+                  // course_id: string = linked · null = nothing picked yet ·
+                  // undefined = "Other" (typed name, not on the list).
+                  const isOther = c.course_id === undefined;
+                  const selectValue = c.course_id ? c.course_id : isOther ? OTHER : "";
+                  return (
+                  <div key={i} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={selectValue}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === OTHER) updateCourse(i, { course_id: undefined, course_name: "" });
+                        else if (v === "") updateCourse(i, { course_id: null, course_name: "" });
+                        else updateCourse(i, { course_id: v, course_name: courseById.get(v)?.name_cn ?? "" });
+                      }}
+                      className={`${INPUT_BASE} flex-1 min-w-[200px]`}
+                    >
+                      <option value="">— Pick a course</option>
+                      {courses.map((co) => (
+                        <option key={co.id} value={co.id}>
+                          {co.name_cn}
+                          {co.name_en ? ` · ${co.name_en}` : ""}
+                        </option>
+                      ))}
+                      <option value={OTHER}>Other — not on the course list…</option>
+                    </select>
+                    {isOther ? (
+                      <input
+                        type="text"
+                        value={c.course_name}
+                        onChange={(e) => updateCourse(i, { course_id: undefined, course_name: e.target.value })}
+                        placeholder="Course name"
+                        className={`${INPUT_BASE} flex-1 min-w-[160px]`}
+                      />
+                    ) : null}
                     <input
                       type="text"
                       value={c.date ?? ""}
@@ -321,7 +363,14 @@ export function ProfileEditor({
                       <span aria-hidden="true">✕</span>
                     </button>
                   </div>
-                ))}
+                  {!c.course_id && c.course_name.trim() !== "" ? (
+                    <span className="text-[11.5px] text-[#B45309]">
+                      Not on the course list — kept as a note, but it won&apos;t count for 复训 pricing.
+                    </span>
+                  ) : null}
+                  </div>
+                  );
+                })}
               </div>
             )}
             <button
@@ -452,6 +501,14 @@ export function ProfileEditor({
                   </span>
                   <span className="flex-1 text-[16px] text-[var(--ink)] font-display tracking-[-0.005em]">
                     {c.course_name}
+                    {!c.course_id ? (
+                      <span
+                        className="ml-2 font-body text-[11px] text-[#B45309]"
+                        title="Typed in, not linked to the course list — doesn't count for 复训 pricing. Edit to pick the course."
+                      >
+                        not linked
+                      </span>
+                    ) : null}
                   </span>
                   {c.date ? (
                     <span className="text-[12px] font-mono tabular-nums text-[var(--ink-faint)]">
