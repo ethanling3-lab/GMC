@@ -51,6 +51,9 @@ export type EventFull = {
   payment_methods: string[];
   target_audience_filter: Record<string, unknown>;
   status: EventStatus;
+  // Migration 075 — the course this event is a session of + "dates TBC".
+  course_id: string | null;
+  dates_tentative: boolean;
   requires_approval: boolean;
   form_schema: Record<string, unknown>;
   bank_details: { en?: string; zh?: string } | null;
@@ -97,7 +100,7 @@ const TYPES: EventType[] = [
   "delivery_class",
   "other",
 ];
-const ALL_STATUSES: EventStatus[] = ["draft", "open", "closed", "archived"];
+const ALL_STATUSES: EventStatus[] = ["draft", "planned", "open", "closed", "archived"];
 
 const STATUS_TONE: Record<
   EventStatus,
@@ -108,6 +111,13 @@ const STATUS_TONE: Record<
     bg: "bg-[var(--paper)]",
     ring: "border-[var(--paper-shadow)]",
     text: "text-[var(--ink-mute)]",
+  },
+  // On the calendar, not open for registration yet (migration 075).
+  planned: {
+    dot: "bg-[var(--cinnabar)]/45",
+    bg: "bg-[var(--gold-soft)]",
+    ring: "border-[var(--gold)]",
+    text: "text-[var(--cinnabar-deep)]",
   },
   open: {
     dot: "bg-[var(--jade)]",
@@ -154,6 +164,8 @@ type Props = {
   // Active programmes (slug + bilingual name) for the price-tier "applies to"
   // picker. Loaded server-side so newly-created programmes are priceable.
   programmes: { slug: string; name_en: string; name_cn: string }[];
+  // Course catalogue (migration 075) for the "Course" picker.
+  courses: { id: string; name_en: string; name_cn: string; colour: string; active: boolean }[];
 };
 
 type PriceCategoryOption = { key: string; cn: string; en: string };
@@ -171,6 +183,7 @@ export function EventEditor({
   canDelete,
   enrollmentCount,
   programmes,
+  courses,
 }: Props) {
   const router = useRouter();
 
@@ -280,6 +293,8 @@ export function EventEditor({
         country: draft.country,
         start_date: draft.start_date,
         end_date: draft.end_date,
+        course_id: draft.course_id,
+        dates_tentative: draft.dates_tentative,
         arrival_day: draft.arrival_day,
         departure_day: draft.departure_day,
         enrollment_opens_at: draft.enrollment_opens_at,
@@ -725,7 +740,18 @@ export function EventEditor({
           <Field label="Country" labelZh="国家">
             <input type="text" value={draft.country ?? ""} onChange={(e) => update("country", e.target.value || null)} disabled={!canEdit} className={inputCls()} />
           </Field>
-          <div />
+          <Field label="Course" labelZh="所属课程" hint="Which course this is a session of. Colours it on the calendar.">
+            <select value={draft.course_id ?? ""} onChange={(e) => update("course_id", e.target.value || null)} disabled={!canEdit} className={inputCls()}>
+              <option value="">— No course</option>
+              {courses
+                .filter((c) => c.active || c.id === draft.course_id)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name_cn} · {c.name_en}
+                  </option>
+                ))}
+            </select>
+          </Field>
 
           <Field label="Start date" labelZh="开始日期">
             <input type="date" value={draft.start_date ?? ""} onChange={(e) => update("start_date", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />
@@ -733,6 +759,17 @@ export function EventEditor({
           <Field label="End date" labelZh="结束日期">
             <input type="date" value={draft.end_date ?? ""} onChange={(e) => update("end_date", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />
           </Field>
+          <label className="md:col-span-2 inline-flex items-center gap-2.5 text-[13px] text-[var(--ink-soft)] select-none">
+            <input
+              type="checkbox"
+              checked={draft.dates_tentative}
+              onChange={(e) => update("dates_tentative", e.target.checked)}
+              disabled={!canEdit}
+              className="h-4 w-4 accent-[var(--cinnabar)]"
+            />
+            Dates TBC · 日期待定
+            <span className="text-[var(--ink-faint)]">(shows &ldquo;TBC&rdquo; on the calendar)</span>
+          </label>
 
           <Field label="Arrival day" labelZh="抵场日" hint="Used by the airport transfer list to group arrivals within the 30-min consolidation window.">
             <input type="date" value={draft.arrival_day ?? ""} onChange={(e) => update("arrival_day", e.target.value || null)} disabled={!canEdit} className={inputCls("font-mono text-[12.5px]")} />

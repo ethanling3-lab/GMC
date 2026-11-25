@@ -20,6 +20,8 @@ type IconName =
   | "inbox"
   | "finance"
   | "programmes"
+  | "calendar"
+  | "courses"
   | "reports"
   | "staff"
   | "transfer";
@@ -31,8 +33,10 @@ const PRIMARY: NavItem[] = [
   { href: "/admin/ai", label: "AI", labelZh: "AI 助手", icon: "ai" },
   { href: "/admin/participants", label: "Participants", labelZh: "学员", icon: "participants" },
   { href: "/admin/events", label: "Events", labelZh: "活动", icon: "events" },
+  { href: "/admin/calendar", label: "Calendar", labelZh: "年历", icon: "calendar" },
   { href: "/admin/group-reports", label: "Group reports", labelZh: "小组报告", icon: "reports" },
   { href: "/admin/programmes", label: "Programmes", labelZh: "课程", icon: "programmes" },
+  { href: "/admin/courses", label: "Courses", labelZh: "课程目录", icon: "courses" },
   { href: "/admin/finance", label: "Finance", labelZh: "财务", icon: "finance" },
   { href: "/admin/staff", label: "Staff", labelZh: "员工", icon: "staff" },
 ];
@@ -116,6 +120,21 @@ function NavIcon({ name }: { name: IconName }) {
           <path d="M4 3.5h8M4 12.5h8" />
           <path d="M5 3.5v9M11 3.5v9" />
           <path d="M8 5.5v5M6.5 7h3M6.5 9h3" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg {...common}>
+          <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" />
+          <path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" />
+          <path d="M5 9h1.5M7.5 9H9M10 9h1M5 11h1.5M7.5 11H9" />
+        </svg>
+      );
+    case "courses":
+      return (
+        <svg {...common}>
+          <path d="M3 3.5h4.2c.5 0 .8.3.8.8v8.4c0-.6-.4-1-1-1H3z" />
+          <path d="M13 3.5H8.8c-.5 0-.8.3-.8.8v8.4c0-.6.4-1 1-1h4z" />
         </svg>
       );
     case "programmes":

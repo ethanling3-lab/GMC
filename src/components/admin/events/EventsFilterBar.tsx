@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 const STATUSES = [
   { code: "", label: "Any status" },
   { code: "draft", label: "Draft" },
+  { code: "planned", label: "Planned · 已排期" },
   { code: "open", label: "Open" },
   { code: "closed", label: "Closed" },
 ];

@@ -11,6 +11,9 @@ const READ: readonly Method[] = ["GET"];
 const WRITE: readonly Method[] = ["POST"];
 
 const CS_PAGES: readonly RegExp[] = [
+  // Year calendar (Phase 1) — read-only for limited roles; writes are
+  // Super Admin APIs, which are never listed here.
+  /^\/admin\/calendar$/,
   /^\/admin\/participants$/,
   new RegExp(`^/admin/participants/(?!new$|import$)${ID}$`),
   /^\/admin\/events$/,
@@ -18,6 +21,9 @@ const CS_PAGES: readonly RegExp[] = [
 ];
 
 const FINANCE_PAGES: readonly RegExp[] = [
+  // Year calendar (Phase 1) — read-only for limited roles; writes are
+  // Super Admin APIs, which are never listed here.
+  /^\/admin\/calendar$/,
   /^\/admin\/finance$/,
   new RegExp(`^/admin/finance/imports/${ID}$`),
   /^\/admin\/events$/,

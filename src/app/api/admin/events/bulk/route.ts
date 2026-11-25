@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 26;
 
-const EventStatusEnum = z.enum(["draft", "open", "closed", "archived"]);
+const EventStatusEnum = z.enum(["draft", "planned", "open", "closed", "archived"]);
 
 const BulkBody = z.discriminatedUnion("action", [
   z.object({

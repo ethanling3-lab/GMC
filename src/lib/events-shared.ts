@@ -1,7 +1,7 @@
 // Types + labels used by both server (page/query) and client (editor/filter)
 // components. No `server-only` here — safe to import from client code.
 
-export type EventStatus = "draft" | "open" | "closed" | "archived";
+export type EventStatus = "draft" | "planned" | "open" | "closed" | "archived";
 export type EventType =
   | "retreat"
   | "course"
@@ -12,6 +12,8 @@ export type EventMode = "online" | "offline";
 
 export const STATUS_LABEL: Record<EventStatus, { en: string; zh: string }> = {
   draft: { en: "Draft", zh: "草稿" },
+  // Migration 075 — on the calendar, not open for registration yet.
+  planned: { en: "Planned", zh: "已排期" },
   open: { en: "Open", zh: "开放报名" },
   closed: { en: "Closed", zh: "已截止" },
   archived: { en: "Archived", zh: "归档" },

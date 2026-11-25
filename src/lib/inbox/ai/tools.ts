@@ -95,8 +95,9 @@ async function handleLookupEvent(input: LookupEventInput): Promise<ToolHandlerRe
       }),
     };
   }
-  // Draft events aren't public yet — don't leak details.
-  if (data.status === "draft") {
+  // Only open events are public — drafts and planned sessions (dates may
+  // still change) must not leak details.
+  if (data.status === "draft" || data.status === "planned") {
     return {
       content: JSON.stringify({
         error: "event_not_public",

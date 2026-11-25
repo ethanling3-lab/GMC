@@ -102,7 +102,10 @@ export const EventUpdateSchema = z
     price_tiers: z.array(PriceTierSchema).max(12).optional(),
 
     target_audience_filter: z.record(z.string(), z.unknown()).optional(),
-    status: z.enum(["draft", "open", "closed", "archived"]).optional(),
+    status: z.enum(["draft", "planned", "open", "closed", "archived"]).optional(),
+    // Migration 075 — course catalogue link + "dates TBC" for planned sessions.
+    course_id: z.string().uuid().nullable().optional(),
+    dates_tentative: z.boolean().optional(),
     requires_approval: z.boolean().optional(),
 
     // Transfer-list inputs (migration 018). Short hotel name used by the

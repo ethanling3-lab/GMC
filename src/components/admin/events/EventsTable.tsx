@@ -47,6 +47,13 @@ const STATUS_TONE: Record<
     ring: "border-[var(--paper-shadow)]",
     text: "text-[var(--ink-mute)]",
   },
+  // On the calendar, not open for registration yet (migration 075).
+  planned: {
+    dot: "bg-[var(--cinnabar)]/45",
+    bg: "bg-[var(--gold-soft)]",
+    ring: "border-[var(--gold)]",
+    text: "text-[var(--cinnabar-deep)]",
+  },
   open: {
     dot: "bg-[var(--jade)]",
     bg: "bg-[var(--jade-wash)]",
@@ -67,7 +74,7 @@ const STATUS_TONE: Record<
   },
 };
 
-const ALL_STATUSES: EventStatus[] = ["draft", "open", "closed", "archived"];
+const ALL_STATUSES: EventStatus[] = ["draft", "planned", "open", "closed", "archived"];
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
