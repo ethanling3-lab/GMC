@@ -5,6 +5,7 @@ import { requireParticipant } from "@/lib/participant-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
 import { VideoPlayer } from "@/components/portal/VideoPlayer";
+import { canWatch } from "@/lib/recordings/access";
 
 export const metadata: Metadata = { title: "Watch · 观看 — GMC" };
 export const dynamic = "force-dynamic";
@@ -18,15 +19,9 @@ export default async function MeRecordingPlaybackPage({ params }: PageProps) {
   const { id: recordingId } = await params;
 
   const service = createSupabaseServiceClient();
-  // Gate: must have a live grant. 404 (not 403) on missing access.
-  const { data: access } = await service
-    .from("event_recording_access")
-    .select("id")
-    .eq("recording_id", recordingId)
-    .eq("participant_id", participant.id)
-    .is("revoked_at", null)
-    .maybeSingle();
-  if (!access) notFound();
+  // Gate: member access or a hand-added grant (Phase 4). 404, not 403,
+  // so a missing grant doesn't reveal the recording exists.
+  if (!(await canWatch(participant.id, recordingId))) notFound();
 
   const { data: recordingRaw } = await service
     .from("event_recordings")

@@ -15,13 +15,15 @@ export async function DELETE(_req: Request, { params }: RouteCtx) {
   if (admin.role !== "super_admin" && admin.role !== "regional_lead") {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const { grantId } = await params;
+  const { recordingId, grantId } = await params;
 
   const service = createSupabaseServiceClient();
   const { error } = await service
     .from("event_recording_access")
     .update({ revoked_at: new Date().toISOString() })
-    .eq("id", grantId);
+    .eq("id", grantId)
+    .eq("recording_id", recordingId)
+    .is("revoked_at", null);
   if (error) {
     return NextResponse.json({ error: "revoke_failed", detail: error.message }, { status: 500 });
   }

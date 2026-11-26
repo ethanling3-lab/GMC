@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireParticipant } from "@/lib/participant-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
+import { canWatch } from "@/lib/recordings/access";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ type RouteCtx = { params: Promise<{ id: string }> };
 // the recording's storage object. Used by the player to refresh the
 // URL before the 10-minute TTL expires.
 //
-// Gates on event_recording_access: caller must have a live grant. 404
+// Gates on canWatch (member access or a hand-added grant). 404
 // (not 403) on missing access — don't leak existence.
 
 const SIGNED_URL_TTL_SECONDS = 600;
@@ -21,14 +22,9 @@ export async function GET(_req: Request, { params }: RouteCtx) {
   const { id: recordingId } = await params;
 
   const service = createSupabaseServiceClient();
-  const { data: access } = await service
-    .from("event_recording_access")
-    .select("id")
-    .eq("recording_id", recordingId)
-    .eq("participant_id", participant.id)
-    .is("revoked_at", null)
-    .maybeSingle();
-  if (!access) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  if (!(await canWatch(participant.id, recordingId))) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
 
   const { data: recording } = await service
     .from("event_recordings")

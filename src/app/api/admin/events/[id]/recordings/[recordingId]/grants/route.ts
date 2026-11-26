@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { writeAuditLog } from "@/lib/audit";
+import { grantByHand } from "@/lib/recordings/access";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,17 +12,19 @@ type RouteCtx = { params: Promise<{ id: string; recordingId: string }> };
 
 const grantSchema = z.object({
   participant_ids: z.array(z.string().uuid()).min(1).max(2000),
+  /** Last day they can watch (Singapore date). Omit / null = no end. */
+  expires_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  note: z.string().trim().max(300).nullable().optional(),
 });
 
-// POST /api/admin/events/[id]/recordings/[recordingId]/grants — grant
-// access to a list of participants. Upserts on (recording_id, participant_id)
-// with revoked_at=null so re-granting reuses the same row.
+// POST — add people by hand (Phase 4: anyone who isn't covered by the
+// automatic member access). Re-adding someone updates their last day.
 export async function POST(req: Request, { params }: RouteCtx) {
   const admin = await requireAdmin();
   if (admin.role !== "super_admin" && admin.role !== "regional_lead") {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const { recordingId } = await params;
+  const { id: eventId, recordingId } = await params;
 
   const parsed = grantSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -29,40 +32,24 @@ export async function POST(req: Request, { params }: RouteCtx) {
   }
 
   const service = createSupabaseServiceClient();
-  const rows = parsed.data.participant_ids.map((pid) => ({
-    recording_id: recordingId,
-    participant_id: pid,
-    granted_by: admin.id,
-    granted_at: new Date().toISOString(),
-    revoked_at: null,
-  }));
+  const { data: rec } = await service
+    .from("event_recordings")
+    .select("id")
+    .eq("id", recordingId)
+    .eq("event_id", eventId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!rec) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  // Upsert by the live partial unique index. We need to clear any prior
-  // revoked rows for the same (recording, participant) pair to make room
-  // for the new live grant — Supabase upsert with a partial-unique
-  // constraint can be fiddly, so we do a clean insert with conflict
-  // ignore + a separate revive-revoked pass.
-  // For simplicity at v1: insert with ignoreDuplicates, then bump any
-  // already-existing rows' revoked_at to null.
-  const { error: insErr } = await service
-    .from("event_recording_access")
-    .upsert(rows, {
-      onConflict: "recording_id,participant_id",
-      ignoreDuplicates: true,
+  let result: { added: number; updated: number };
+  try {
+    result = await grantByHand(service, recordingId, parsed.data.participant_ids, {
+      adminId: admin.id,
+      expiresOn: parsed.data.expires_on ?? null,
+      note: parsed.data.note || null,
     });
-  if (insErr) {
-    return NextResponse.json({ error: "grant_failed", detail: insErr.message }, { status: 500 });
-  }
-
-  // Revive any rows we may have collided with (already-revoked grants).
-  const { error: revErr } = await service
-    .from("event_recording_access")
-    .update({ revoked_at: null, granted_by: admin.id, granted_at: new Date().toISOString() })
-    .eq("recording_id", recordingId)
-    .in("participant_id", parsed.data.participant_ids)
-    .not("revoked_at", "is", null);
-  if (revErr) {
-    console.warn(`[grants] revive failed: ${revErr.message}`);
+  } catch (e) {
+    return NextResponse.json({ error: "grant_failed", detail: e instanceof Error ? e.message : "unknown" }, { status: 500 });
   }
 
   await writeAuditLog({
@@ -70,10 +57,14 @@ export async function POST(req: Request, { params }: RouteCtx) {
     action: "recording.access_granted",
     entity: "event_recordings",
     entity_id: recordingId,
-    metadata: { participant_ids: parsed.data.participant_ids, count: parsed.data.participant_ids.length },
+    metadata: {
+      participant_ids: parsed.data.participant_ids,
+      expires_on: parsed.data.expires_on ?? null,
+      ...result,
+    },
   });
 
-  return NextResponse.json({ ok: true, count: parsed.data.participant_ids.length });
+  return NextResponse.json({ ok: true, ...result });
 }
 
 // GET — list current live grants for the recording.

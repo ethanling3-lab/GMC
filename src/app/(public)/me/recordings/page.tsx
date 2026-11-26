@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireParticipant } from "@/lib/participant-guard";
-import { loadSelfRecordings } from "@/lib/participant-self";
+import { loadWatchable, type Watchable } from "@/lib/recordings/access";
 
 export const metadata: Metadata = { title: "Recordings · 录像 — GMC" };
 export const dynamic = "force-dynamic";
@@ -13,9 +13,21 @@ function formatDuration(secs: number | null): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+const fmtDay = (d: string) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
+function Until({ r }: { r: Watchable }) {
+  if (!r.until) return null;
+  return (
+    <div className="mt-1 text-[12px] text-[var(--ink-soft)] tabular-nums">
+      Watch until {fmtDay(r.until)} · {r.via === "member" ? "配套有效期内可观看" : "可观看至该日"}
+    </div>
+  );
+}
+
 export default async function MeRecordingsPage() {
   const participant = await requireParticipant();
-  const recordings = await loadSelfRecordings(participant.id);
+  const recordings = await loadWatchable(participant.id);
 
   return (
     <div>
@@ -27,8 +39,9 @@ export default async function MeRecordingsPage() {
           Class recordings.
         </h1>
         <p className="mt-2 text-[13px] leading-[1.7] text-[var(--ink-soft)] max-w-[62ch]">
-          Recordings you&apos;ve been given access to. New recordings appear here
-          once an admin grants you access.
+          Replays of the classes you joined. With a valid programme, new
+          replays appear here by themselves until your programme ends ·
+          配套有效期内，已报名课程的回播会自动出现。
         </p>
       </div>
 
@@ -55,11 +68,12 @@ export default async function MeRecordingsPage() {
                     <div className="flex items-start justify-between gap-4 flex-wrap">
                       <div className="min-w-0 flex-1">
                         <div className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
-                          {r.event_title ?? "Event"}
+                          {r.event_title_cn ?? r.event_title_en ?? "Event"}
                         </div>
                         <div className="mt-1 font-display text-[18px] leading-[1.2] text-[var(--ink)]">
                           {title}
                         </div>
+                        <Until r={r} />
                       </div>
                       <div className="flex items-center gap-2 text-[11px] tracking-[0.12em] uppercase text-[var(--ink-mute)] tabular-nums">
                         <span>{formatDuration(r.duration_seconds)}</span>

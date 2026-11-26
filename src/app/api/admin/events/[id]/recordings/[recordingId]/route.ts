@@ -14,6 +14,8 @@ const patchSchema = z.object({
   title_cn: z.string().max(200).nullable().optional(),
   description_en: z.string().max(2000).nullable().optional(),
   description_cn: z.string().max(2000).nullable().optional(),
+  /** Members with a valid programme + approved/paid registration watch automatically. */
+  members_auto: z.boolean().optional(),
 });
 
 export async function PATCH(req: Request, { params }: RouteCtx) {
@@ -53,7 +55,7 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
     action: "recording.updated",
     entity: "event_recordings",
     entity_id: recordingId,
-    metadata: { fields: Object.keys(updates) },
+    metadata: { fields: Object.keys(updates), ...(updates.members_auto !== undefined ? { members_auto: updates.members_auto } : {}) },
   });
   return NextResponse.json({ ok: true });
 }

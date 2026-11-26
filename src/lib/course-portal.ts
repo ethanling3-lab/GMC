@@ -1,4 +1,5 @@
 import "server-only";
+import { loadWatchable } from "@/lib/recordings/access";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import type {
   CourseAssignmentKind,
@@ -93,22 +94,11 @@ export async function loadSelfCourses(participantId: string): Promise<CourseCard
     }
   }
 
-  // Recording grants this participant holds, bucketed by event.
+  // Replays they can watch (member access or added by hand), by event.
   const recordingCount = new Map<string, number>();
-  const { data: grants } = await service
-    .from("event_recording_access")
-    .select("recording:event_recordings(event_id, deleted_at)")
-    .eq("participant_id", participantId)
-    .is("revoked_at", null);
-  for (const g of (grants ?? []) as unknown as Array<{
-    recording: { event_id: string; deleted_at: string | null } | null;
-  }>) {
-    if (!g.recording || g.recording.deleted_at) continue;
-    if (!byEvent.has(g.recording.event_id)) continue;
-    recordingCount.set(
-      g.recording.event_id,
-      (recordingCount.get(g.recording.event_id) ?? 0) + 1,
-    );
+  for (const w of await loadWatchable(participantId)) {
+    if (!byEvent.has(w.event_id)) continue;
+    recordingCount.set(w.event_id, (recordingCount.get(w.event_id) ?? 0) + 1);
   }
 
   return eventIds.map((eventId) => {
@@ -244,31 +234,13 @@ export async function loadCourseDetail(
     mine: mineByAssignment.get(a.id) ?? null,
   }));
 
-  // Recordings for this event the participant has been granted.
-  const { data: grantRows } = await service
-    .from("event_recording_access")
-    .select(
-      "recording:event_recordings(id, event_id, title_en, title_cn, duration_seconds, deleted_at)",
-    )
-    .eq("participant_id", participantId)
-    .is("revoked_at", null);
-  const recordings = ((grantRows ?? []) as unknown as Array<{
-    recording: {
-      id: string;
-      event_id: string;
-      title_en: string | null;
-      title_cn: string | null;
-      duration_seconds: number | null;
-      deleted_at: string | null;
-    } | null;
-  }>)
-    .filter((g) => g.recording && !g.recording.deleted_at && g.recording.event_id === eventId)
-    .map((g) => ({
-      id: g.recording!.id,
-      title_en: g.recording!.title_en,
-      title_cn: g.recording!.title_cn,
-      duration_seconds: g.recording!.duration_seconds,
-    }));
+  // Replays of this event they can watch (Phase 4 rule).
+  const recordings = (await loadWatchable(participantId, { eventId })).map((w) => ({
+    id: w.id,
+    title_en: w.title_en,
+    title_cn: w.title_cn,
+    duration_seconds: w.duration_seconds,
+  }));
 
   return { event, assignments, recordings };
 }
