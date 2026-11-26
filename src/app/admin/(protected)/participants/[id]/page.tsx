@@ -21,6 +21,8 @@ import { describePriceCategory } from "@/lib/pricing/resolve-server";
 import { listCourses } from "@/lib/programmes/courses";
 import { seatsForParticipant } from "@/lib/seats/seats";
 import { RewardSeatsCard } from "@/components/admin/participants/detail/RewardSeatsCard";
+import { ChildrenCard } from "@/components/admin/participants/detail/ChildrenCard";
+import { childrenOf, guardiansOf } from "@/lib/participants/children";
 import { ZuZhangProfileEditor } from "@/components/admin/participants/detail/ZuZhangProfileEditor";
 import type {
   GrowthDimension,
@@ -89,6 +91,9 @@ type Participant = {
   forbidden_courses: string | null;
   cs_evaluation: string | null;
   is_old_student: boolean;
+  /** Parent-managed (migration 084). */
+  is_minor?: boolean;
+  auth_user_id?: string | null;
   energy_profile: "high" | "medium" | "quiet" | null;
   language_fluency: "en" | "cn" | "both" | null;
   listening_language: string | null;
@@ -389,6 +394,11 @@ export default async function ParticipantDetailPage({ params }: Props) {
           <div className="inline-flex items-center gap-2 text-[10px] tracking-[0.28em] uppercase text-[var(--cinnabar)]">
             <span className="w-5 h-px bg-current" />
             Participant · 学员
+            {p.is_minor ? (
+              <span className="ml-2 px-1.5 py-0.5 rounded-full border border-[var(--cinnabar)]/25 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)] tracking-[0.14em]">
+                Minor · 未成年
+              </span>
+            ) : null}
             {p.is_old_student ? (
               <span className="ml-2 px-1.5 py-0.5 rounded-full border border-[var(--cinnabar)]/25 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)] tracking-[0.14em]">
                 Old student · 老学员
@@ -511,6 +521,15 @@ export default async function ParticipantDetailPage({ params }: Props) {
               courses={(await listCourses()).map((c) => ({ id: c.id, name_cn: c.name_cn, name_en: c.name_en }))}
             />
           ) : null}
+
+          <ChildrenCard
+            participantId={p.id}
+            participantName={p.name_cn || p.name_en || "this person"}
+            childList={await childrenOf(p.id)}
+            parents={await guardiansOf(p.id)}
+            canEdit={isSuper}
+            self={{ isMinor: Boolean(p.is_minor), email: p.email ?? null, hasLogin: Boolean(p.auth_user_id) }}
+          />
 
           <RelationshipsEditor
             participantId={p.id}

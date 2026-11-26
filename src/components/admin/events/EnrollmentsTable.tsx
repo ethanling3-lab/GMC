@@ -118,6 +118,8 @@ type Props = {
   programmeNames?: Record<string, string>;
   /** 名额: usable seats per participant + seats used per enrollment. */
   seatInfo?: { usable: Record<string, Seat[]>; usedByEnrollment: Record<string, Seat> };
+  /** Child participant id → their parent (migration 084). */
+  childOf?: Record<string, { id: string; name: string }>;
   referrerById: Record<string, ReferrerRef>;
   latestNotificationByEnrollment?: Record<string, LatestNotification>;
 };
@@ -285,6 +287,7 @@ export function EnrollmentsTable({
   priceTiers = [],
   programmeNames = {},
   seatInfo = { usable: {}, usedByEnrollment: {} },
+  childOf = {},
   referrerById,
   latestNotificationByEnrollment = {},
 }: Props) {
@@ -1033,6 +1036,18 @@ export function EnrollmentsTable({
                                   );
                                 }}
                               />
+                            ) : null}
+                            {childOf[p.id] ? (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <a
+                                  href={`/admin/participants/${childOf[p.id].id}`}
+                                  className="!text-[var(--cinnabar-deep)] hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  child of {childOf[p.id].name}
+                                </a>
+                              </>
                             ) : null}
                             {p.email ? (
                               <>

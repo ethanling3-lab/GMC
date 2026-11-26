@@ -8,10 +8,12 @@ import {
   ParticipantsTable,
   type ParticipantRow,
 } from "@/components/admin/participants/ParticipantsTable";
+import { participantPriceCategory, BASE_CATEGORY_LABEL } from "@/lib/pricing/tiers";
 import {
   applyParticipantFilters,
   applyRoleScope,
   DEFAULT_PAGE_SIZE,
+  loadStatusContext,
   parseFilters,
   parsePage,
 } from "@/lib/participants-query";
@@ -36,16 +38,34 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
   const supabase = await createSupabaseServerClient();
 
   const baseSelect =
-    "id, region_id, name_cn, name_en, region, email, identity_confidence, financial_score, influence_score, student_qualification, motivations, archived_at, created_at";
+    "id, region_id, name_cn, name_en, region, email, identity_confidence, financial_score, influence_score, student_qualification, motivations, archived_at, created_at, is_minor, is_old_student, has_checked_in, programme_id, programme_expires_at";
 
   // Filtered + scoped query
   let q = supabase.from("participants").select(baseSelect, { count: "exact" });
   q = applyRoleScope(q, admin.role, admin.id, admin.region);
-  q = applyParticipantFilters(q, filters);
+  const statusCtx = await loadStatusContext(supabase);
+  q = applyParticipantFilters(q, filters, statusCtx);
   q = q.range(from, to);
 
   const { data, count, error } = await q;
-  const rows = (error ? [] : (data ?? [])) as ParticipantRow[];
+  // Student status today — the same rule pricing uses.
+  const progById = new Map(statusCtx.programmes.map((p) => [p.id, p]));
+  const rows = ((error ? [] : (data ?? [])) as Array<ParticipantRow & {
+    is_old_student: boolean | null;
+    has_checked_in: boolean | null;
+    programme_id: string | null;
+    programme_expires_at: string | null;
+  }>).map((r) => {
+    const prog = r.programme_id ? progById.get(r.programme_id) : undefined;
+    const cat = participantPriceCategory({
+      programme_slug: prog?.slug ?? null,
+      programme_expires_at: r.programme_expires_at,
+      is_old_student: r.is_old_student,
+      has_attended: r.has_checked_in,
+    });
+    const label = BASE_CATEGORY_LABEL[cat] ?? { cn: prog?.name_cn ?? cat, en: prog?.name_en ?? cat };
+    return { ...r, status_label: label, status_is_member: !BASE_CATEGORY_LABEL[cat] };
+  });
   const total = count ?? 0;
 
   // Also fetch unfiltered total for "X of Y matching" meta
@@ -163,13 +183,14 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         totalCount={scopeTotal ?? null}
         initialArchived={filters.archived ?? "active"}
         canExport={admin.role === "super_admin"}
+        programmes={statusCtx.programmes.map((p) => ({ slug: p.slug, name_cn: p.name_cn, name_en: p.name_en }))}
       />
 
       <ParticipantsTable
         rows={rows}
         adminRole={admin.role}
         hasFilters={Boolean(
-          filters.q || filters.region || filters.identity || filters.motivation,
+          filters.q || filters.region || filters.identity || filters.motivation || filters.status || filters.minors,
         )}
         customerService={customerService}
       />

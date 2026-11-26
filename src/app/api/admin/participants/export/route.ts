@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
   applyParticipantFilters,
+  loadStatusContext,
   applyRoleScope,
   parseFilters,
 } from "@/lib/participants-query";
@@ -151,7 +152,7 @@ export async function GET(req: Request) {
   if (selectedIds && selectedIds.length > 0) {
     q = q.in("id", selectedIds);
   } else {
-    q = applyParticipantFilters(q, filters);
+    q = applyParticipantFilters(q, filters, await loadStatusContext(supabase));
   }
   // Cap export at 10k to avoid runaway; admins can refine filters for larger sets.
   q = q.limit(10_000);

@@ -2,10 +2,6 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import {
-  MOTIVATIONS as MOTIVATION_CODES,
-  MOTIVATION_LABEL,
-} from "@/lib/participants/motivations";
 
 const REGIONS = [
   { code: "", label: "All regions" },
@@ -18,17 +14,18 @@ const REGIONS = [
 
 // participant_status was dropped in 053. What remains is the one distinction
 // that was ever acted on: has anyone confirmed this row is a real person?
-const IDENTITY = [
-  { code: "", label: "Verified only" },
-  { code: "unverified", label: "Unverified only" },
+// Unconfirmed = auto-created from a WhatsApp message, or a sign-up that never
+// confirmed. Everyone shows by default.
+const RECORD = [
+  { code: "", label: "Everyone" },
+  { code: "verified", label: "Confirmed only" },
+  { code: "unverified", label: "Unconfirmed leads" },
 ];
 
-const MOTIVATIONS = [
-  { code: "", label: "Any motivation" },
-  ...MOTIVATION_CODES.map((m) => ({
-    code: m,
-    label: `${MOTIVATION_LABEL[m].en} · ${MOTIVATION_LABEL[m].cn}`,
-  })),
+const PEOPLE = [
+  { code: "", label: "Everyone" },
+  { code: "adults", label: "Adults" },
+  { code: "only", label: "Children · 子女" },
 ];
 
 const SORTS = [
@@ -47,6 +44,8 @@ type Props = {
   totalCount: number | null;
   initialArchived?: ArchivedMode;
   canExport: boolean;
+  /** Programmes for the Student status filter, in display order. */
+  programmes: Array<{ slug: string; name_cn: string | null; name_en: string | null }>;
 };
 
 export function FiltersBar({
@@ -55,7 +54,15 @@ export function FiltersBar({
   totalCount,
   initialArchived = "active",
   canExport,
+  programmes,
 }: Props) {
+  const STATUS = [
+    { code: "", label: "All statuses" },
+    ...programmes.map((p) => ({ code: p.slug, label: `${p.name_cn ?? p.slug}${p.name_en ? ` · ${p.name_en}` : ""}` })),
+    { code: "classic_member", label: "经典永流传 · Classic member" },
+    { code: "returning_student", label: "老学员 · Returning" },
+    { code: "new_student", label: "新人 · New" },
+  ];
   const router = useRouter();
   const sp = useSearchParams();
   const [q, setQ] = useState(initialQ);
@@ -64,7 +71,8 @@ export function FiltersBar({
 
   const region = sp.get("region") ?? "";
   const identity = sp.get("identity") ?? "";
-  const motivation = sp.get("motivation") ?? "";
+  const status = sp.get("status") ?? "";
+  const minors = sp.get("minors") ?? "";
   const sort = sp.get("sort") ?? "recent";
   const archivedMode: ArchivedMode =
     (sp.get("archived") as ArchivedMode | null) === "archived"
@@ -118,7 +126,8 @@ export function FiltersBar({
     Boolean(q) ||
     Boolean(region) ||
     Boolean(identity) ||
-    Boolean(motivation) ||
+    Boolean(status) ||
+    Boolean(minors) ||
     sort !== "recent" ||
     archivedMode !== "active";
 
@@ -177,16 +186,22 @@ export function FiltersBar({
           onChange={(v) => update({ region: v || null, page: null })}
         />
         <Select
-          label="Identity"
+          label="Student status"
+          value={status}
+          options={STATUS}
+          onChange={(v) => update({ status: v || null, page: null })}
+        />
+        <Select
+          label="Record"
           value={identity}
-          options={IDENTITY}
+          options={RECORD}
           onChange={(v) => update({ identity: v || null, page: null })}
         />
         <Select
-          label="Motivation"
-          value={motivation}
-          options={MOTIVATIONS}
-          onChange={(v) => update({ motivation: v || null, page: null })}
+          label="People"
+          value={minors}
+          options={PEOPLE}
+          onChange={(v) => update({ minors: v || null, page: null })}
         />
         <Select
           label="Sort"

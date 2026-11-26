@@ -23,6 +23,10 @@ export type ParticipantRow = {
   motivations: string[] | null;
   archived_at: string | null;
   created_at: string;
+  is_minor?: boolean | null;
+  /** Student status today (same rule as pricing). */
+  status_label?: { cn: string; en: string };
+  status_is_member?: boolean;
 };
 
 export type CsAdmin = {
@@ -385,6 +389,7 @@ export function ParticipantsTable({
               <th scope="col" className="px-5 py-3.5 font-medium">Name</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Region</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Contact</th>
+              <th scope="col" className="px-5 py-3.5 font-medium">Status · 身份</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Flags</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Qualification · 等级</th>
               <th scope="col" className="px-5 py-3.5 font-medium text-right">Registered</th>
@@ -393,7 +398,7 @@ export function ParticipantsTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={canBulk ? 8 : 7} className="px-6 py-16 text-center">
+                <td colSpan={canBulk ? 9 : 8} className="px-6 py-16 text-center">
                   <div className="inline-flex flex-col items-center gap-3">
                     <span
                       className="inline-flex items-center justify-center w-10 h-10 rounded-full
@@ -472,20 +477,44 @@ export function ParticipantsTable({
                         <span className="text-[var(--ink-faint)]">—</span>
                       )}
                     </td>
+                    <td className="px-5 py-3.5 whitespace-nowrap">
+                      {r.status_label ? (
+                        <span
+                          className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] ${
+                            r.status_is_member
+                              ? "border-[var(--cinnabar)]/30 bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]"
+                              : "border-[var(--paper-shadow)] bg-[var(--paper)] text-[var(--ink-soft)]"
+                          }`}
+                          title={r.status_label.en}
+                        >
+                          {r.status_label.cn}
+                        </span>
+                      ) : (
+                        <span className="text-[var(--ink-faint)]">—</span>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {r.is_minor ? (
+                          <span
+                            className="inline-flex items-center px-2 py-0.5 rounded-full border border-[var(--paper-shadow)] bg-[var(--paper-deep)] text-[10px] tracking-[0.1em] text-[var(--ink-soft)]"
+                            title="Parent-managed: messages go to the parent."
+                          >
+                            Child · 子女
+                          </span>
+                        ) : null}
                         {r.identity_confidence === "unverified" ? (
                           <span
                             className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border
                                         text-[10px] tracking-[0.14em] uppercase
                                         ${UNVERIFIED_TONE.bg} ${UNVERIFIED_TONE.ring} ${UNVERIFIED_TONE.text}`}
-                            title="Auto-created from an inbound message; not yet linked to a known person."
+                            title="Unconfirmed: auto-created from a WhatsApp message, or a sign-up that never confirmed."
                           >
                             <span
                               className={`w-1.5 h-1.5 rounded-full ${UNVERIFIED_TONE.dot}`}
                               aria-hidden="true"
                             />
-                            Unverified
+                            Unconfirmed
                           </span>
                         ) : null}
                         {isArchived ? (

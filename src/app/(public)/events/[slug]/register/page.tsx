@@ -8,6 +8,7 @@ import { registrationBlock } from "@/lib/event-registration-window";
 import { currentEventSlug } from "@/lib/event-slug";
 import type { PriceTier } from "@/lib/pricing/tiers";
 import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
+import { childrenOf } from "@/lib/participants/children";
 
 export const metadata: Metadata = { title: "Register · 报名 — GMC" };
 export const dynamic = "force-dynamic";
@@ -85,14 +86,17 @@ export default async function EventRegisterPage({ params }: PageProps) {
     );
   }
 
-  // Already enrolled? Skip the confirm screen.
-  const { data: existing } = await service
+  // Who could attend: the person and their children (migration 084).
+  const children = await childrenOf(participant.id, service);
+  const familyIds = [participant.id, ...children.map((c) => c.id)];
+  const { data: existingRows } = await service
     .from("enrollments")
-    .select("id, status, payment_status")
-    .eq("participant_id", participant.id)
+    .select("participant_id")
     .eq("event_id", (event as { id: string }).id)
-    .maybeSingle();
-  if (existing) {
+    .in("participant_id", familyIds);
+  const enrolled = new Set((existingRows ?? []).map((r) => (r as { participant_id: string }).participant_id));
+  // Everyone already registered and no children to add? Skip the screen.
+  if (enrolled.has(participant.id) && children.length === 0) {
     redirect(`/me/enrollments?already=${(event as { id: string }).id}`);
   }
 
@@ -111,6 +115,15 @@ export default async function EventRegisterPage({ params }: PageProps) {
     currency: string | null;
   };
   const { amount_due: amountDue } = await resolveEnrollmentPrice(priced, participant.id, service);
+  const attendees = await Promise.all(
+    [{ id: participant.id, name: profile.name_cn || profile.name_en || "Me", is_self: true, birth_date: null as string | null }]
+      .concat(children.map((c) => ({ id: c.id, name: c.name_cn || c.name_en || "Child", is_self: false, birth_date: c.birth_date })))
+      .map(async (a) => ({
+        ...a,
+        enrolled: enrolled.has(a.id),
+        amount_due: a.is_self ? amountDue : (await resolveEnrollmentPrice(priced, a.id, service)).amount_due,
+      })),
+  );
 
   return (
     <section className="min-h-[calc(100dvh-160px)] px-4 md:px-8 py-10 max-w-[720px] mx-auto">
@@ -140,6 +153,7 @@ export default async function EventRegisterPage({ params }: PageProps) {
         startDate={(event as { start_date: string | null }).start_date}
         venue={(event as { venue: string | null }).venue}
         price={amountDue}
+        attendees={attendees}
         currency={priced.currency ?? "SGD"}
         profile={{
           name_cn: profile.name_cn,

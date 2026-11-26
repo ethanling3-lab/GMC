@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseServiceClient } from "../supabase";
 import { ensureQrToken } from "../check-in/qr-token";
+import { withGuardianContact } from "../participants/children";
 import {
   hasReminderBeenSent,
   sendEventReminder,
@@ -155,6 +156,9 @@ async function runForWindow(
         continue;
       }
     }
+
+    // A child has no own contact: remind their parent (migration 084).
+    row.participant = await withGuardianContact(row.participant, supabase);
 
     // WhatsApp runs on its own record, so someone with no email still gets it.
     if (window === "48h" && !(await hasReminderBeenSent(row.id, window, "whatsapp"))) {

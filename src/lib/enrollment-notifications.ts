@@ -5,6 +5,7 @@ import { sendWhatsAppTemplate } from "./whatsapp";
 import { participantEmailLocale } from "./i18n";
 import { normalizePhone } from "./whatsapp/phone";
 import { resolveMetaLanguage } from "./inbox/whatsapp-templates";
+import { withGuardianContact } from "./participants/children";
 
 // Enrollment-state notifications. Called from the bulk + per-row admin
 // routes whenever the journey stage changes. Follows the same bilingual
@@ -119,6 +120,8 @@ export async function notifyApproved({
   paymentUrl: string;
   amountLabel: string;
 }): Promise<void> {
+  // A child has no own contact: message their parent (migration 084).
+  participant = await withGuardianContact(participant);
   if (!participant.email && !participant.phone) return;
   const locale = pickLocale(participant);
   const name = participantName(participant);
@@ -224,6 +227,8 @@ export async function notifyRejected({
   reason?: RejectReason | null;
   note?: string | null;
 }): Promise<void> {
+  // A child has no own contact: message their parent (migration 084).
+  participant = await withGuardianContact(participant);
   if (!participant.email && !participant.phone) return;
   const locale = pickLocale(participant);
   const name = participantName(participant);
@@ -329,6 +334,8 @@ export async function notifyPaymentReceived({
   amountLabel: string;
   checkInUrl?: string | null;
 }): Promise<void> {
+  // A child has no own contact: message their parent (migration 084).
+  participant = await withGuardianContact(participant);
   if (!participant.email && !participant.phone) return;
   const locale = pickLocale(participant);
   const name = participantName(participant);

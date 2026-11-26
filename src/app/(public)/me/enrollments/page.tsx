@@ -73,6 +73,11 @@ export default async function MeEnrollmentsPage() {
               >
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div className="min-w-0 flex-1">
+                    {e.for_child ? (
+                      <div className="mb-1 text-[11px] tracking-[0.12em] uppercase text-[var(--cinnabar-deep)]">
+                        For {e.for_child.name} · 子女
+                      </div>
+                    ) : null}
                     <div className="font-display text-[18px] leading-[1.2] text-[var(--ink)]">
                       {title}
                     </div>
@@ -96,10 +101,10 @@ export default async function MeEnrollmentsPage() {
                 </div>
                 <div className="mt-4 pt-4 border-t border-[var(--paper-shadow)] flex items-center justify-between gap-3 flex-wrap text-[12.5px] text-[var(--ink-soft)]">
                   <div className="tabular-nums">
-                    {e.event.price ? (
+                    {e.amount_due != null || e.event.price ? (
                       <>
                         <span className="text-[var(--ink-faint)]">Price · 价格</span>{" "}
-                        <span className="text-[var(--ink)] font-medium">${e.event.price}</span>
+                        <span className="text-[var(--ink)] font-medium">${Number(e.amount_due ?? e.event.price).toLocaleString("en-US")}</span>
                       </>
                     ) : null}
                   </div>

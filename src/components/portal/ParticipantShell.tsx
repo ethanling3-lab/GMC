@@ -12,7 +12,7 @@ type NavItem = {
   href: string;
   label_en: string;
   label_cn: string;
-  iconKey: "home" | "courses" | "profile" | "enrollments" | "payments" | "flights" | "recordings" | "group" | "recruit";
+  iconKey: "home" | "courses" | "profile" | "enrollments" | "payments" | "flights" | "recordings" | "group" | "recruit" | "family";
 };
 
 const NAV: NavItem[] = [
@@ -20,6 +20,7 @@ const NAV: NavItem[] = [
   { href: "/me/courses", label_en: "Courses", label_cn: "课程", iconKey: "courses" },
   { href: "/me/profile", label_en: "Profile", label_cn: "资料", iconKey: "profile" },
   { href: "/me/enrollments", label_en: "Enrollments", label_cn: "报名", iconKey: "enrollments" },
+  { href: "/me/family", label_en: "Family", label_cn: "家人", iconKey: "family" },
   { href: "/me/payments", label_en: "Payments", label_cn: "付款", iconKey: "payments" },
   { href: "/me/flights", label_en: "Flights", label_cn: "航班", iconKey: "flights" },
   { href: "/me/recordings", label_en: "Recordings", label_cn: "录像", iconKey: "recordings" },
@@ -83,6 +84,15 @@ function Icon({ name }: { name: NavItem["iconKey"] }) {
       return (
         <svg {...props}>
           <path d="M3 13l5-1.5L11 4l2 1-2 7.5L13 15l-1.5 1-3-2-3 1-1.5-1z" />
+        </svg>
+      );
+    case "family":
+      return (
+        <svg {...props}>
+          <circle cx="6.5" cy="5.5" r="2" />
+          <circle cx="12.5" cy="7.5" r="1.5" />
+          <path d="M3 15c0-2.5 1.6-4.5 3.5-4.5S10 12.5 10 15" />
+          <path d="M10.5 15c0-1.8 1-3.2 2-3.2s2 1.4 2 3.2" />
         </svg>
       );
     case "recordings":

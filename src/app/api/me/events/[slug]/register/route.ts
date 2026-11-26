@@ -6,6 +6,7 @@ import { createPaymentAccessToken } from "@/lib/tokens";
 import type { PriceTier } from "@/lib/pricing/tiers";
 import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { registrationBlock } from "@/lib/event-registration-window";
+import { childrenOf } from "@/lib/participants/children";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,11 +26,29 @@ type RouteCtx = { params: Promise<{ slug: string }> };
 //   5. Mint payment token if there's a price
 //   6. Return {payment_token, enrollment_id} so the client can redirect
 
-export async function POST(_req: Request, { params }: RouteCtx) {
+export async function POST(req: Request, { params }: RouteCtx) {
   const participant = await requireParticipant();
   const { slug } = await params;
 
+  // Who is attending: the logged-in person and/or their children
+  // (migration 084). No body = just themselves, as before.
+  const body = (await req.json().catch(() => ({}))) as { participant_ids?: unknown };
+  const requested = Array.isArray(body.participant_ids)
+    ? [...new Set(body.participant_ids.filter((x): x is string => typeof x === "string"))]
+    : [participant.id];
+  if (requested.length === 0 || requested.length > 12) {
+    return NextResponse.json({ error: "pick_attendees", detail: "Pick who is attending." }, { status: 400 });
+  }
+
   const service = createSupabaseServiceClient();
+
+  const childIds = new Set((await childrenOf(participant.id, service)).map((c) => c.id));
+  for (const id of requested) {
+    if (id !== participant.id && !childIds.has(id)) {
+      return NextResponse.json({ error: "not_your_family", detail: "You can only register yourself and your children." }, { status: 403 });
+    }
+  }
+
   const { data: event } = await service
     .from("events")
     .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, course_id, start_date, enrollment_opens_at, enrollment_closes_at")
@@ -60,55 +79,63 @@ export async function POST(_req: Request, { params }: RouteCtx) {
     return NextResponse.json({ error: "event_full" }, { status: 409 });
   }
 
-  // Duplicate guard — relies on the (participant_id, event_id) unique
-  // constraint, but we check first so we can return a clean 409.
-  const { data: existing } = await service
+  // Skip anyone already registered (the (participant_id, event_id) unique
+  // constraint is the backstop).
+  const { data: existingRows } = await service
     .from("enrollments")
-    .select("id")
-    .eq("participant_id", participant.id)
+    .select("participant_id")
     .eq("event_id", ev.id)
-    .maybeSingle();
-  if (existing) {
+    .in("participant_id", requested);
+  const already = new Set((existingRows ?? []).map((r) => (r as { participant_id: string }).participant_id));
+  const toEnrol = requested.filter((id) => !already.has(id));
+  if (toEnrol.length === 0) {
     return NextResponse.json({ error: "already_enrolled" }, { status: 409 });
   }
 
-  // Price via the one shared rule (src/lib/pricing/resolve-server.ts).
-  const pricing = await resolveEnrollmentPrice(ev, participant.id, service);
-  const amountDue = pricing.amount_due;
-
   const status = ev.requires_approval ? "pending_approval" : "approved";
-  const { data: enrollment, error: insErr } = await service
-    .from("enrollments")
-    .insert({
-      participant_id: participant.id,
-      event_id: ev.id,
-      status,
-      payment_status: "none",
-      price_tier_key: pricing.price_tier_key,
-      amount_due: amountDue,
-      price_basis: pricing.price_basis,
-    })
-    .select("id")
-    .single();
-  if (insErr || !enrollment) {
-    return NextResponse.json(
-      { error: "insert_failed", detail: insErr?.message ?? "unknown" },
-      { status: 500 },
-    );
+  const created: Array<{ participant_id: string; enrollment_id: string; amount_due: number | null; payment_token: string | null }> = [];
+  for (const pid of toEnrol) {
+    // Each person priced on their own record (src/lib/pricing/resolve-server.ts).
+    const pricing = await resolveEnrollmentPrice(ev, pid, service);
+    const { data: enrollment, error: insErr } = await service
+      .from("enrollments")
+      .insert({
+        participant_id: pid,
+        event_id: ev.id,
+        status,
+        payment_status: "none",
+        price_tier_key: pricing.price_tier_key,
+        amount_due: pricing.amount_due,
+        price_basis: pricing.price_basis,
+      })
+      .select("id")
+      .single();
+    if (insErr || !enrollment) {
+      return NextResponse.json(
+        { error: "insert_failed", detail: insErr?.message ?? "unknown", created },
+        { status: 500 },
+      );
+    }
+    const due = pricing.amount_due;
+    created.push({
+      participant_id: pid,
+      enrollment_id: enrollment.id,
+      amount_due: due,
+      payment_token: due && due > 0 ? createPaymentAccessToken(enrollment.id, 30 * 24 * 60 * 60 * 1000) : null,
+    });
   }
 
-  // Mint payment token if there's something to pay.
-  const paymentToken =
-    amountDue && amountDue > 0
-      ? createPaymentAccessToken(enrollment.id, 30 * 24 * 60 * 60 * 1000) // 30 days
-      : null;
-
+  // One person → keep the old single-enrollment shape so the client can
+  // go straight to payment.
+  const first = created[0];
   return NextResponse.json(
     {
       ok: true,
-      enrollment_id: enrollment.id,
       status,
-      payment_token: paymentToken,
+      enrollment_id: first.enrollment_id,
+      payment_token: created.length === 1 ? first.payment_token : null,
+      created,
+      skipped_already_enrolled: [...already],
     },
     { status: 201 },
   );

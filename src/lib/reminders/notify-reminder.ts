@@ -5,6 +5,7 @@ import { participantEmailLocale } from "../i18n";
 import { buildCheckInUrl } from "../check-in/qr-token";
 import { findTemplate } from "../inbox/whatsapp-templates";
 import { normalizePhone } from "../whatsapp/phone";
+import { withGuardianContact } from "../participants/children";
 import { sendWhatsAppTemplate } from "../whatsapp";
 
 // M7.2 reminder dispatcher. Sends a single bilingual email to a paid
@@ -125,7 +126,9 @@ function formatEventDate(iso: string | null, locale: Locale): string {
 export async function sendEventReminder(
   input: ReminderInput,
 ): Promise<ReminderResult> {
-  const { enrollment, participant, event, window } = input;
+  const { enrollment, event, window } = input;
+  // A child has no own contact: remind their parent (migration 084).
+  const participant = await withGuardianContact({ region: null, ...input.participant });
 
   if (!participant.email) {
     return { ok: false, reason: "no_email" };

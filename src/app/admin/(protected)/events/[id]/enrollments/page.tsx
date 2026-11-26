@@ -227,6 +227,21 @@ export default async function EventEnrollmentsPage({
         )
       : { usable: {}, usedByEnrollment: {} };
 
+  // Children (migration 084): "child of 李华" under their name.
+  const childOf: Record<string, { id: string; name: string }> = {};
+  {
+    const ids = (rows as Array<{ participant: { id: string } | null }>).map((r) => r.participant?.id).filter((x): x is string => !!x);
+    if (ids.length > 0) {
+      const { data: links } = await createSupabaseServiceClient()
+        .from("participant_guardians")
+        .select("child_id, guardian:participants!participant_guardians_guardian_id_fkey(id, name_cn, name_en)")
+        .in("child_id", ids);
+      for (const l of (links ?? []) as unknown as Array<{ child_id: string; guardian: { id: string; name_cn: string | null; name_en: string | null } | null }>) {
+        if (l.guardian && !childOf[l.child_id]) childOf[l.child_id] = { id: l.guardian.id, name: l.guardian.name_cn || l.guardian.name_en || "parent" };
+      }
+    }
+  }
+
   // Programme names for the "why this price" line on each row.
   const programmeNames: Record<string, string> = {};
   {
@@ -451,6 +466,7 @@ export default async function EventEnrollmentsPage({
         eventId={event.id}
         programmeNames={programmeNames}
         seatInfo={seatInfo}
+        childOf={childOf}
         rows={rows}
         canEdit={admin.role === "super_admin"}
         hasFilter={statusFilter !== null || q.length > 0}

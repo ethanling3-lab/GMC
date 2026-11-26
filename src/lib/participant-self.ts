@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase";
+import { childrenOf } from "./participants/children";
 
 // Scoped read path for the /me portal. Explicitly enumerates the
 // participant-safe fields — EXCLUDES every admin-internal column:
@@ -66,6 +67,9 @@ export type SelfEnrollmentRow = {
   amount_paid: number | string | null;
   paid_at: string | null;
   created_at: string;
+  amount_due: number | string | null;
+  /** Set when the registration is for one of the member's children. */
+  for_child: { id: string; name: string } | null;
   event: {
     id: string;
     slug: string;
@@ -80,17 +84,22 @@ export type SelfEnrollmentRow = {
 
 export async function loadSelfEnrollments(participantId: string): Promise<SelfEnrollmentRow[]> {
   const service = createSupabaseServiceClient();
+  // The member's own registrations plus their children's (migration 084).
+  const children = await childrenOf(participantId, service);
+  const childName = new Map(children.map((c) => [c.id, c.name_cn || c.name_en || "Child"]));
   const { data, error } = await service
     .from("enrollments")
     .select(
-      "id, status, payment_status, payment_method, amount_paid, paid_at, created_at, event:events(id, slug, title_en, title_cn, start_date, end_date, venue, price)",
+      "id, participant_id, status, payment_status, payment_method, amount_paid, amount_due, paid_at, created_at, event:events(id, slug, title_en, title_cn, start_date, end_date, venue, price)",
     )
-    .eq("participant_id", participantId)
+    .in("participant_id", [participantId, ...children.map((c) => c.id)])
     .order("created_at", { ascending: false })
     .limit(50);
   if (error) throw new Error(error.message);
   return ((data ?? []) as unknown as Array<{
     id: string;
+    participant_id: string;
+    amount_due: number | string | null;
     status: string;
     payment_status: string;
     payment_method: string | null;
@@ -108,6 +117,8 @@ export async function loadSelfEnrollments(participantId: string): Promise<SelfEn
       amount_paid: r.amount_paid,
       paid_at: r.paid_at,
       created_at: r.created_at,
+      amount_due: r.amount_due,
+      for_child: r.participant_id === participantId ? null : { id: r.participant_id, name: childName.get(r.participant_id) ?? "Child" },
       event: r.event!,
     }));
 }

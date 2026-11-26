@@ -13,7 +13,19 @@ type Profile = {
   region_id: string | null;
 };
 
+type Done = Array<{ participant_id: string; enrollment_id: string; amount_due: number | null; payment_token: string | null }>;
+
+export type Attendee = {
+  id: string;
+  name: string;
+  is_self: boolean;
+  birth_date: string | null;
+  enrolled: boolean;
+  amount_due: number | null;
+};
+
 type Props = {
+  attendees: Attendee[];
   eventSlug: string;
   eventTitle: string;
   eventTitleAlt: string;
@@ -25,6 +37,7 @@ type Props = {
 };
 
 export function QuickRegisterConfirm({
+  attendees,
   eventSlug,
   eventTitle,
   eventTitleAlt,
@@ -37,14 +50,38 @@ export function QuickRegisterConfirm({
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasFamily = attendees.length > 1;
+  const [done, setDone] = useState<Done | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(
+    () => new Set(attendees.filter((a) => a.is_self && !a.enrolled).map((a) => a.id)),
+  );
+  const chosen = attendees.filter((a) => picked.has(a.id) && !a.enrolled);
+  const total = chosen.reduce((sum, a) => sum + (Number(a.amount_due) || 0), 0);
+
+  function toggle(id: string) {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function onConfirm() {
+    if (chosen.length === 0) {
+      setError("Tick who is attending. · 请勾选参加者。");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const res = await fetch(
         `/api/me/events/${encodeURIComponent(eventSlug)}/register`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ participant_ids: chosen.map((a) => a.id) }),
+        },
       );
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -57,6 +94,13 @@ export function QuickRegisterConfirm({
                 ? "This event is not currently open for registration."
                 : json?.detail || "Could not complete registration. Please try again.";
         setError(err);
+        setSubmitting(false);
+        return;
+      }
+      const created = (json?.created ?? []) as Done;
+      if (created.length > 1) {
+        // Several people: one pay link each.
+        setDone(created);
         setSubmitting(false);
         return;
       }
@@ -80,6 +124,40 @@ export function QuickRegisterConfirm({
           ? "Both · 双语"
           : null;
 
+  if (done) {
+    const nameOf = (id: string) => attendees.find((a) => a.id === id)?.name ?? "";
+    return (
+      <section className="mt-8 rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] p-5 md:p-6 shadow-[var(--shadow-paper-1)]">
+        <div className="text-[10px] tracking-[0.22em] uppercase text-[var(--cinnabar)]">Registered · 已报名</div>
+        <ul className="mt-3 divide-y divide-[var(--paper-shadow)]">
+          {done.map((d) => (
+            <li key={d.enrollment_id} className="flex items-center justify-between gap-3 py-3">
+              <span className="text-[14px] text-[var(--ink)]">{nameOf(d.participant_id)}</span>
+              {d.payment_token ? (
+                <a
+                  href={`/pay/${d.payment_token}`}
+                  className="inline-flex items-center h-9 px-4 rounded-full bg-[var(--cinnabar)] text-[12.5px] hover:bg-[var(--cinnabar-deep)] active:scale-[0.98] transition-[background-color,transform]"
+                  style={{ color: "var(--paper-warm)" }}
+                >
+                  Pay {currency} {Number(d.amount_due).toLocaleString("en-US")} · 付款
+                </a>
+              ) : (
+                <span className="text-[12.5px] text-[var(--ink-mute)]">Nothing to pay · 无需付款</span>
+              )}
+            </li>
+          ))}
+        </ul>
+        <a
+          href="/me/enrollments"
+          className="mt-4 inline-block text-[12px] tracking-[0.1em] uppercase text-[var(--cinnabar-deep)] hover:text-[var(--cinnabar)]"
+          style={{ color: "var(--cinnabar-deep)" }}
+        >
+          See all registrations →
+        </a>
+      </section>
+    );
+  }
+
   return (
     <div className="mt-8 space-y-6">
       {/* Event summary card */}
@@ -96,7 +174,7 @@ export function QuickRegisterConfirm({
         <div className="mt-3 flex flex-wrap gap-3 text-[12px] tracking-[0.06em] text-[var(--ink-soft)] tabular-nums">
           {startDate ? <span>📅 {startDate}</span> : null}
           {venue ? <span>📍 {venue}</span> : null}
-          {price ? (
+          {price && !hasFamily ? (
             <span>
               <span className="text-[var(--ink-faint)]">Price</span>{" "}
               <span className="text-[var(--ink)] font-medium">{currency} {Number(price).toLocaleString("en-US")}</span>
@@ -129,6 +207,18 @@ export function QuickRegisterConfirm({
         </dl>
       </section>
 
+      <WhoIsAttending
+        attendees={attendees}
+        picked={picked}
+        onToggle={toggle}
+        currency={currency}
+        total={total}
+        onAdded={(id) => {
+          setPicked((prev) => new Set(prev).add(id));
+          router.refresh();
+        }}
+      />
+
       {error ? (
         <div
           role="alert"
@@ -153,7 +243,11 @@ export function QuickRegisterConfirm({
           className="inline-flex items-center gap-2 px-5 h-11 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[13px] tracking-[0.04em] uppercase hover:bg-[var(--cinnabar-deep)] disabled:opacity-60 transition-colors"
           style={{ color: "var(--paper-warm)" }}
         >
-          {submitting ? "Confirming…" : "Confirm & pay · 确认并付款"}
+          {submitting
+            ? "Confirming…"
+            : chosen.length > 1
+              ? `Register ${chosen.length} · 报名 ${chosen.length} 位`
+              : "Confirm & pay · 确认并付款"}
         </button>
       </div>
     </div>
@@ -176,5 +270,141 @@ function Pair({
         {value || "—"}
       </dd>
     </div>
+  );
+}
+
+function WhoIsAttending({
+  attendees,
+  picked,
+  onToggle,
+  currency,
+  total,
+  onAdded,
+}: {
+  attendees: Attendee[];
+  picked: Set<string>;
+  onToggle: (id: string) => void;
+  currency: string;
+  total: number;
+  onAdded: (id: string) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ name_cn: "", name_en: "", birth_date: "", gender: "" });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const money = (n: number | null) => (n && n > 0 ? `${currency} ${Number(n).toLocaleString("en-US")}` : "Free · 免费");
+  const field =
+    "h-10 w-full px-3 rounded-[var(--radius-md)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[13px] text-[var(--ink)] focus:border-[var(--cinnabar)]/50 focus:outline-none focus:shadow-[var(--shadow-focus)] transition-[border-color,box-shadow] duration-[var(--dur-fast)]";
+
+  async function addChild() {
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/me/children", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name_cn: form.name_cn,
+          name_en: form.name_en || null,
+          birth_date: form.birth_date,
+          gender: form.gender || null,
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { detail?: string; child?: { id: string } };
+      if (!res.ok || !j.child) throw new Error(j.detail ?? "Could not add the child.");
+      setForm({ name_cn: "", name_en: "", birth_date: "", gender: "" });
+      setAdding(false);
+      onAdded(j.child.id);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not add the child.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] p-5 md:p-6 shadow-[var(--shadow-paper-1)]">
+      <div className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">Who is attending? · 谁参加？</div>
+      <ul className="mt-3 divide-y divide-[var(--paper-shadow)]">
+        {attendees.map((a) => (
+          <li key={a.id}>
+            <label className={`flex items-center gap-3 py-3 ${a.enrolled ? "opacity-60" : "cursor-pointer"}`}>
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--cinnabar)]"
+                checked={a.enrolled || picked.has(a.id)}
+                disabled={a.enrolled}
+                onChange={() => onToggle(a.id)}
+              />
+              <span className="flex-1 min-w-0">
+                <span className="text-[14px] text-[var(--ink)]">{a.name}</span>
+                <span className="ml-2 text-[11.5px] text-[var(--ink-mute)]">
+                  {a.is_self ? "Me · 本人" : `Child · 子女${a.birth_date ? ` · ${a.birth_date}` : ""}`}
+                </span>
+              </span>
+              <span className="text-[13px] tabular-nums text-[var(--ink-soft)]">
+                {a.enrolled ? "Registered · 已报名" : money(a.amount_due)}
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+
+      {adding ? (
+        <div className="mt-3 rounded-[var(--radius-md)] border border-dashed border-[var(--paper-shadow)] p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">Chinese name · 中文名</span>
+            <input className={field} value={form.name_cn} onChange={(e) => setForm({ ...form, name_cn: e.target.value })} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">English name · 英文名 (optional)</span>
+            <input className={field} value={form.name_en} onChange={(e) => setForm({ ...form, name_en: e.target.value })} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">Birth date · 出生日期</span>
+            <input type="date" className={field} value={form.birth_date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] tracking-[0.18em] uppercase text-[var(--ink-mute)]">Gender · 性别</span>
+            <select className={field} value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+              <option value="">—</option>
+              <option value="male">Male · 男</option>
+              <option value="female">Female · 女</option>
+            </select>
+          </label>
+          {err ? <p className="sm:col-span-2 text-[12.5px] text-[var(--cinnabar-deep)]">{err}</p> : null}
+          <div className="sm:col-span-2 flex justify-end gap-2">
+            <button type="button" onClick={() => setAdding(false)} className="h-9 px-4 rounded-full border border-[var(--paper-shadow)] text-[12.5px] text-[var(--ink-soft)] hover:border-[var(--cinnabar)]/40 active:scale-[0.98] transition-[border-color,transform]">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={addChild}
+              disabled={saving || !form.name_cn.trim() || !form.birth_date}
+              className="h-9 px-4 rounded-full bg-[var(--cinnabar)] text-[12.5px] hover:bg-[var(--cinnabar-deep)] disabled:opacity-50 active:scale-[0.98] transition-[background-color,transform]"
+              style={{ color: "var(--paper-warm)" }}
+            >
+              {saving ? "Adding…" : "Add child · 添加"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="mt-3 text-[12.5px] text-[var(--cinnabar-deep)] hover:text-[var(--cinnabar)] focus-visible:underline"
+          style={{ color: "var(--cinnabar-deep)" }}
+        >
+          + Add a child · 添加子女
+        </button>
+      )}
+
+      {picked.size > 0 ? (
+        <div className="mt-4 pt-3 border-t border-[var(--paper-shadow)] flex items-baseline justify-between text-[13px]">
+          <span className="text-[var(--ink-mute)]">Total · 合计</span>
+          <span className="tabular-nums text-[var(--ink)] font-medium">{total > 0 ? `${currency} ${total.toLocaleString("en-US")}` : "—"}</span>
+        </div>
+      ) : null}
+    </section>
   );
 }

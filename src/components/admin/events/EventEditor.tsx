@@ -1072,7 +1072,7 @@ export function EventEditor({
         <Field
           label="Tiered pricing — course fee"
           labelZh="分级定价 · 课程费"
-          hint="Optional. Each row sets the course fee (added to the 会务费) for the chosen categories. 初训 is the first-time fee; 复训 (optional) is charged automatically to people who have taken this course before. The right row is picked from the participant's programme / history. Leave empty to charge the course fee above to everyone."
+          hint="Optional. Each row sets the course fee (added to the 会务费) for the chosen categories. Tick 复训 price to charge people who have taken this course before a different fee; the first-time fee then becomes 初训. The right row is picked from the participant's programme / history. Leave empty to charge the course fee above to everyone."
         >
           <PriceTiersEditor
             value={draft.price_tiers ?? []}
@@ -1477,6 +1477,7 @@ function PriceTiersEditor({
     key: string;
     amount: string; // string for free typing; parsed on emit
     repeat: string; // 复训 course fee, optional
+    hasRepeat: boolean; // 复训 price switched on for this row
     applies_to: ParticipantPriceCategory[];
     custom_label: string; // shown only when "default" (其他) is selected
   };
@@ -1486,6 +1487,7 @@ function PriceTiersEditor({
       key: t.key,
       amount: t.amount != null ? String(t.amount) : "",
       repeat: t.repeat_amount != null ? String(t.repeat_amount) : "",
+      hasRepeat: t.repeat_amount != null,
       applies_to: t.applies_to ?? [],
       custom_label: t.custom_label ?? "",
     })),
@@ -1510,7 +1512,7 @@ function PriceTiersEditor({
       const derivedEn = r.applies_to
         .map((c) => labelOf(c).en)
         .join(" / ");
-      const repeat = r.repeat.trim() === "" ? null : Number(r.repeat);
+      const repeat = !r.hasRepeat || r.repeat.trim() === "" ? null : Number(r.repeat);
       out.push({
         key: r.key,
         label_cn: custom || derived,
@@ -1555,6 +1557,7 @@ function PriceTiersEditor({
         key: `tier-${Date.now()}`,
         amount: "",
         repeat: "",
+        hasRepeat: false,
         applies_to: [],
         custom_label: "",
       },
@@ -1598,36 +1601,59 @@ function PriceTiersEditor({
             </span>
             {/* Fixed-width wrapper so inputCls's `w-full` fills 120px instead of
                 fighting a `w-[120px]` on the same element (Tailwind width conflict). */}
-            <div className="w-[110px] shrink-0">
+            <label className="shrink-0 flex items-center gap-1.5">
+              <span className="text-[10.5px] tracking-[0.08em] text-[var(--ink-mute)] whitespace-nowrap">
+                {r.hasRepeat ? "初训" : "Course fee"}
+              </span>
+              <span className="w-[110px]">
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={r.amount}
+                  onChange={(e) => updateRow(i, { amount: e.target.value })}
+                  disabled={disabled}
+                  placeholder="0"
+                  title={r.hasRepeat ? "初训 course fee (first time), added on top of the 会务费" : "Course fee, added on top of the 会务费"}
+                  className={inputCls("tabular-nums")}
+                />
+              </span>
+            </label>
+            <label
+              className="shrink-0 inline-flex items-center gap-1.5 h-9 px-2.5 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] text-[11.5px] text-[var(--ink-soft)] cursor-pointer hover:border-[var(--cinnabar)]/40 has-[:focus-visible]:shadow-[var(--shadow-focus)] transition-[border-color] duration-[var(--dur-fast)]"
+              title="Charge a different course fee to people who have taken this course before (checked in at an earlier run, or in their attended-courses record)."
+            >
               <input
-                type="number"
-                step="0.01"
-                min={0}
-                value={r.amount}
-                onChange={(e) => updateRow(i, { amount: e.target.value })}
+                type="checkbox"
+                checked={r.hasRepeat}
                 disabled={disabled}
-                placeholder="初训"
-                title="初训 course fee — added on top of the 会务费"
-                className={inputCls("tabular-nums")}
+                onChange={(e) => updateRow(i, { hasRepeat: e.target.checked, ...(e.target.checked ? {} : { repeat: "" }) })}
+                className="w-3.5 h-3.5 accent-[var(--cinnabar)]"
               />
-            </div>
-            <div className="w-[110px] shrink-0">
-              <input
-                type="number"
-                step="0.01"
-                min={0}
-                value={r.repeat}
-                onChange={(e) => updateRow(i, { repeat: e.target.value })}
-                disabled={disabled}
-                placeholder="复训"
-                title="复训 course fee for people who have taken this course before (checked in at an earlier run, or in their attended-courses record). Leave blank to charge 初训 to everyone."
-                className={inputCls("tabular-nums")}
-              />
-            </div>
+              复训 price
+            </label>
+            {r.hasRepeat ? (
+              <label className="shrink-0 flex items-center gap-1.5">
+                <span className="text-[10.5px] tracking-[0.08em] text-[var(--ink-mute)]">复训</span>
+                <span className="w-[110px]">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={r.repeat}
+                    onChange={(e) => updateRow(i, { repeat: e.target.value })}
+                    disabled={disabled}
+                    placeholder="0"
+                    title="复训 course fee for people who have taken this course before."
+                    className={inputCls("tabular-nums")}
+                  />
+                </span>
+              </label>
+            ) : null}
             {Number.isFinite(Number(r.amount)) && r.amount !== "" ? (
               <span className="shrink-0 text-[11px] tabular-nums text-[var(--ink-mute)] whitespace-nowrap">
                 = {currency} {(miscFee + Number(r.amount)).toLocaleString()}
-                {r.repeat.trim() !== "" && Number.isFinite(Number(r.repeat))
+                {r.hasRepeat && r.repeat.trim() !== "" && Number.isFinite(Number(r.repeat))
                   ? ` · 复训 ${(miscFee + Number(r.repeat)).toLocaleString()}`
                   : ""}
               </span>
