@@ -86,3 +86,36 @@ export function computeStanding(input: {
 
   return { total, paid, balance, due_so_far: dueSoFar, behind, next, state };
 }
+
+export type RowStatus = {
+  label: string;
+  due_on: string | null;
+  amount_sgd: number;
+  /** How much of this row is still unpaid (payments fill rows in order). */
+  left: number;
+  state: "paid" | "part" | "due" | "overdue";
+};
+
+/**
+ * Status of each schedule row for a member: payments fill the rows in
+ * order. A row is overdue when its date has passed (strictly before today)
+ * and it isn't fully paid.
+ */
+export function rowStatuses(
+  schedule: ReadonlyArray<Pick<ScheduleRow, "label" | "due_on" | "amount_sgd" | "sort">>,
+  paid: number,
+  today: string,
+): RowStatus[] {
+  let remaining = cents(paid);
+  return [...schedule]
+    .sort((a, b) => a.sort - b.sort)
+    .map((r) => {
+      const amt = cents(Number(r.amount_sgd || 0));
+      const covered = Math.min(amt, Math.max(0, remaining));
+      remaining = cents(remaining - covered);
+      const left = cents(amt - covered);
+      const state: RowStatus["state"] =
+        left <= 0 ? "paid" : r.due_on && r.due_on < today ? "overdue" : covered > 0 ? "part" : "due";
+      return { label: r.label, due_on: r.due_on, amount_sgd: amt, left, state };
+    });
+}

@@ -2,7 +2,7 @@
 // Pure rules matrix for src/lib/payments/standing.ts (Phase 2, 2026-11-26).
 // No database. Run: npx tsx scripts/smoke-payments-standing.ts
 
-import { addMonthsDay, computeStanding, scheduleFromTemplate } from "../src/lib/payments/standing";
+import { addMonthsDay, computeStanding, rowStatuses, scheduleFromTemplate } from "../src/lib/payments/standing";
 
 let fail = 0;
 function eq(name: string, got: unknown, want: unknown) {
@@ -94,6 +94,12 @@ eq("cancelled", s.state, "cancelled");
 // Decimals
 s = computeStanding({ total: 100.1, schedule: [], payments: [{ amount_sgd: 50.05 }, { amount_sgd: 50.05 }], today: "2026-12-01" });
 eq("decimal sums", [s.paid, s.state], [100.1, "complete"]);
+
+// Row statuses for the member page
+const rs = rowStatuses(sched, 4000, "2026-12-27");
+eq("rows: 定金 paid, 第1期 overdue 1000 left, 第2期 due", rs.map((r) => [r.label, r.state, r.left]), [["定金", "paid", 0], ["第1期", "overdue", 1000], ["第2期", "due", 2000]]);
+eq("rows: part-paid not yet due", rowStatuses(sched, 4000, "2026-12-01").map((r) => r.state), ["paid", "part", "due"]);
+eq("rows: all paid", rowStatuses(sched, 7000, "2030-01-01").map((r) => r.state), ["paid", "paid", "paid"]);
 
 console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
 process.exit(fail ? 1 : 0);
