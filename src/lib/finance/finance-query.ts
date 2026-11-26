@@ -19,7 +19,7 @@ export type EventFinanceRow = {
   refunded_count: number;
 
   paid_amount: number;           // sum(amount_paid) where status=paid
-  outstanding_amount: number;    // approved × price
+  outstanding_amount: number;    // approved: sum(amount_due − amount_paid)
   refunded_amount: number;       // sum(refund_amount)
 
   // Programmes sold at this event's payment counter (Phase 2, migration 087).
@@ -76,7 +76,7 @@ export async function loadFinanceOverview(
   // a few thousand rows.
   let enrRes = (await supabase
     .from("enrollments")
-    .select("event_id, status, payment_status, amount_paid, refund_amount")
+    .select("event_id, status, payment_status, amount_paid, amount_due, refund_amount")
     .in("event_id", eventIds)
     .limit(20_000)) as unknown as {
     data: unknown[] | null;
@@ -86,7 +86,7 @@ export async function loadFinanceOverview(
   if (enrRes.error && enrRes.error.code === "42703") {
     enrRes = (await supabase
       .from("enrollments")
-      .select("event_id, status, payment_status, amount_paid")
+      .select("event_id, status, payment_status, amount_paid, amount_due")
       .in("event_id", eventIds)
       .limit(20_000)) as unknown as typeof enrRes;
   }
@@ -97,6 +97,7 @@ export async function loadFinanceOverview(
     status: string;
     payment_status: string | null;
     amount_paid: number | string | null;
+    amount_due?: number | string | null;
     refund_amount?: number | string | null;
   };
   const enrolments = (enrRes.data ?? []) as EnrolSlice[];
@@ -132,8 +133,16 @@ export async function loadFinanceOverview(
     let refunded = 0;
     let paidAmt = 0;
     let refundedAmt = 0;
+    let outstandingAmt = 0;
     for (const e of list) {
-      if (e.status === "approved") approved++;
+      if (e.status === "approved") {
+        approved++;
+        // Each person's own price (tiers, 新人/老学员…), less anything
+        // already paid (e.g. part-paid at the counter). Falls back to the
+        // event's single price for old rows with no amount_due.
+        const due = e.amount_due != null ? Number(e.amount_due) : price;
+        outstandingAmt += Math.max(0, due - Number(e.amount_paid ?? 0));
+      }
       if (e.status === "paid" || e.payment_status === "paid") {
         paid++;
         paidAmt += Number(e.amount_paid ?? 0);
@@ -154,7 +163,7 @@ export async function loadFinanceOverview(
       paid_count: paid,
       refunded_count: refunded,
       paid_amount: paidAmt,
-      outstanding_amount: approved * price,
+      outstanding_amount: Math.round(outstandingAmt * 100) / 100,
       refunded_amount: refundedAmt,
       programmes_signed: progByEvent.get(ev.id as string)?.n ?? 0,
       programmes_value_sgd: progByEvent.get(ev.id as string)?.value ?? 0,
