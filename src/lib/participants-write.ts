@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
+import { segmentFor } from "@/lib/participants/segment";
 
 // Shared participant upsert helper. Both the public /api/register route and
 // the admin manual-enrol route funnel through here so the participant insert
@@ -72,6 +73,10 @@ function buildPayload(input: ParticipantInsertInput): Record<string, unknown> {
   if (typeof input.facial_recognition_consent === "boolean") {
     payload.facial_recognition_consent = input.facial_recognition_consent;
   }
+  // Customer region (migration 088) from the country. Malaysians get none
+  // here — an admin picks it — so a returning Malaysian keeps theirs.
+  const segment = segmentFor(input.region);
+  if (segment) payload.segment = segment;
   return payload;
 }
 
@@ -82,10 +87,11 @@ function buildPayload(input: ParticipantInsertInput): Record<string, unknown> {
 function withoutOptionalColumns(
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
-  const { referrer_name, referrer_contact, phone_e164, ...rest } = payload;
+  const { referrer_name, referrer_contact, phone_e164, segment, ...rest } = payload;
   void referrer_name;
   void referrer_contact;
   void phone_e164;
+  void segment;
   return rest;
 }
 

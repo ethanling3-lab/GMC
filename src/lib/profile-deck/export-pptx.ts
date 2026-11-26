@@ -82,6 +82,7 @@ const REGION_NAME: Record<string, { en: string; cn: string }> = {
   TW: { en: "Taiwan", cn: "台湾" },
   HK: { en: "Hong Kong", cn: "香港" },
   CN: { en: "Mainland China", cn: "中国大陆" },
+  VN: { en: "Vietnam", cn: "越南" },
 };
 
 const CLASS_LABEL: Record<GroupClassKey, { en: string; cn: string }> = {

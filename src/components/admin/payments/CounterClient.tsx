@@ -31,6 +31,8 @@ type Props = {
   programmes: CounterProgramme[];
   templates: PaymentTemplate[];
   initialTakings: Takings;
+  /** Only Super Admin can open participant profiles (Finance can't). */
+  canOpenProfile: boolean;
 };
 
 type NewForm = {
@@ -70,6 +72,8 @@ type Done = {
   reference: string | null;
   lines: string[];
   participantId: string;
+  /** Programme purchases this checkout created or paid into. */
+  purchaseIds: string[];
   seatsReminder: boolean;
 };
 
@@ -203,7 +207,7 @@ function TickRow({
   );
 }
 
-export function CounterClient({ eventId, eventTitle, programmes, templates, initialTakings }: Props) {
+export function CounterClient({ eventId, eventTitle, programmes, templates, initialTakings, canOpenProfile }: Props) {
   const [mode, setMode] = useState<"find" | "new" | "person">("find");
   const [person, setPerson] = useState<CounterPerson | null>(null);
   const [form, setForm] = useState<NewForm>(EMPTY_FORM);
@@ -393,7 +397,7 @@ export function CounterClient({ eventId, eventTitle, programmes, templates, init
           };
     setBusy(true);
     try {
-      const j = await callJson<{ participant_id: string; total_sgd: number }>(`/api/admin/events/${eventId}/counter/checkout`, "POST", {
+      const j = await callJson<{ participant_id: string; total_sgd: number; purchases?: string[] }>(`/api/admin/events/${eventId}/counter/checkout`, "POST", {
         participant,
         items,
         payment: { method, reference: reference.trim() || null, note: note.trim() || null },
@@ -406,6 +410,7 @@ export function CounterClient({ eventId, eventTitle, programmes, templates, init
         reference: reference.trim() || null,
         lines,
         participantId: j.participant_id,
+        purchaseIds: Array.isArray(j.purchases) ? j.purchases : [],
         seatsReminder: prog.on,
       });
       refreshTakings();
@@ -452,9 +457,16 @@ export function CounterClient({ eventId, eventTitle, programmes, templates, init
             <button type="button" className={`${primary} h-10 px-5 text-[13px]`} style={{ color: "var(--paper-warm)" }} onClick={resetAll} autoFocus>
               Next person · 下一位
             </button>
-            <Link href={`/admin/participants/${done.participantId}`} className={`${btn} h-10 px-4`}>
-              Open their profile
-            </Link>
+            {done.purchaseIds.length === 1 ? (
+              <Link href={`/admin/finance/purchases/${done.purchaseIds[0]}`} className={`${btn} h-10 px-4`}>
+                Open the purchase · 查看配套
+              </Link>
+            ) : null}
+            {canOpenProfile ? (
+              <Link href={`/admin/participants/${done.participantId}`} className={`${btn} h-10 px-4`}>
+                Open their profile
+              </Link>
+            ) : null}
           </div>
         </section>
         <TakingsPanel takings={takings} />
@@ -551,6 +563,7 @@ export function CounterClient({ eventId, eventTitle, programmes, templates, init
                     <option value="TW">Taiwan</option>
                     <option value="HK">Hong Kong</option>
                     <option value="CN">China</option>
+                    <option value="VN">Vietnam</option>
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">

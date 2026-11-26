@@ -8,6 +8,7 @@ import {
   effectiveQualification,
 } from "@/lib/grouping/types";
 import type { StudentQualification } from "@/lib/grouping/types";
+import { segmentLabel } from "@/lib/participants/segment";
 
 export type ParticipantRow = {
   id: string;
@@ -24,6 +25,8 @@ export type ParticipantRow = {
   archived_at: string | null;
   created_at: string;
   is_minor?: boolean | null;
+  segment?: string | null;
+  assigned_cs_id?: string | null;
   /** Student status today (same rule as pricing). */
   status_label?: { cn: string; en: string };
   status_is_member?: boolean;
@@ -388,6 +391,7 @@ export function ParticipantsTable({
               <th scope="col" className="px-5 py-3.5 font-medium">Student ID</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Name</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Region</th>
+              <th scope="col" className="px-5 py-3.5 font-medium">CS</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Contact</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Status · 身份</th>
               <th scope="col" className="px-5 py-3.5 font-medium">Flags</th>
@@ -398,7 +402,7 @@ export function ParticipantsTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={canBulk ? 9 : 8} className="px-6 py-16 text-center">
+                <td colSpan={canBulk ? 10 : 9} className="px-6 py-16 text-center">
                   <div className="inline-flex flex-col items-center gap-3">
                     <span
                       className="inline-flex items-center justify-center w-10 h-10 rounded-full
@@ -459,7 +463,7 @@ export function ParticipantsTable({
                         )}
                       </Link>
                     </td>
-                    <td className="px-5 py-3.5 text-[var(--ink)] font-medium">
+                    <td className="px-5 py-3.5 text-[var(--ink)] font-medium min-w-[200px]">
                       <Link
                         href={`/admin/participants/${r.id}`}
                         className="hover:text-[var(--cinnabar)] transition-colors duration-[var(--dur-fast)] focus-visible:shadow-[var(--shadow-focus)] rounded-sm"
@@ -467,8 +471,21 @@ export function ParticipantsTable({
                         {combinedName(r)}
                       </Link>
                     </td>
-                    <td className="px-5 py-3.5 text-[var(--ink-mute)]">
-                      {r.region ?? (
+                    <td className="px-5 py-3.5 text-[var(--ink-mute)] whitespace-nowrap">
+                      {r.region ?? <span className="text-[var(--ink-faint)]">—</span>}
+                      {segmentLabel(r.segment) ? (
+                        <span className="ml-1.5 text-[12px] text-[var(--ink)]">{segmentLabel(r.segment)}</span>
+                      ) : null}
+                    </td>
+                    <td className="px-5 py-3.5 whitespace-nowrap text-[12.5px]">
+                      {r.assigned_cs_id ? (
+                        <span className="text-[var(--ink-soft)]">
+                          {(() => {
+                            const c = customerService.find((x) => x.id === r.assigned_cs_id);
+                            return c ? c.name_cn || c.name_en || "CS" : "CS";
+                          })()}
+                        </span>
+                      ) : (
                         <span className="text-[var(--ink-faint)]">—</span>
                       )}
                     </td>

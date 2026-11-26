@@ -41,7 +41,7 @@ const NewPerson = z
     phone: z.string().trim().min(6, "Phone is required").max(40),
     email: z.union([z.string().trim().toLowerCase().email("Email looks wrong"), z.literal("")]).optional().nullable(),
     gender: z.string().trim().max(40).optional().nullable(),
-    region: z.enum(["MY", "SG", "TW", "HK", "CN"]),
+    region: z.enum(["MY", "SG", "TW", "HK", "CN", "VN"]),
     occupation: z.string().trim().max(120).optional().nullable(),
     industry: z.string().trim().max(120).optional().nullable(),
     referrer_id: z.string().uuid().optional().nullable(),
@@ -339,6 +339,7 @@ export async function POST(req: Request, { params }: Ctx) {
     for (const it of instItems) {
       const payId = await insertPayment(service, { ...base, purchase_id: it.purchase_id, amount: it.amount });
       await syncPurchaseStatus(service, it.purchase_id);
+      if (!result.purchases.includes(it.purchase_id)) result.purchases.push(it.purchase_id);
       audits.push({
         actor_id: admin.id, action: "payment.recorded", entity: "payments", entity_id: payId,
         after: { purchase_id: it.purchase_id, amount_sgd: it.amount, method: payment.method, reference: base.reference },

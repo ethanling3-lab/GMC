@@ -161,6 +161,7 @@ export function AdminShell({
           <TopBar
             onOpenNav={() => setMobileNavOpen(true)}
             showNotifications={admin.role === "super_admin"}
+            role={admin.role}
           />
           <main
             className="flex-1 min-w-0 relative"

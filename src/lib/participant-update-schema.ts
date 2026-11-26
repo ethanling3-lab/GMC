@@ -4,6 +4,7 @@ import {
   MOTIVATIONS,
   REGIONS,
 } from "@/lib/participant-import-schema";
+import { SEGMENT_VALUES } from "@/lib/participants/segment";
 
 export const ZU_ZHANG_TIERS = [
   "key_recruitment",
@@ -168,6 +169,9 @@ export const ParticipantUpdateSchema = z
 
     // Migration 032 — full briefing card (sectioned as 个人 / 上课 / 客服).
     sub_region: optionalString,
+    // Migration 088 — customer region. When the country changes the PATCH
+    // route fills it in unless the patch sets segment itself.
+    segment: z.union([z.enum(SEGMENT_VALUES), z.null()]).optional(),
     training_level: optionalString,
     health_status: optionalString,
     family_situation: optionalString,
@@ -260,6 +264,7 @@ export const SCOPED_ALLOWED_FIELDS: ReadonlyArray<keyof ParticipantUpdate> = [
   "religion",
   "attended_courses",
   "sub_region",
+  "segment",
   "training_level",
   "health_status",
   "family_situation",

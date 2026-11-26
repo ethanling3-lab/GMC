@@ -75,7 +75,7 @@ export default async function CounterPage({ params }: PageProps) {
         </p>
       ) : null}
       <div className="mt-6">
-        <CounterClient eventId={event.id} eventTitle={title} programmes={programmes} templates={templates} initialTakings={takings} />
+        <CounterClient eventId={event.id} eventTitle={title} programmes={programmes} templates={templates} initialTakings={takings} canOpenProfile={admin.role === "super_admin"} />
       </div>
     </div>
   );

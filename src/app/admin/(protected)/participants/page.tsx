@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { countUnassigned } from "@/lib/participants/assign-queue";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
@@ -38,7 +39,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
   const supabase = await createSupabaseServerClient();
 
   const baseSelect =
-    "id, region_id, name_cn, name_en, region, email, identity_confidence, financial_score, influence_score, student_qualification, motivations, archived_at, created_at, is_minor, is_old_student, has_checked_in, programme_id, programme_expires_at";
+    "id, region_id, name_cn, name_en, region, email, identity_confidence, financial_score, influence_score, student_qualification, motivations, archived_at, created_at, is_minor, is_old_student, has_checked_in, programme_id, programme_expires_at, segment, assigned_cs_id";
 
   // Filtered + scoped query
   let q = supabase.from("participants").select(baseSelect, { count: "exact" });
@@ -67,6 +68,7 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
     return { ...r, status_label: label, status_is_member: !BASE_CATEGORY_LABEL[cat] };
   });
   const total = count ?? 0;
+  const unassignedCount = admin.role === "super_admin" ? await countUnassigned() : 0;
 
   // Also fetch unfiltered total for "X of Y matching" meta
   let totalQ = supabase.from("participants").select("id", { count: "exact", head: true });
@@ -109,6 +111,21 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         <div className="flex items-center gap-3 flex-wrap">
           {admin.role === "super_admin" ? (
           <>
+          <Link
+            href="/admin/participants/assign"
+            className="inline-flex items-center gap-2 h-10 px-4 rounded-[var(--radius-pill)]
+                       border border-[var(--paper-shadow)] bg-[var(--paper-warm)]
+                       text-[12.5px] tracking-[0.04em] font-medium text-[var(--ink)]
+                       hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                       focus-visible:shadow-[var(--shadow-focus)]
+                       transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)]
+                       active:scale-[0.98]"
+          >
+            To assign · 待分配
+            <span className="tabular-nums text-[11px] px-1.5 py-0.5 rounded-full bg-[var(--cinnabar-wash)] text-[var(--cinnabar-deep)]">
+              {unassignedCount}
+            </span>
+          </Link>
           <Link
             href="/admin/participants/new"
             className="inline-flex items-center gap-2 h-10 px-4 rounded-[var(--radius-pill)]
@@ -184,13 +201,14 @@ export default async function ParticipantsPage({ searchParams }: PageProps) {
         initialArchived={filters.archived ?? "active"}
         canExport={admin.role === "super_admin"}
         programmes={statusCtx.programmes.map((p) => ({ slug: p.slug, name_cn: p.name_cn, name_en: p.name_en }))}
+        csOptions={admin.role === "super_admin" ? customerService.map((c) => ({ id: c.id, name: c.name_cn || c.name_en || "CS" })) : undefined}
       />
 
       <ParticipantsTable
         rows={rows}
         adminRole={admin.role}
         hasFilters={Boolean(
-          filters.q || filters.region || filters.identity || filters.motivation || filters.status || filters.minors,
+          filters.q || filters.region || filters.identity || filters.motivation || filters.status || filters.minors || filters.segment || filters.cs,
         )}
         customerService={customerService}
       />

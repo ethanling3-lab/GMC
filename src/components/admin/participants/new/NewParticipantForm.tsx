@@ -12,6 +12,7 @@ import {
   Toggle,
 } from "@/components/admin/participants/detail/FormControls";
 import type { AdminOption } from "@/components/admin/participants/detail/AssignmentEditor";
+import { SEGMENTS } from "@/lib/participants/segment";
 import {
   GENDERS,
   LANGUAGES,
@@ -30,6 +31,7 @@ type FormState = {
   email: string;
   phone: string;
   region: (typeof REGIONS)[number] | "";
+  segment: string;
   language: (typeof LANGUAGES)[number] | "";
   gender: (typeof GENDERS)[number] | "";
   birth_date: string;
@@ -54,6 +56,7 @@ const EMPTY: FormState = {
   email: "",
   phone: "",
   region: "",
+  segment: "",
   language: "",
   gender: "",
   birth_date: "",
@@ -167,6 +170,7 @@ export function NewParticipantForm({
       payload.email = emptyToNull(form.email);
       payload.phone = emptyToNull(form.phone);
       payload.region = form.region || null;
+      if (form.region === "MY" && form.segment) payload.segment = form.segment;
       payload.language_fluency =
         form.language === "zh" ? "cn" : form.language || null;
       payload.gender = form.gender || null;
@@ -272,6 +276,15 @@ export function NewParticipantForm({
               options={REGION_OPTIONS}
             />
           </LabelRow>
+          {form.region === "MY" ? (
+            <LabelRow label="Region · 地区">
+              <Select
+                value={form.segment || null}
+                onChange={(v) => setField("segment", v ?? "")}
+                options={SEGMENTS.filter((s) => s.value.startsWith("my_")).map((s) => ({ value: s.value as string, label: `${s.cn} · ${s.en}` }))}
+              />
+            </LabelRow>
+          ) : null}
           <LabelRow label="Language">
             <Select
               value={form.language || null}

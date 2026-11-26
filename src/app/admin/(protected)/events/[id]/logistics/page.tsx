@@ -79,7 +79,8 @@ export default async function EventLogisticsPage({
     : await createSupabaseServerClient();
   const [detail, submissionStatus, openFlags] = await Promise.all([
     loadTransferDetail(supabase, eventId),
-    loadFlightSubmissionStatus(supabase, eventId),
+    // CS see only their own customers' flights (Phase 3, 2026-11-26).
+    loadFlightSubmissionStatus(supabase, eventId, { csId: isCustomerService ? admin.id : null }),
     admin.role === "instructor" ? Promise.resolve([]) : loadOpenFlightFlags(eventId),
   ]);
   if (!detail) notFound();
@@ -140,13 +141,14 @@ export default async function EventLogisticsPage({
       name_cn: string | null;
     } | null;
   };
-  const { data: enrolRows } = await supabase
+  let enrolQ = supabase
     .from("enrollments")
-    .select("id, participant:participants!inner(region_id, name_en, name_cn)")
+    .select("id, participant:participants!inner(region_id, name_en, name_cn, assigned_cs_id)")
     .eq("event_id", eventId)
     .or(TRANSFER_ELIGIBLE_OR)
-    .not("status", "in", TRANSFER_EXCLUDED_STATUSES)
-    .returns<EnrolRow[]>();
+    .not("status", "in", TRANSFER_EXCLUDED_STATUSES);
+  if (isCustomerService) enrolQ = enrolQ.eq("participant.assigned_cs_id", admin.id);
+  const { data: enrolRows } = await enrolQ.returns<EnrolRow[]>();
   const enrollmentIds = (enrolRows ?? []).map((e) => e.id);
   const savedFlights = new Map<
     string,

@@ -82,6 +82,7 @@ type Participant = {
   attended_courses: AttendedCourse[] | null;
   // Migration 032 — full briefing card fields.
   sub_region: string | null;
+  segment?: string | null;
   training_level: string | null;
   health_status: string | null;
   family_situation: string | null;
@@ -444,6 +445,7 @@ export default async function ParticipantDetailPage({ params }: Props) {
               phone: p.phone,
               region: p.region,
               sub_region: p.sub_region,
+              segment: p.segment ?? null,
               language_fluency: p.language_fluency,
               listening_language: p.listening_language ?? "zh",
               spoken_languages: p.spoken_languages ?? ["zh"],

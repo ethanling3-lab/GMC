@@ -10,6 +10,7 @@ import {
   Toggle,
 } from "./FormControls";
 import { useParticipantPatch } from "./useParticipantPatch";
+import { MY_SEGMENTS, SEGMENTS, segmentFor, segmentLabel } from "@/lib/participants/segment";
 import {
   GENDERS,
   REGIONS,
@@ -33,6 +34,8 @@ export type IdentityData = {
   phone: string | null;
   region: string | null;
   sub_region: string | null;
+  /** Migration 088 — customer region (an admin picks it for Malaysians). */
+  segment: string | null;
   language_fluency: (typeof LANGUAGE_FLUENCIES)[number] | null;
   // Migration 074 — class language they listen in + languages they speak
   // (grouping ties listeners to a 组长 who speaks the language).
@@ -54,7 +57,10 @@ const REGION_NAME: Record<string, { en: string; cn: string }> = {
   TW: { en: "Taiwan", cn: "台湾" },
   HK: { en: "Hong Kong", cn: "香港" },
   CN: { en: "Mainland China", cn: "中国大陆" },
+  VN: { en: "Vietnam", cn: "越南" },
 };
+
+const SEGMENT_OPTIONS = SEGMENTS.map((s) => ({ value: s.value as string, label: `${s.cn} · ${s.en}` }));
 
 const REGION_OPTIONS = REGIONS.map((code) => ({
   value: code,
@@ -114,7 +120,7 @@ export function IdentityEditor({
       email: trim(draft.email),
       phone: trim(draft.phone),
       region: draft.region,
-      sub_region: trim(draft.sub_region),
+      segment: draft.segment,
       listening_language: draft.listening_language || DEFAULT_LANGUAGE,
       spoken_languages: draft.spoken_languages,
       gender: draft.gender,
@@ -206,18 +212,22 @@ export function IdentityEditor({
 
           {/* Row C — region + sub-region + language */}
           <div className="grid md:grid-cols-3 gap-x-6 gap-y-5">
-            <LabelRow label="Region · 地区">
+            <LabelRow label="Country · 国家">
               <Select
                 value={draft.region as (typeof REGIONS)[number] | null}
-                onChange={(v) => setDraft({ ...draft, region: v })}
+                onChange={(v) => {
+                  // Malaysia: keep an admin-picked 北马/中马/南马/东马, else empty.
+                  const keep = v === "MY" && draft.segment && (MY_SEGMENTS as readonly string[]).includes(draft.segment);
+                  setDraft({ ...draft, region: v, segment: v === "MY" ? (keep ? draft.segment : null) : segmentFor(v) });
+                }}
                 options={REGION_OPTIONS}
               />
             </LabelRow>
-            <LabelRow label="Sub-region · 子地区">
-              <TextInput
-                value={draft.sub_region ?? ""}
-                onChange={(v) => setDraft({ ...draft, sub_region: v })}
-                placeholder="北马 / 中马 / 南马"
+            <LabelRow label="Region · 地区">
+              <Select
+                value={draft.segment}
+                onChange={(v) => setDraft({ ...draft, segment: v })}
+                options={SEGMENT_OPTIONS}
               />
             </LabelRow>
           </div>
@@ -352,10 +362,12 @@ export function IdentityEditor({
                 <span>
                   <span className="font-medium">{initial.region}</span>
                   <span className="ml-2 text-[var(--ink-mute)]">{regionLabel}</span>
-                  {initial.sub_region ? (
+                  {segmentLabel(initial.segment) || initial.sub_region ? (
                     <span className="ml-3 inline-flex items-center h-5 px-2 rounded-[var(--radius-pill)] bg-[var(--cinnabar-wash)] text-[11.5px] text-[var(--cinnabar-deep)]">
-                      {initial.sub_region}
+                      {segmentLabel(initial.segment) ?? initial.sub_region}
                     </span>
+                  ) : initial.region === "MY" ? (
+                    <span className="ml-3 text-[11.5px] text-[var(--ink-mute)]">region not picked yet</span>
                   ) : null}
                 </span>
               ) : (

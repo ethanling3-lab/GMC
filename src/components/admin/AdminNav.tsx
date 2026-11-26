@@ -48,7 +48,22 @@ function isActive(segment: string | null, href: string): boolean {
   if (href === "/admin") return segment === null;
   // Broadcasts live inside WhatsApp.
   if (href === "/admin/whatsapp" && segment === "broadcasts") return true;
-  return segment === href.slice("/admin/".length);
+  return segment === href.slice("/admin/".length).split("/")[0];
+}
+
+// A role that can't open an item's page may still get a narrower page in the
+// same area (CS: their customers' instalments, read-only). Others: hidden.
+const FALLBACK: Record<string, NavItem> = {
+  "/admin/finance": { href: "/admin/finance/instalments", label: "Instalments", labelZh: "分期", icon: "finance" },
+};
+
+function navFor(role: string): NavItem[] {
+  const out: NavItem[] = [];
+  for (const item of PRIMARY) {
+    if (canOpenPage(role, item.href)) out.push(item);
+    else if (FALLBACK[item.href] && canOpenPage(role, FALLBACK[item.href].href)) out.push(FALLBACK[item.href]);
+  }
+  return out;
 }
 
 function NavIcon({ name }: { name: IconName }) {
@@ -279,7 +294,7 @@ export function AdminNav({
           />
         )}
         <ul className="space-y-0.5">
-          {PRIMARY.filter((item) => canOpenPage(role, item.href)).map((item) => (
+          {navFor(role).map((item) => (
             <li key={item.href}>
               <Item
                 item={item}

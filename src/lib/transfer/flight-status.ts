@@ -77,16 +77,19 @@ type FlightRow = {
 export async function loadFlightSubmissionStatus(
   supabase: SupabaseClient,
   eventId: string,
+  /** CS see only their own customers' flights (Phase 3, 2026-11-26). */
+  opts: { csId?: string | null } = {},
 ): Promise<FlightSubmissionStatus> {
-  const { data: enrolRows } = await supabase
+  let q = supabase
     .from("enrollments")
     .select(
-      "id, participant:participants!inner(id, region_id, region, phone, name_en, name_cn)",
+      "id, participant:participants!inner(id, region_id, region, phone, name_en, name_cn, assigned_cs_id)",
     )
     .eq("event_id", eventId)
     .or(TRANSFER_ELIGIBLE_OR)
-    .not("status", "in", TRANSFER_EXCLUDED_STATUSES)
-    .returns<EnrolRow[]>();
+    .not("status", "in", TRANSFER_EXCLUDED_STATUSES);
+  if (opts.csId) q = q.eq("participant.assigned_cs_id", opts.csId);
+  const { data: enrolRows } = await q.returns<EnrolRow[]>();
 
   const enrolments = enrolRows ?? [];
   const enrollmentIds = enrolments.map((e) => e.id);

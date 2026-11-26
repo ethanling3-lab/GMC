@@ -2,14 +2,16 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { SEGMENTS } from "@/lib/participants/segment";
 
 const REGIONS = [
-  { code: "", label: "All regions" },
+  { code: "", label: "All countries" },
   { code: "MY", label: "MY · Malaysia" },
   { code: "SG", label: "SG · Singapore" },
   { code: "TW", label: "TW · Taiwan" },
   { code: "HK", label: "HK · Hong Kong" },
   { code: "CN", label: "CN · Mainland China" },
+  { code: "VN", label: "VN · Vietnam" },
 ];
 
 // participant_status was dropped in 053. What remains is the one distinction
@@ -46,6 +48,8 @@ type Props = {
   canExport: boolean;
   /** Programmes for the Student status filter, in display order. */
   programmes: Array<{ slug: string; name_cn: string | null; name_en: string | null }>;
+  /** CS choices for the CS filter (Super Admin only; omit to hide it). */
+  csOptions?: Array<{ id: string; name: string }>;
 };
 
 export function FiltersBar({
@@ -55,7 +59,18 @@ export function FiltersBar({
   initialArchived = "active",
   canExport,
   programmes,
+  csOptions,
 }: Props) {
+  const SEGMENT_OPTS = [
+    { code: "", label: "All regions" },
+    ...SEGMENTS.map((s) => ({ code: s.value as string, label: `${s.cn} · ${s.en}` })),
+    { code: "none", label: "Not set yet" },
+  ];
+  const CS_OPTS = [
+    { code: "", label: "Any CS" },
+    { code: "none", label: "No CS yet · 未分配" },
+    ...(csOptions ?? []).map((c) => ({ code: c.id, label: c.name })),
+  ];
   const STATUS = [
     { code: "", label: "All statuses" },
     ...programmes.map((p) => ({ code: p.slug, label: `${p.name_cn ?? p.slug}${p.name_en ? ` · ${p.name_en}` : ""}` })),
@@ -70,6 +85,8 @@ export function FiltersBar({
   const firstRun = useRef(true);
 
   const region = sp.get("region") ?? "";
+  const segment = sp.get("segment") ?? "";
+  const cs = sp.get("cs") ?? "";
   const identity = sp.get("identity") ?? "";
   const status = sp.get("status") ?? "";
   const minors = sp.get("minors") ?? "";
@@ -180,11 +197,25 @@ export function FiltersBar({
         </div>
 
         <Select
-          label="Region"
+          label="Country"
           value={region}
           options={REGIONS}
           onChange={(v) => update({ region: v || null, page: null })}
         />
+        <Select
+          label="Region · 地区"
+          value={segment}
+          options={SEGMENT_OPTS}
+          onChange={(v) => update({ segment: v || null, page: null })}
+        />
+        {csOptions ? (
+          <Select
+            label="CS"
+            value={cs}
+            options={CS_OPTS}
+            onChange={(v) => update({ cs: v || null, page: null })}
+          />
+        ) : null}
         <Select
           label="Student status"
           value={status}

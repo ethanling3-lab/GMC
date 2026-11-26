@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { csOwnsEnrollment } from "@/lib/staff/cs-scope";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
@@ -67,6 +68,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "validation_error", detail: msg }, { status: 400 });
   }
 
+  if (admin.role === "customer_service" && !(await csOwnsEnrollment(admin.id, body.enrollment_id))) {
+    return NextResponse.json({ error: "forbidden", detail: "This person isn't one of your customers." }, { status: 403 });
+  }
+
   const result = await upsertFlightInfo({
     enrollment_id: body.enrollment_id,
     direction: body.direction,
@@ -130,6 +135,10 @@ export async function DELETE(req: Request) {
       { error: "validation_error", detail: "enrollment_id + direction required" },
       { status: 400 },
     );
+  }
+
+  if (admin.role === "customer_service" && !(await csOwnsEnrollment(admin.id, enrollment_id))) {
+    return NextResponse.json({ error: "forbidden", detail: "This person isn't one of your customers." }, { status: 403 });
   }
 
   const result = await deleteFlightInfo({

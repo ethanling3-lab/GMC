@@ -12,6 +12,7 @@ import {
 import { writeAuditLog } from "@/lib/audit";
 import { logParticipantChange } from "@/lib/participants/history";
 import { toE164OrNull } from "@/lib/whatsapp/phone";
+import { MY_SEGMENTS, segmentFor } from "@/lib/participants/segment";
 import { contactLanguageFor } from "@/lib/participants/languages";
 
 export const dynamic = "force-dynamic";
@@ -128,6 +129,20 @@ export async function PATCH(req: Request, { params }: RouteCtx) {
         ? (columnPatch.region as string | null)
         : scopedRow.region;
     columnPatch.phone_e164 = toE164OrNull(nextPhone, nextRegion);
+  }
+
+  // Customer region (migration 088): the country changed and this patch
+  // doesn't set segment itself → fill it in from the country. Moving to
+  // Malaysia keeps an admin-picked 北马/中马/南马/东马, else leaves it empty.
+  if ("region" in columnPatch && !("segment" in columnPatch)) {
+    const nextRegion = columnPatch.region as string | null;
+    if ((nextRegion ?? "").toUpperCase() === "MY") {
+      const { data: cur } = await service.from("participants").select("segment").eq("id", id).maybeSingle();
+      const keep = cur?.segment && (MY_SEGMENTS as readonly string[]).includes(cur.segment as string);
+      columnPatch.segment = keep ? cur!.segment : null;
+    } else {
+      columnPatch.segment = segmentFor(nextRegion);
+    }
   }
 
   // Programme membership (migration 043): when programme_id changes, derive

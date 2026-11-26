@@ -57,7 +57,7 @@ const ENROLLMENT_STATUSES: Array<{ value: EnrollmentStatusForBroadcast; label_en
   { value: "cancelled", label_en: "Cancelled", label_cn: "已取消" },
 ];
 
-const REGIONS = ["MY", "SG", "TW", "HK", "CN"] as const;
+const REGIONS = ["MY", "SG", "TW", "HK", "CN", "VN"] as const;
 
 const MOTIVATIONS: Array<{ value: string; label_en: string; label_cn: string }> =
   MOTIVATION_CODES.map((m) => ({

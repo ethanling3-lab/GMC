@@ -11,7 +11,7 @@ export const STAFF_ROLES = [
     value: "customer_service",
     label: "Customer service",
     labelZh: "客服",
-    description: "Handles the inbox, their assigned participants and the flight worklist.",
+    description: "Handles their assigned participants, including those customers' flights.",
   },
   {
     value: "finance",

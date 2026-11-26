@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useBreadcrumbLabels } from "./BreadcrumbContext";
 import { NotificationBell } from "./NotificationBell";
+import { canOpenPage } from "@/lib/staff/permissions";
 
 const CRUMB_LABELS: Record<string, string> = {
   admin: "Workspace",
@@ -19,6 +20,8 @@ const CRUMB_LABELS: Record<string, string> = {
   templates: "Payment plans",
   purchases: "Purchases",
   counter: "Payment counter",
+  instalments: "Instalments",
+  assign: "To assign",
   notifications: "Notifications",
   enrollments: "Enrolments",
   new: "New",
@@ -68,12 +71,21 @@ function useCrumbs(
   }, [pathname, overrides]);
 }
 
+// An event's own URL forwards a limited role to their page for it, so it
+// still works as a link even though it isn't on their allowlist.
+function crumbOpenable(role: string, href: string): boolean {
+  return canOpenPage(role, href) || /^\/admin\/events\/[^/]+$/.test(href);
+}
+
 export function TopBar({
   onOpenNav,
   showNotifications,
+  role,
 }: {
   onOpenNav?: () => void;
   showNotifications: boolean;
+  /** Crumbs this role can't open render as plain text, not dead links. */
+  role: string;
 }) {
   const pathname = usePathname() ?? "/admin";
   const labelOverrides = useBreadcrumbLabels();
@@ -177,7 +189,12 @@ export function TopBar({
             }
             return (
               <li key={c.href} className="flex items-center gap-2 min-w-0">
-                {isLast ? (
+                {!isLast && !crumbOpenable(role, c.href) ? (
+                  <>
+                    <span className={`text-[var(--ink-mute)] truncate ${c.mono ? "font-mono text-[11.5px]" : ""}`}>{c.label}</span>
+                    <Divider />
+                  </>
+                ) : isLast ? (
                   <span
                     className={`leading-[1.2] text-[var(--ink)] truncate ${
                       c.mono

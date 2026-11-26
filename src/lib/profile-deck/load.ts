@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseServiceClient } from "@/lib/supabase";
+import { segmentLabel } from "@/lib/participants/segment";
 import type {
   AttendedCourse,
   ProfileDeckEventMeta,
@@ -71,7 +72,7 @@ export async function loadProfileDeck(
   const { data: parts, error: pErr } = await supabase
     .from("participants")
     .select(
-      "id, region, region_id, name_en, name_cn, dharma_name, gender, birth_date, occupation, industry, religion, is_old_student, cs_notes, programme_id, programmes(name_en, name_cn), attended_courses, front_photo_url, sub_region, training_level, health_status, family_situation, dietary_needs, interaction_notes, course_needs, suggested_group_leader_notes, recommended_courses, forbidden_courses, cs_evaluation, language_fluency, referrer_name, personality, upgrade_potential",
+      "id, region, region_id, name_en, name_cn, dharma_name, gender, birth_date, occupation, industry, religion, is_old_student, cs_notes, programme_id, programmes(name_en, name_cn), attended_courses, front_photo_url, sub_region, segment, training_level, health_status, family_situation, dietary_needs, interaction_notes, course_needs, suggested_group_leader_notes, recommended_courses, forbidden_courses, cs_evaluation, language_fluency, referrer_name, personality, upgrade_potential",
     )
     .in("id", participantIds);
   if (pErr) throw new Error(pErr.message);
@@ -229,7 +230,8 @@ export async function loadProfileDeck(
       religion: p?.religion ?? null,
       is_old_student: p?.is_old_student ?? false,
       cs_notes: p?.cs_notes ?? null,
-      sub_region: p?.sub_region ?? null,
+      // Structured region (088) first, then the old free-text sub-region.
+      sub_region: segmentLabel((p as { segment?: string | null } | null)?.segment) ?? p?.sub_region ?? null,
       training_level: p?.training_level ?? null,
       health_status: p?.health_status ?? null,
       family_situation: p?.family_situation ?? null,

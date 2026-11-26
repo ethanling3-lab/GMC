@@ -18,7 +18,7 @@ const CS_PAGES: readonly RegExp[] = [
   /^\/admin\/programmes$/,
   new RegExp(`^/admin/programmes/(?!new$)${ID}$`),
   /^\/admin\/participants$/,
-  new RegExp(`^/admin/participants/(?!new$|import$)${ID}$`),
+  new RegExp(`^/admin/participants/(?!new$|import$|assign$)${ID}$`),
   /^\/admin\/events$/,
   new RegExp(`^/admin/events/(?!new$)${ID}/(logistics|check-in|check-in/scan|my-participants)$`),
   // Instalments of their own customers, read-only (Phase 2, 2026-11-26).

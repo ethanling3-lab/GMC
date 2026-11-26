@@ -40,14 +40,18 @@ export async function PATCH(req: Request) {
   const service = createSupabaseServiceClient();
   const { data: enrollment } = await service
     .from("enrollments")
-    .select("id, participant:participants!inner(region)")
+    .select("id, participant:participants!inner(region, assigned_cs_id)")
     .eq("id", body.enrollment_id)
-    .maybeSingle<{ id: string; participant: { region: string | null } | null }>();
+    .maybeSingle<{ id: string; participant: { region: string | null; assigned_cs_id: string | null } | null }>();
   if (!enrollment) {
     return NextResponse.json({ error: "enrollment_not_found" }, { status: 404 });
   }
   if (admin.role === "regional_lead" && enrollment.participant?.region !== admin.region) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  // CS only follow up their own customers (Phase 3, 2026-11-26).
+  if (admin.role === "customer_service" && enrollment.participant?.assigned_cs_id !== admin.id) {
+    return NextResponse.json({ error: "forbidden", detail: "This person isn't one of your customers." }, { status: 403 });
   }
 
   const now = new Date().toISOString();

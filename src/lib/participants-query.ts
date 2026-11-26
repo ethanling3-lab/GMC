@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MOTIVATIONS, type MotivationTag } from "@/lib/participants/motivations";
 import { sgDay } from "@/lib/pricing/tiers";
+import { SEGMENT_VALUES } from "@/lib/participants/segment";
 
 /**
  * Replaces the old `participant_status` lifecycle enum (dropped in migration
@@ -28,6 +29,10 @@ export type ParticipantFilters = {
    * attended before (tick or a check-in); "new_student" = none of these.
    */
   status?: string;
+  /** Customer region (migration 088), or "none" = not set yet. */
+  segment?: string;
+  /** Assigned CS id, or "none" = no CS yet (the assign queue). */
+  cs?: string;
   sort?: "recent" | "oldest" | "region_id" | "name" | "qualification";
   /** "active" (default) hides archived, "archived" shows only archived, "all" shows both. */
   archived?: "active" | "archived" | "all";
@@ -39,7 +44,7 @@ const IDENTITY_VALUES: IdentityConfidence[] = ["unverified", "verified"];
 
 const MOTIVATION_VALUES: readonly MotivationTag[] = MOTIVATIONS;
 
-const REGION_VALUES = ["MY", "SG", "TW", "HK", "CN"] as const;
+const REGION_VALUES = ["MY", "SG", "TW", "HK", "CN", "VN"] as const;
 
 const SORT_VALUES = [
   "recent",
@@ -96,7 +101,12 @@ export function parseFilters(sp: URLSearchParams | Record<string, string | strin
   const statusRaw = get("status");
   const status = statusRaw && /^[a-z_]{1,60}$/.test(statusRaw) ? statusRaw : undefined;
 
-  return { q, region, identity, motivation, minors, status, sort, archived };
+  const segRaw = get("segment");
+  const segment = segRaw && (segRaw === "none" || (SEGMENT_VALUES as readonly string[]).includes(segRaw)) ? segRaw : undefined;
+  const csRaw = get("cs");
+  const cs = csRaw && (csRaw === "none" || /^[0-9a-f-]{36}$/i.test(csRaw)) ? csRaw : undefined;
+
+  return { q, region, identity, motivation, minors, status, segment, cs, sort, archived };
 }
 
 export function parsePage(sp: URLSearchParams | Record<string, string | string[] | undefined>): number {
@@ -154,6 +164,10 @@ export function applyParticipantFilters<T extends { ilike: any; eq: any; or: any
   }
 
   if (filters.region) q = q.eq("region", filters.region);
+  if (filters.segment === "none") q = q.is("segment", null);
+  else if (filters.segment) q = q.eq("segment", filters.segment);
+  if (filters.cs === "none") q = q.is("assigned_cs_id", null);
+  else if (filters.cs) q = q.eq("assigned_cs_id", filters.cs);
   if (filters.identity === "all" || !filters.identity) {
     // Everyone. The roster shows everyone by default (Ethan, 2026-11-26);
     // "verified" / "unverified" narrow it. Broadcasts pass "all" explicitly.

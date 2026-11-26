@@ -53,6 +53,12 @@ export async function POST(req: Request) {
     );
   }
 
+  // Assigning a CS is the Super Admin's call (checks the referral first).
+  // Middleware already blocks other roles; this keeps the route safe alone.
+  if (body.action === "assign_cs" && admin.role !== "super_admin") {
+    return NextResponse.json({ error: "Only super admins can assign a CS." }, { status: 403 });
+  }
+
   // Scope check: regional_lead sees their region, customer_service sees their
   // assigned rows. Intersect the requested IDs with what this admin may touch.
   const scoped = await createSupabaseServerClient();

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { segmentLabel } from "@/lib/participants/segment";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import { requireAdmin } from "@/lib/admin-guard";
 import {
@@ -32,6 +33,7 @@ type RawRow = {
   name_en: string | null;
   name_cn: string | null;
   region: string | null;
+  segment: string | null;
   email: string | null;
   phone: string | null;
   motivations: string[] | null;
@@ -66,6 +68,7 @@ const HEADER_TO_COLUMN: Readonly<Record<string, keyof ExportRow>> = {
   name_en: "name_en",
   name_cn: "name_cn",
   region: "region",
+  segment: "segment",
   email: "email",
   phone: "phone",
   motivations: "motivations",
@@ -127,6 +130,7 @@ export async function GET(req: Request) {
     "name_en",
     "name_cn",
     "region",
+    "segment",
     "email",
     "phone",
     "motivations",
@@ -180,6 +184,7 @@ export async function GET(req: Request) {
       ...r,
       qualification: qual,
       default_class: cls,
+      segment: segmentLabel(r.segment) ?? r.segment,
       zu_zhang_dimensions: (r.zu_zhang_dimensions ?? []).join("|"),
       goal_dimensions: (r.goal_dimensions ?? []).join("|"),
       motivations: (r.motivations ?? []).join("|"),

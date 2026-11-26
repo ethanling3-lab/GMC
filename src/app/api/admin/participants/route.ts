@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { segmentFor } from "@/lib/participants/segment";
 import { z } from "zod";
 import {
   createSupabaseServerClient,
@@ -134,6 +135,12 @@ export async function POST(req: Request) {
   void _family;
   void _conflict;
   void _suggested;
+
+  // Customer region (migration 088) from the country, unless set.
+  if (!("segment" in columnFields) || columnFields.segment == null) {
+    const seg = segmentFor(columnFields.region as string | null);
+    if (seg) columnFields.segment = seg;
+  }
 
   const { data: created, error: insertErr } = await supabase
     .from("participants")

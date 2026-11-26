@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const REGIONS = ["MY", "SG", "TW", "HK", "CN"] as const;
+export const REGIONS = ["MY", "SG", "TW", "HK", "CN", "VN"] as const;
 export const GENDERS = ["male", "female", "other", "undisclosed"] as const;
 export const LANGUAGES = ["zh", "en", "both"] as const;
 import { MOTIVATIONS } from "@/lib/participants/motivations";
