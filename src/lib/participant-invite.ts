@@ -93,7 +93,7 @@ export async function inviteParticipantToAccountIfNeeded(
 }
 
 export type AccountLinkResult =
-  | { status: "sent"; user_id: string; type: AccountLinkType }
+  | { status: "sent"; user_id: string; type: AccountLinkType; url: string }
   | { status: "cooldown" | "failed" };
 
 // Sends a set-password link: an invite for a new login, otherwise a reset.
@@ -101,6 +101,7 @@ export type AccountLinkResult =
 export async function sendParticipantAccountLink(
   email: string,
   name: string,
+  opts: { next?: string; intro?: { en: string; zh: string } } = {},
 ): Promise<AccountLinkResult> {
   const user = await findAuthUserByEmail(email);
   if (user) {
@@ -112,7 +113,7 @@ export async function sendParticipantAccountLink(
   }
 
   const type: AccountLinkType = user ? "recovery" : "invite";
-  const link = await createAccountLink(email, type, "/auth/account");
+  const link = await createAccountLink(email, type, "/auth/account", opts.next);
   if ("error" in link) {
     console.warn(`[participant-invite] link failed: ${link.error}`);
     return { status: "failed" };
@@ -129,12 +130,12 @@ export async function sendParticipantAccountLink(
       ? "Set up your GMC account · 设置您的 GMC 账户"
       : "Set your GMC password · 设置您的 GMC 密码",
     html: `<p>${greetingEn}</p>
-<p>${isInvite ? "Your GMC account is ready." : "We received a request to set your GMC password."} Open the link below and choose a password.</p>
+<p>${opts.intro ? escapeHtml(opts.intro.en) : isInvite ? "Your GMC account is ready." : "We received a request to set your GMC password."} Open the link below and choose a password.</p>
 <p><a href="${url}">Set my password</a></p>
 <p>This link works once and expires. If it has expired, request a new one on the sign-in page.${isInvite ? "" : " If you didn't ask for this, you can ignore this email."}</p>
 <hr />
 <p>${greetingZh}</p>
-<p>${isInvite ? "您的 GMC 账户已准备就绪。" : "我们收到了设置您 GMC 密码的请求。"}请打开以下链接并设置密码。</p>
+<p>${opts.intro ? escapeHtml(opts.intro.zh) : isInvite ? "您的 GMC 账户已准备就绪。" : "我们收到了设置您 GMC 密码的请求。"}请打开以下链接并设置密码。</p>
 <p><a href="${url}">设置我的密码</a></p>
 <p>此链接仅可使用一次，并会过期。如已过期，请在登录页面重新申请。${isInvite ? "" : "如果这不是您本人的操作，请忽略此邮件。"}</p>`,
     textFooter: `Set your password · 设置密码: ${link.url}`,
@@ -145,7 +146,7 @@ export async function sendParticipantAccountLink(
     if (isInvite) await createSupabaseServiceClient().auth.admin.deleteUser(link.userId);
     return { status: "failed" };
   }
-  return { status: "sent", user_id: link.userId, type };
+  return { status: "sent", user_id: link.userId, type, url: link.url };
 }
 
 // Link an existing participants row to an auth user (called from /auth/callback

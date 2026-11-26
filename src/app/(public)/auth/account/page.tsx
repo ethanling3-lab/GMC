@@ -11,11 +11,11 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams: Promise<{ token?: string; type?: string }>;
+  searchParams: Promise<{ token?: string; type?: string; next?: string }>;
 };
 
 export default async function AccountSetupPage({ searchParams }: PageProps) {
-  const { token, type } = await searchParams;
+  const { token, type, next } = await searchParams;
   const valid = Boolean(token) && (type === "invite" || type === "recovery");
 
   return (
@@ -39,6 +39,7 @@ export default async function AccountSetupPage({ searchParams }: PageProps) {
               token={token as string}
               type={type as "invite" | "recovery"}
               endpoint="/api/auth/participant/setup"
+              next={next}
             />
           </div>
         ) : null}

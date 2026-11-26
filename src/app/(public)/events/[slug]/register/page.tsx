@@ -9,6 +9,8 @@ import { currentEventSlug } from "@/lib/event-slug";
 import type { PriceTier } from "@/lib/pricing/tiers";
 import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { childrenOf } from "@/lib/participants/children";
+import { normalizeFormSchema } from "@/lib/event-form-schema";
+import { missingProfileFields, REQUIRED_PROFILE_COLUMNS, type RequiredProfile } from "@/lib/participants/required-profile";
 
 export const metadata: Metadata = { title: "Register · 报名 — GMC" };
 export const dynamic = "force-dynamic";
@@ -55,7 +57,7 @@ export default async function EventRegisterPage({ params }: PageProps) {
   const { data: event } = await service
     .from("events")
     .select(
-      "id, slug, status, title_en, title_cn, start_date, end_date, venue, price, misc_fee, price_tiers, course_id, currency, capacity, requires_approval, enrollment_opens_at, enrollment_closes_at",
+      "id, slug, status, title_en, title_cn, start_date, end_date, venue, price, misc_fee, price_tiers, course_id, currency, capacity, requires_approval, enrollment_opens_at, enrollment_closes_at, form_schema",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -102,6 +104,13 @@ export default async function EventRegisterPage({ params }: PageProps) {
 
   const profile = await loadSelfProfile(participant.id);
   if (!profile) notFound();
+  // Phase 5: the six required details, and the event's own questions.
+  const { data: reqRow } = await service.from("participants").select(REQUIRED_PROFILE_COLUMNS).eq("id", participant.id).maybeSingle();
+  const required = (reqRow ?? {
+    name_cn: null, name_en: null, phone: null, occupation: null, industry: null, referrer_name: null, referrer_contact: null,
+  }) as unknown as RequiredProfile;
+  const missing = missingProfileFields(required);
+  const formSchema = normalizeFormSchema((event as { form_schema?: unknown }).form_schema);
 
   // Show the amount this person will actually be charged — same shared
   // rule the register API uses, so preview and charge always match.
@@ -134,8 +143,9 @@ export default async function EventRegisterPage({ params }: PageProps) {
         Confirm your registration.
       </h1>
       <p className="mt-3 text-[14px] leading-[1.7] text-[var(--ink-soft)] max-w-[60ch]">
-        We already have your details. Just review and confirm — we&apos;ll take
-        you to payment.
+        {missing.length > 0
+          ? "First, add the details every registration needs. Then confirm and we'll take you to payment."
+          : "We already have your details. Just review and confirm, and we'll take you to payment."}
       </p>
 
       <QuickRegisterConfirm
@@ -154,6 +164,9 @@ export default async function EventRegisterPage({ params }: PageProps) {
         venue={(event as { venue: string | null }).venue}
         price={amountDue}
         attendees={attendees}
+        required={required}
+        missing={missing}
+        formSchema={formSchema}
         currency={priced.currency ?? "SGD"}
         profile={{
           name_cn: profile.name_cn,

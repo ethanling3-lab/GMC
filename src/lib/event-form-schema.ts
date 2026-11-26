@@ -130,7 +130,7 @@ const DEFAULT_IDENTITY: IdentityToggles = {
 export function defaultFormSchema(): FormSchema {
   return {
     version: 1,
-    identity: { ...DEFAULT_IDENTITY },
+    identity: withAlwaysRequired({ ...DEFAULT_IDENTITY }),
     fields: [],
   };
 }
@@ -143,9 +143,18 @@ export function normalizeFormSchema(raw: unknown): FormSchema {
   if (!parsed.success) return base;
   return {
     version: 1,
-    identity: { ...base.identity, ...(parsed.data.identity ?? {}) },
+    identity: withAlwaysRequired({ ...base.identity, ...(parsed.data.identity ?? {}) }),
     fields: parsed.data.fields ?? [],
   };
+}
+
+// Phase 5 (Ethan, 2026-11-26): occupation, industry and referrer (name +
+// contact) are required for every event and course, whatever an older
+// event's switches say. Name and phone are always required already.
+export const ALWAYS_REQUIRED = ["require_occupation", "require_industry", "require_referrer"] as const;
+
+export function withAlwaysRequired(i: IdentityToggles): IdentityToggles {
+  return { ...i, require_occupation: true, require_industry: true, require_referrer: true };
 }
 
 // Build the Zod schema used to validate a given event's submitted answers.
@@ -193,7 +202,11 @@ export function buildAnswersSchema(schema: FormSchema | null | undefined) {
         break;
     }
 
-    if (f.required && f.type !== "checkbox_ack") {
+    if (f.required && f.type === "checkbox_ack") {
+      // Required acknowledgement: must be present AND true (a missing key
+      // used to fall through to the optional branch below and pass).
+      shape[f.id] = base;
+    } else if (f.required) {
       if (f.type === "multi_select") {
         base = (base as z.ZodArray<z.ZodString>).min(
           1,

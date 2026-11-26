@@ -87,7 +87,7 @@
   },
   "register": {
     "title": "Registration",
-    "subtitle": "Please fill in your details accurately. We'll confirm via email and WhatsApp.",
+    "subtitle": "Fill in your details to create your GMC account. We'll email you a link to set a password, then you confirm your place.",
     "selectEvent": "Select an event",
     "selectEventPlaceholder": "Choose one",
     "nameCn": "Chinese name",
@@ -116,7 +116,7 @@
     "referrerNote": "Please tell us who introduced you. We may reach out to them to get to know you better.",
     "referrerName": "Referrer's name",
     "referrerContact": "Referrer's contact",
-    "submit": "Submit registration",
+    "submit": "Continue",
     "submittingAria": "Submitting",
     "successTitle": "Registration received",
     "successBody": "We've emailed and WhatsApp-ed you a confirmation link. Please click it to review your details.",

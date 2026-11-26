@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { claimParticipantByEmail } from "@/lib/participant-invite";
+import { safeMemberNext } from "@/lib/auth/safe-next";
 import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,8 @@ const Body = z.object({
   token: z.string().min(16).max(256),
   type: z.enum(["invite", "recovery"]),
   password: z.string().min(8).max(200),
+  /** Where a member lands afterwards, e.g. the event they signed up for. */
+  next: z.string().max(300).optional(),
 });
 
 const EXPIRED =
@@ -26,7 +29,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { token, type, password } = parsed.data;
+  const { token, type, password, next } = parsed.data;
 
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.verifyOtp({ token_hash: token, type });
@@ -35,7 +38,7 @@ export async function POST(req: Request) {
   }
 
   const claim = await claimParticipantByEmail(data.user.id, data.user.email);
-  let redirect = "/me";
+  let redirect = safeMemberNext(next);
   if (claim.status === "conflict") {
     await supabase.auth.signOut();
     return NextResponse.json(

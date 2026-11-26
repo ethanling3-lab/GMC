@@ -7,6 +7,9 @@ import type { PriceTier } from "@/lib/pricing/tiers";
 import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { registrationBlock } from "@/lib/event-registration-window";
 import { childrenOf } from "@/lib/participants/children";
+import { z } from "zod";
+import { buildAnswersSchema, normalizeFormSchema } from "@/lib/event-form-schema";
+import { missingProfileFields, REQUIRED_PROFILE_COLUMNS, type RequiredProfile } from "@/lib/participants/required-profile";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,8 +24,9 @@ type RouteCtx = { params: Promise<{ slug: string }> };
 //   1. requireParticipant() — session must be linked to a participants row
 //   2. Load event by slug; reject if not status=open
 //   3. Capacity check via isEventFull
-//   4. Insert enrollment (referrer = self for now; no separate referrer
-//      tracking on quick re-registration; that's the recruit flow)
+//   4. Insert enrollment with the event's question answers (Phase 5:
+//      profile must have the six required details, answers must pass the
+//      event's form schema)
 //   5. Mint payment token if there's a price
 //   6. Return {payment_token, enrollment_id} so the client can redirect
 
@@ -32,7 +36,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
 
   // Who is attending: the logged-in person and/or their children
   // (migration 084). No body = just themselves, as before.
-  const body = (await req.json().catch(() => ({}))) as { participant_ids?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { participant_ids?: unknown; answers?: unknown };
   const requested = Array.isArray(body.participant_ids)
     ? [...new Set(body.participant_ids.filter((x): x is string => typeof x === "string"))]
     : [participant.id];
@@ -41,6 +45,16 @@ export async function POST(req: Request, { params }: RouteCtx) {
   }
 
   const service = createSupabaseServiceClient();
+
+  // Phase 5: the account holder's six required details must be on file.
+  const { data: me } = await service.from("participants").select(REQUIRED_PROFILE_COLUMNS).eq("id", participant.id).maybeSingle();
+  const missing = me ? missingProfileFields(me as unknown as RequiredProfile) : ["name" as const];
+  if (missing.length) {
+    return NextResponse.json(
+      { error: "profile_incomplete", missing, detail: "Please complete your profile first. 请先完善个人资料。" },
+      { status: 400 },
+    );
+  }
 
   const childIds = new Set((await childrenOf(participant.id, service)).map((c) => c.id));
   for (const id of requested) {
@@ -51,7 +65,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
 
   const { data: event } = await service
     .from("events")
-    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, course_id, start_date, enrollment_opens_at, enrollment_closes_at")
+    .select("id, slug, status, capacity, requires_approval, price, misc_fee, price_tiers, course_id, start_date, enrollment_opens_at, enrollment_closes_at, form_schema")
     .eq("slug", slug)
     .maybeSingle();
   if (!event) {
@@ -72,6 +86,15 @@ export async function POST(req: Request, { params }: RouteCtx) {
   };
   if (ev.status !== "open" || registrationBlock(ev)) {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
+  }
+
+  // The event's own questions (asked here now that everyone signs in).
+  const answersParsed = buildAnswersSchema(normalizeFormSchema((event as { form_schema?: unknown }).form_schema)).safeParse(body.answers ?? {});
+  if (!answersParsed.success) {
+    return NextResponse.json(
+      { error: "answers_invalid", detail: "Please answer the event's questions. 请回答活动问题。", issues: z.treeifyError(answersParsed.error) },
+      { status: 400 },
+    );
   }
 
   // Capacity gate.
@@ -107,6 +130,7 @@ export async function POST(req: Request, { params }: RouteCtx) {
         price_tier_key: pricing.price_tier_key,
         amount_due: pricing.amount_due,
         price_basis: pricing.price_basis,
+        form_answers: answersParsed.data,
       })
       .select("id")
       .single();

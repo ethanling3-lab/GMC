@@ -1,7 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { useLocale } from "@/lib/locale-client";
+import { DynamicFormFields } from "@/components/forms/DynamicFormFields";
+import { buildAnswersSchema, type FormSchema } from "@/lib/event-form-schema";
+import type { RequiredField, RequiredProfile } from "@/lib/participants/required-profile";
+import { CompleteProfileCard } from "./CompleteProfileCard";
 
 type Profile = {
   name_cn: string | null;
@@ -34,7 +42,14 @@ type Props = {
   price: number | string | null;
   currency: string;
   profile: Profile;
+  /** Phase 5: the six required details, and which are still missing. */
+  required: RequiredProfile;
+  missing: RequiredField[];
+  /** The event's own questions, answered once for everyone registered. */
+  formSchema: FormSchema;
 };
+
+type AnswersForm = { answers: Record<string, unknown> };
 
 export function QuickRegisterConfirm({
   attendees,
@@ -46,8 +61,30 @@ export function QuickRegisterConfirm({
   price,
   currency,
   profile,
+  required,
+  missing,
+  formSchema,
 }: Props) {
   const router = useRouter();
+  const { locale } = useLocale();
+  const questions = formSchema.fields.filter((f) => f.type !== "section_header");
+  const answersResolver = useMemo(
+    () => zodResolver(z.object({ answers: buildAnswersSchema(formSchema) })),
+    [formSchema],
+  );
+  const defaultAnswers = useMemo(() => {
+    const out: Record<string, unknown> = {};
+    for (const f of formSchema.fields) {
+      if (f.type === "section_header") continue;
+      out[f.id] = f.type === "multi_select" ? [] : f.type === "checkbox_ack" ? false : "";
+    }
+    return out;
+  }, [formSchema]);
+  const qForm = useForm<AnswersForm>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: answersResolver as any,
+    defaultValues: { answers: defaultAnswers },
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasFamily = attendees.length > 1;
@@ -73,6 +110,18 @@ export function QuickRegisterConfirm({
       setError("Tick who is attending. · 请勾选参加者。");
       return;
     }
+    let answers: Record<string, unknown> = {};
+    if (questions.length > 0) {
+      let ok = false;
+      await qForm.handleSubmit((vals) => {
+        answers = vals.answers;
+        ok = true;
+      })();
+      if (!ok) {
+        setError("Please answer the event's questions above. · 请回答上方的活动问题。");
+        return;
+      }
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -81,7 +130,7 @@ export function QuickRegisterConfirm({
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ participant_ids: chosen.map((a) => a.id) }),
+          body: JSON.stringify({ participant_ids: chosen.map((a) => a.id), answers }),
         },
       );
       const json = await res.json().catch(() => ({}));
@@ -93,6 +142,8 @@ export function QuickRegisterConfirm({
               ? "This event is full."
               : json?.error === "event_not_open"
                 ? "This event is not currently open for registration."
+                : json?.error === "profile_incomplete"
+                ? "Please complete your profile first. · 请先完善个人资料。"
                 : json?.detail || "Could not complete registration. Please try again.";
         setError(err);
         setSubmitting(false);
@@ -159,6 +210,10 @@ export function QuickRegisterConfirm({
     );
   }
 
+  if (missing.length > 0) {
+    return <CompleteProfileCard initial={required} missing={missing} />;
+  }
+
   return (
     <div className="mt-8 space-y-6">
       {/* Event summary card */}
@@ -207,6 +262,23 @@ export function QuickRegisterConfirm({
           <Pair label="Language · 语言" value={langLabel} />
         </dl>
       </section>
+
+      {questions.length > 0 ? (
+        <section className="rounded-[var(--radius-lg)] border border-[var(--paper-shadow)] bg-[var(--paper-warm)] p-5 md:p-6 shadow-[var(--shadow-paper-1)]">
+          <div className="text-[10px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">
+            Event questions · 活动问题
+          </div>
+          <div className="mt-4">
+            <DynamicFormFields
+              schema={formSchema}
+              locale={locale}
+              register={qForm.register}
+              control={qForm.control}
+              errors={qForm.formState.errors}
+            />
+          </div>
+        </section>
+      ) : null}
 
       <WhoIsAttending
         attendees={attendees}

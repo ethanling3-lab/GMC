@@ -87,7 +87,7 @@
   },
   "register": {
     "title": "报名",
-    "subtitle": "请如实填写以下信息。我们会通过邮件和 WhatsApp 与你确认。",
+    "subtitle": "请如实填写资料以创建 GMC 账户。我们会发送设置密码的链接到您的邮箱，设置后即可确认报名。",
     "selectEvent": "选择课程",
     "selectEventPlaceholder": "请选择",
     "nameCn": "中文姓名",
@@ -116,7 +116,7 @@
     "referrerNote": "请填写带你来的介绍人。我们会通过他/她进一步了解你的情况。",
     "referrerName": "介绍人姓名",
     "referrerContact": "介绍人联系方式",
-    "submit": "提交报名",
+    "submit": "继续",
     "submittingAria": "正在提交",
     "successTitle": "报名信息已收到",
     "successBody": "我们已将确认链接发送到你的邮箱与 WhatsApp。请点击链接核对信息。",

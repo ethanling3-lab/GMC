@@ -36,6 +36,8 @@ export async function createAccountLink(
   email: string,
   type: AccountLinkType,
   path: "/auth/setup" | "/auth/account",
+  /** Where to land after the password is set (checked again on use). */
+  next?: string,
 ): Promise<{ userId: string; url: string } | { error: string }> {
   const service = createSupabaseServiceClient();
   const { data, error } = await service.auth.admin.generateLink({ type, email });
@@ -44,5 +46,6 @@ export async function createAccountLink(
     return { error: error?.message ?? "link_failed" };
   }
   const qs = new URLSearchParams({ token, type });
+  if (next) qs.set("next", next);
   return { userId: data.user.id, url: `${siteUrl()}${path}?${qs.toString()}` };
 }

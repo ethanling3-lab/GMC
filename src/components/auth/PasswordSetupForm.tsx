@@ -9,10 +9,13 @@ export function PasswordSetupForm({
   token,
   type,
   endpoint,
+  next,
 }: {
   token: string;
   type: "invite" | "recovery";
   endpoint: string;
+  /** Member page to land on afterwards (the server checks it). */
+  next?: string;
 }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -35,7 +38,7 @@ export function PasswordSetupForm({
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, type, password }),
+        body: JSON.stringify({ token, type, password, ...(next ? { next } : {}) }),
       });
       const json = (await res.json().catch(() => ({}))) as { detail?: string; redirect?: string };
       if (!res.ok) {

@@ -13,7 +13,6 @@ import {
   normalizeFormSchema,
   type FormSchema,
 } from "@/lib/event-form-schema";
-import { DynamicFormFields } from "./DynamicFormFields";
 import {
   FieldBlock,
   PhoneField,
@@ -52,7 +51,9 @@ type SubmitState =
   | { status: "submitting" }
   | {
       status: "success";
-      devConfirmUrl?: string;
+      email: string;
+      link: "sent" | "cooldown" | "failed";
+      devAccountUrl?: string;
     }
   | { status: "error"; code?: string; detail?: string; issues?: unknown };
 
@@ -113,7 +114,8 @@ export function RegistrationForm({
   const resolver = useMemo(
     () =>
       zodResolver(
-        buildRegistrationSchemaFor(activeSchema.identity, activeSchema),
+        // Event questions are asked after sign-in (Phase 5), not here.
+        buildRegistrationSchemaFor(activeSchema.identity, { ...activeSchema, fields: [] }),
       ),
     [activeSchema],
   );
@@ -205,7 +207,9 @@ export function RegistrationForm({
       }
       setSubmitState({
         status: "success",
-        devConfirmUrl: json.dev_confirm_url,
+        email: data.email,
+        link: json.link === "cooldown" || json.link === "failed" ? json.link : "sent",
+        devAccountUrl: json.dev_account_url,
       });
     } catch (err) {
       console.error("/api/register network error", err);
@@ -214,25 +218,41 @@ export function RegistrationForm({
   }
 
   if (submitState.status === "success") {
+    const zh = locale === "zh";
+    const st = submitState;
     return (
       <div className="bg-[var(--paper-warm)] border border-[var(--paper-shadow)] p-10 md:p-14 rounded-[var(--radius-lg)] shadow-[var(--shadow-paper-1)]">
-        <span className="eyebrow">{t("common.success")}</span>
+        <span className="eyebrow">{zh ? "请查收邮件" : "Check your email"}</span>
         <h2 className="mt-5 font-display text-[var(--ink)]">
-          {t("register.successTitle")}
+          {st.link === "failed"
+            ? zh ? "邮件未能发出" : "We couldn't send the email"
+            : zh ? "设置密码，完成报名" : "Set your password to finish"}
         </h2>
         <p className="mt-4 text-[15px] leading-[1.75] text-[var(--ink-soft)] max-w-[540px]">
-          {t("register.successBody")}
+          {st.link === "failed"
+            ? zh
+              ? "您的资料已保存。请到登录页面选择「设置账户」重新获取链接。"
+              : "Your details are saved. Go to the sign-in page and choose Set up account to get the link again."
+            : st.link === "cooldown"
+              ? zh
+                ? `我们刚刚已发送链接到 ${st.email}，请查看收件箱（几分钟内不会重复发送）。`
+                : `We sent a link to ${st.email} a few minutes ago. Please check your inbox (we don't resend within 5 minutes).`
+              : zh
+                ? `我们已发送链接到 ${st.email}。打开链接设置密码后，您将回到此活动确认报名并回答活动问题。`
+                : `We've emailed a link to ${st.email}. Open it to set your password, and you'll come back here to answer the event's questions and confirm your place.`}
         </p>
-        {submitState.devConfirmUrl ? (
+        <p className="mt-3 text-[13px] text-[var(--ink-mute)]">
+          {zh ? "没有收到？请检查垃圾邮件，或到" : "Nothing arrived? Check spam, or go to "}
+          <a href="/login" className="underline underline-offset-4 text-[var(--cinnabar-deep)]" style={{ color: "var(--cinnabar-deep)" }}>
+            {zh ? "登录页面" : "the sign-in page"}
+          </a>
+          {zh ? "重新获取链接。" : " to get a new link."}
+        </p>
+        {st.devAccountUrl ? (
           <div className="mt-6 p-4 bg-[var(--paper-deep)] border border-dashed border-[var(--paper-shadow)] text-[12px]">
-            <div className="text-[var(--ink-mute)] tracking-[0.18em] uppercase mb-1">
-              Dev · confirm link
-            </div>
-            <a
-              href={submitState.devConfirmUrl}
-              className="break-all text-[var(--cinnabar)] underline"
-            >
-              {submitState.devConfirmUrl}
+            <div className="text-[var(--ink-mute)] tracking-[0.18em] uppercase mb-1">Dev · set-password link</div>
+            <a href={st.devAccountUrl} className="break-all text-[var(--cinnabar)] underline">
+              {st.devAccountUrl}
             </a>
           </div>
         ) : null}
@@ -533,22 +553,13 @@ export function RegistrationForm({
         </div>
       ) : null}
 
-      {/* Custom questions from event form schema */}
+      {/* Event questions come after sign-in (Phase 5). */}
       {activeSchema.fields.length > 0 ? (
-        <div className="mt-2 pt-10 border-t border-[var(--paper-shadow)]">
-          <span className="eyebrow">
-            {locale === "zh" ? "本次活动问题" : "Event questions"}
-          </span>
-          <div className="mt-6">
-            <DynamicFormFields
-              schema={activeSchema}
-              locale={locale}
-              register={register as unknown as Parameters<typeof DynamicFormFields>[0]["register"]}
-              control={control as unknown as Parameters<typeof DynamicFormFields>[0]["control"]}
-              errors={errors as unknown as Parameters<typeof DynamicFormFields>[0]["errors"]}
-            />
-          </div>
-        </div>
+        <p className="text-[13px] leading-[1.7] text-[var(--ink-mute)]">
+          {locale === "zh"
+            ? "设置密码后，您将回答本次活动的问题并确认报名。"
+            : "After you set your password, you'll answer this event's questions and confirm your place."}
+        </p>
       ) : null}
 
       <div className="mt-2 pt-8 border-t border-[var(--paper-shadow)]">
@@ -575,7 +586,20 @@ export function RegistrationForm({
           className="bg-[var(--cinnabar-wash)] border border-[var(--cinnabar)]/30 px-5 py-4 text-[14px] text-[var(--cinnabar-deep)]"
         >
           <strong className="font-semibold">{t("register.errorTitle")}: </strong>
-          {submitState.code === "already_enrolled"
+          {submitState.code === "account_exists"
+            ? (
+              <>
+                {locale === "zh" ? "此邮箱已有账户，请登录后报名。" : "This email already has an account. Sign in to register."}{" "}
+                <a
+                  href={`/login?next=${encodeURIComponent(`/events/${encodeURIComponent(selectedSlug)}/register`)}`}
+                  className="underline underline-offset-4 font-medium"
+                  style={{ color: "var(--cinnabar-deep)" }}
+                >
+                  {locale === "zh" ? "登录" : "Sign in"}
+                </a>
+              </>
+            )
+            : submitState.code === "already_enrolled"
             ? t("register.errorDuplicate")
             : submitState.code === "no_seats"
               ? locale === "zh"
@@ -598,7 +622,7 @@ export function RegistrationForm({
                         ? "找不到此活动。"
                         : "We couldn't find this event."
                       : t("register.errorGeneric")}
-          {submitState.code && submitState.code !== "already_enrolled" ? (
+          {submitState.code && submitState.code !== "already_enrolled" && submitState.code !== "account_exists" ? (
             <span className="ml-2 font-mono text-[11.5px] opacity-70">
               [{submitState.code}
               {submitState.detail ? `: ${submitState.detail}` : ""}]

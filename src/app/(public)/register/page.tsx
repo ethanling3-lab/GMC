@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentEventSlug } from "@/lib/event-slug";
 import { RegistrationForm } from "@/components/forms/RegistrationForm";
-import { createSupabaseServiceClient } from "@/lib/supabase";
+import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase";
 import { getServerLocale } from "@/lib/locale-server";
 import { getDict, t } from "@/lib/i18n";
 import { verifyPrefillToken } from "@/lib/tokens";
@@ -87,6 +87,20 @@ export default async function RegisterPage({ searchParams }: PageProps) {
   const d = getDict(locale);
   const l = (p: string, f?: string) => t(d, p, f);
 
+  // Signed-in members skip the sign-up form (Phase 5: accounts required).
+  {
+    const supabase = await createSupabaseServerClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: me } = await createSupabaseServiceClient()
+        .from("participants")
+        .select("id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+      if (me) redirect(sp.event ? `/events/${encodeURIComponent(sp.event)}/register` : "/events");
+    }
+  }
+
   const prefillValues = await resolvePrefill(sp.prefill);
   const prefillToken = prefillValues ? sp.prefill : undefined;
   const linkedEventUnavailable =
@@ -116,8 +130,8 @@ export default async function RegisterPage({ searchParams }: PageProps) {
         <span className="eyebrow">{l("register.title")}</span>
         <h1 className="mt-5 font-display text-[var(--ink)]">
           {locale === "zh"
-            ? "填写报名信息"
-            : "Complete your registration"}
+            ? "创建账户并报名"
+            : "Create your account to register"}
         </h1>
         <p className="mt-5 text-[16px] leading-[1.75] text-[var(--ink-soft)] max-w-[640px]">
           {l("register.subtitle")}

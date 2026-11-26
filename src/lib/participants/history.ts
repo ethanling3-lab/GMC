@@ -16,7 +16,8 @@ const same = (a: unknown, b: unknown) =>
   JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 export async function logParticipantChange(args: {
-  actorId: string;
+  /** Staff member, or null when the participant edited their own details. */
+  actorId: string | null;
   participantId: string;
   before: Record<string, unknown>;
   after: Record<string, unknown>;
@@ -117,7 +118,7 @@ export async function loadParticipantHistory(participantId: string): Promise<His
   return rows.map((r) => ({
     id: r.id,
     at: r.created_at,
-    actor: r.actor_id ? (actors.get(r.actor_id) ?? "Unknown staff") : "System",
+    actor: r.actor_id ? (actors.get(r.actor_id) ?? "Unknown staff") : "Participant or system",
     label: EVENT_LABEL[r.action] ?? null,
     changes:
       r.action === "participant.fields_changed"

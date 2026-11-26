@@ -3,6 +3,7 @@ import {
   buildAnswersSchema,
   type FormSchema as EventFormSchema,
   type IdentityToggles,
+  withAlwaysRequired,
 } from "./event-form-schema";
 
 // ISO country codes we actively support. Keep in sync with region_id trigger in migration.
@@ -52,14 +53,14 @@ export function buildRegistrationSchemaFor(
   identity: IdentityToggles | undefined | null,
   formSchema: EventFormSchema,
 ) {
-  const i: IdentityToggles = identity ?? {
+  const i: IdentityToggles = withAlwaysRequired(identity ?? {
     require_name_cn: true,
     require_birth_date: false,
     require_gender: false,
     require_occupation: false,
     require_industry: false,
     require_referrer: true,
-  };
+  });
   const requiredStr = (msg: string) => z.string().trim().min(1, msg).max(120);
   const optionalStr = z.string().trim().max(120).optional().or(z.literal(""));
 

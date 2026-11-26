@@ -168,8 +168,9 @@ export function EventFormBuilder({ eventId, initial, canEdit }: Props) {
           Identity block · 必填身份字段
         </div>
         <p className="mt-2 text-[12px] leading-[1.7] text-[var(--ink-soft)] max-w-[62ch]">
-          Name (EN), email, phone and region are always required. Toggle the
-          others as needed for this event.
+          Name (EN), email, phone, region, occupation, industry and referrer
+          (name + contact) are always required. Toggle the others as needed
+          for this event.
         </p>
 
         <div className="mt-4 grid md:grid-cols-2 gap-2">
@@ -192,27 +193,6 @@ export function EventFormBuilder({ eventId, initial, canEdit }: Props) {
             zh="需要性别"
             checked={draft.identity.require_gender}
             onChange={(v) => updateIdentity("require_gender", v)}
-            disabled={!canEdit}
-          />
-          <IdentityToggle
-            label="Require occupation"
-            zh="需要职业"
-            checked={draft.identity.require_occupation}
-            onChange={(v) => updateIdentity("require_occupation", v)}
-            disabled={!canEdit}
-          />
-          <IdentityToggle
-            label="Require industry"
-            zh="需要行业"
-            checked={draft.identity.require_industry}
-            onChange={(v) => updateIdentity("require_industry", v)}
-            disabled={!canEdit}
-          />
-          <IdentityToggle
-            label="Require referrer"
-            zh="需要介绍人"
-            checked={draft.identity.require_referrer}
-            onChange={(v) => updateIdentity("require_referrer", v)}
             disabled={!canEdit}
           />
         </div>

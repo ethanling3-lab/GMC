@@ -2,11 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createSupabaseServiceClient } from "@/lib/supabase";
 import { buildRegistrationSchemaFor } from "@/lib/validation";
-import { createToken, verifyPrefillToken } from "@/lib/tokens";
-import { sendEmail } from "@/lib/email";
-import { sendWhatsAppTemplate } from "@/lib/whatsapp";
-import { normalizePhone } from "@/lib/whatsapp/phone";
-import { resolveMetaLanguage } from "@/lib/inbox/whatsapp-templates";
+import { verifyPrefillToken } from "@/lib/tokens";
 import { normalizeFormSchema } from "@/lib/event-form-schema";
 import {
   upsertParticipant,
@@ -15,11 +11,21 @@ import {
 } from "@/lib/participants-write";
 import { isEventFull } from "@/lib/event-capacity";
 import { setMarketingStatus } from "@/lib/whatsapp/consent";
-import type { PriceTier } from "@/lib/pricing/tiers";
-import { resolveEnrollmentPrice } from "@/lib/pricing/resolve-server";
 import { registrationBlock } from "@/lib/event-registration-window";
+import { sendParticipantAccountLink } from "@/lib/participant-invite";
+import { writeAuditLog } from "@/lib/audit";
 
 export const runtime = "nodejs";
+
+// POST /api/register — public sign-up for an event (Phase 5, Ethan
+// 2026-11-26). Registering needs an account, so this no longer creates an
+// enrolment. It saves the person's details and emails a one-time "set your
+// password" link that lands them, signed in, on /events/<slug>/register to
+// answer the event's questions and confirm.
+//
+//   • Email already has an account → nothing is changed; they're told to
+//     sign in (409 account_exists).
+//   • Otherwise their record is created or updated, then the link is sent.
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -29,13 +35,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  // We need the event's form_schema before we can build the correct Zod schema,
-  // so do a minimal parse first to grab the event_slug + optional prefill_token.
   const presliced = z
-    .object({
-      event_slug: z.string().min(1),
-      prefill_token: z.string().max(200).optional(),
-    })
+    .object({ event_slug: z.string().min(1), prefill_token: z.string().max(200).optional() })
     .passthrough()
     .safeParse(body);
   if (!presliced.success) {
@@ -43,107 +44,56 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseServiceClient();
-
-  // 1) Find the event by slug, ensure it's accepting registrations.
-  //    Fall back to a form_schema-free query if migration 008 hasn't been
-  //    applied yet (legacy environments).
-  let eventRow:
-    | {
-        id: string;
-        status: string;
-        requires_approval: boolean;
-        enrollment_opens_at: string | null;
-        enrollment_closes_at: string | null;
-        capacity: number | null;
-        form_schema?: unknown;
-        price?: number | string | null;
-        misc_fee?: number | string | null;
-        price_tiers?: PriceTier[] | null;
-        course_id?: string | null;
-        start_date?: string | null;
-      }
-    | null = null;
-  // When the tiered-pricing columns (migration 042) aren't present we skip
-  // writing them on the enrollment insert.
-  let tieredAvailable = true;
-  {
-    const primary = await supabase
-      .from("events")
-      .select(
-        "id, status, requires_approval, enrollment_opens_at, enrollment_closes_at, capacity, form_schema, price, misc_fee, price_tiers, course_id, start_date",
-      )
-      .eq("slug", presliced.data.event_slug)
-      .maybeSingle();
-    if (primary.error) {
-      const code = (primary.error as { code?: string }).code;
-      if (code !== "42703") {
-        return NextResponse.json({ error: "event_not_found" }, { status: 404 });
-      }
-      tieredAvailable = false;
-      const fallback = await supabase
-        .from("events")
-        .select("id, status, requires_approval, enrollment_opens_at, enrollment_closes_at, capacity, price")
-        .eq("slug", presliced.data.event_slug)
-        .maybeSingle();
-      if (fallback.error || !fallback.data) {
-        return NextResponse.json({ error: "event_not_found" }, { status: 404 });
-      }
-      eventRow = fallback.data;
-    } else {
-      eventRow = primary.data;
-    }
-  }
-  const event = eventRow;
-
-  if (!event) {
-    return NextResponse.json({ error: "event_not_found" }, { status: 404 });
-  }
+  const { data: event } = await supabase
+    .from("events")
+    .select("id, slug, status, title_en, title_cn, enrollment_opens_at, enrollment_closes_at, capacity, form_schema")
+    .eq("slug", presliced.data.event_slug)
+    .maybeSingle();
+  if (!event) return NextResponse.json({ error: "event_not_found" }, { status: 404 });
   if (event.status !== "open" || registrationBlock(event)) {
     return NextResponse.json({ error: "event_not_open" }, { status: 409 });
   }
-
-  // Capacity gate. We re-check after the participant resolve too (just before
-  // enrolment insert) since two registrations can race here, but the early
-  // check keeps the error feedback fast for the common "already full" case.
   if (await isEventFull(supabase, event.id, event.capacity)) {
     return NextResponse.json({ error: "no_seats" }, { status: 409 });
   }
 
-  const eventFormSchema = normalizeFormSchema(event.form_schema);
-  const dynamicSchema = buildRegistrationSchemaFor(
-    eventFormSchema.identity,
-    eventFormSchema,
-  );
-  const parsed = dynamicSchema.safeParse(body);
+  // The event's own questions are asked after sign-in, so only the
+  // identity part of the form is checked here.
+  const formSchema = normalizeFormSchema(event.form_schema);
+  const parsed = buildRegistrationSchemaFor(formSchema.identity, { ...formSchema, fields: [] }).safeParse({
+    ...(body as Record<string, unknown>),
+    answers: {},
+  });
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "validation_error", issues: z.treeifyError(parsed.error) },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "validation_error", issues: z.treeifyError(parsed.error) }, { status: 400 });
   }
   const input = parsed.data;
 
-  // 2) Resolve participant — prefill token takes precedence so returning
-  //    attendees are matched to their canonical record even if their phone
-  //    format differs from what we have on file.
-  // If the participant picked "Other" for region, use their free-text value
-  // as the stored region so admin/export sees e.g. "United Kingdom" instead
-  // of the generic "OTHER" placeholder.
-  const resolvedRegion =
-    input.region === "OTHER" && input.region_other && input.region_other.trim()
-      ? input.region_other.trim()
-      : input.region;
+  const prefill = input.prefill_token ? verifyPrefillToken(input.prefill_token) : null;
+  if (input.prefill_token && !prefill) {
+    return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
+  }
 
-  // Map the registration form's `language` field (zh / en / other) to the
-  // canonical `language_fluency` enum (cn / en / both / null). "other" is
-  // captured as null on the participant — admin can refine via the editor.
-  const resolvedFluency: "en" | "cn" | "both" | null =
-    input.language === "zh"
-      ? "cn"
-      : input.language === "en"
-        ? "en"
-        : null;
-  const emailLocale: "zh" | "en" = resolvedFluency === "cn" ? "zh" : "en";
+  const next = `/events/${encodeURIComponent(event.slug)}/register`;
+
+  // Already has an account? Leave the record alone and send them to sign in.
+  const { data: sameEmail } = await supabase
+    .from("participants")
+    .select("id, auth_user_id")
+    .ilike("email", input.email);
+  const byEmail = (sameEmail ?? []) as Array<{ id: string; auth_user_id: string | null }>;
+  let prefillLinked = false;
+  if (prefill) {
+    const { data: pre } = await supabase.from("participants").select("auth_user_id").eq("id", prefill.participantId).maybeSingle();
+    prefillLinked = Boolean(pre?.auth_user_id);
+  }
+  if (prefillLinked || byEmail.some((p) => p.auth_user_id)) {
+    return NextResponse.json({ error: "account_exists", next }, { status: 409 });
+  }
+
+  const resolvedRegion =
+    input.region === "OTHER" && input.region_other && input.region_other.trim() ? input.region_other.trim() : input.region;
+  const resolvedFluency: "en" | "cn" | null = input.language === "zh" ? "cn" : input.language === "en" ? "en" : null;
 
   const participantInput: ParticipantInsertInput = {
     name_en: input.name_en,
@@ -160,285 +110,56 @@ export async function POST(req: NextRequest) {
     referrer_contact: input.referrer_contact?.trim() || null,
   };
 
+  // One record per email: update the person we already have (prefill link,
+  // or the single record with this email) instead of making a second one,
+  // which would block linking the account later.
   let participantId: string;
-  let regionId: string | null = null;
-
-  const prefillResolved = input.prefill_token
-    ? verifyPrefillToken(input.prefill_token)
-    : null;
-
-  if (input.prefill_token && !prefillResolved) {
-    return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
-  }
-
   try {
-    if (prefillResolved) {
-      const updated = await updateExistingParticipant(
-        supabase,
-        prefillResolved.participantId,
-        participantInput,
-      );
-      if (!updated) {
-        return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
-      }
-      participantId = updated.id;
-      regionId = updated.region_id;
-    } else {
-      const upserted = await upsertParticipant(supabase, participantInput);
-      participantId = upserted.id;
-      regionId = upserted.region_id;
-    }
+    const existingId = prefill?.participantId ?? (byEmail.length === 1 ? byEmail[0].id : null);
+    const saved = existingId
+      ? await updateExistingParticipant(supabase, existingId, participantInput)
+      : await upsertParticipant(supabase, participantInput);
+    if (!saved) return NextResponse.json({ error: "prefill_invalid" }, { status: 400 });
+    participantId = saved.id;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "insert_failed";
-    console.error("[/api/register] participant upsert failed", {
-      email: participantInput.email,
-      phone: participantInput.phone,
-      detail: msg,
-      err,
-    });
+    console.error("[/api/register] participant save failed", { detail: msg });
     return NextResponse.json({ error: "insert_failed", detail: msg }, { status: 500 });
   }
 
-  // 3) Check duplicate enrollment, then insert with the custom form answers.
-  const { data: existingEnrollment } = await supabase
-    .from("enrollments")
-    .select("id")
-    .eq("participant_id", participantId)
-    .eq("event_id", event.id)
-    .maybeSingle();
-
-  if (existingEnrollment) {
-    return NextResponse.json({ error: "already_enrolled" }, { status: 409 });
-  }
-
-  // Re-check capacity after the participant resolve — closes the race
-  // between the early gate and the actual enrolment insert.
-  if (await isEventFull(supabase, event.id, event.capacity)) {
-    return NextResponse.json({ error: "no_seats" }, { status: 409 });
-  }
-
-  const confirmationToken = createToken("confirm_registration", `${participantId}:${event.id}`);
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
-
-  // Price via the one shared rule (src/lib/pricing/resolve-server.ts) so
-  // the amount owed is right when the pay link is generated, and record
-  // why (price_basis, migration 081).
-  let pricing: Awaited<ReturnType<typeof resolveEnrollmentPrice>> | null = null;
-  if (tieredAvailable) {
-    pricing = await resolveEnrollmentPrice(event, participantId);
-  }
-
-  // Pin `event` here so the narrowing survives into the closure below.
-  const eventRef = event;
-  async function insertEnrollment(includeAnswers: boolean) {
-    const payload: Record<string, unknown> = {
-      participant_id: participantId,
-      event_id: eventRef.id,
-      status: eventRef.requires_approval ? "pending_approval" : "approved",
-      confirmation_token: confirmationToken,
-      confirmation_token_expires_at: expiresAt,
-    };
-    if (pricing) {
-      payload.price_tier_key = pricing.price_tier_key;
-      payload.amount_due = pricing.amount_due;
-      payload.price_basis = pricing.price_basis;
-    }
-    if (includeAnswers) payload.form_answers = input.answers ?? {};
-    return supabase
-      .from("enrollments")
-      .insert(payload)
-      .select("id, status")
-      .single();
-  }
-
-  let enrollRes = await insertEnrollment(true);
-  if (enrollRes.error) {
-    const code = (enrollRes.error as { code?: string }).code;
-    if (code === "42703") {
-      // Migration 008 not applied — retry without form_answers so the
-      // existing flow still works.
-      enrollRes = await insertEnrollment(false);
-    }
-  }
-  const { data: enrollment, error: enrollErr } = enrollRes;
-
-  if (enrollErr || !enrollment) {
-    console.error("[/api/register] enrolment insert failed", {
-      participantId,
-      eventId: event.id,
-      detail: enrollErr?.message,
-      code: (enrollErr as { code?: string } | null | undefined)?.code,
-      err: enrollErr,
-    });
-    return NextResponse.json(
-      { error: "enroll_failed", detail: enrollErr?.message },
-      { status: 500 },
-    );
-  }
-
-  // Only a tick counts. Never fails a registration that has already succeeded.
   if (input.marketing_opt_in === true) {
     try {
-      await setMarketingStatus(supabase, {
-        participantId,
-        status: "subscribed",
-        source: "registration",
-        actorId: null,
-      });
+      await setMarketingStatus(supabase, { participantId, status: "subscribed", source: "registration", actorId: null });
     } catch (err) {
       console.warn("[/api/register] marketing opt-in failed", err);
     }
   }
 
-  // 4) Record the referrer note in the CS notes field so CS can follow up.
-  if (input.referrer_name && input.referrer_name.trim()) {
-    const referralNote = [
-      `Referrer: ${input.referrer_name.trim()}`,
-      input.referrer_contact?.trim()
-        ? `Contact: ${input.referrer_contact.trim()}`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-
-    await supabase
-      .from("enrollments")
-      .update({ cs_followup_notes: referralNote })
-      .eq("id", enrollment.id);
-  }
-
-  // 5) Fire off confirmation notifications (email + WhatsApp). Mocked if creds absent.
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  const confirmUrl = `${baseUrl}/confirm/${confirmationToken}`;
-
-  const emailRes = await sendEmail({
-    to: input.email,
-    subject:
-      emailLocale === "en"
-        ? "Please confirm your GMC registration"
-        : "请核对你的 GMC 报名信息",
-    html: buildConfirmationEmail({
-      locale: emailLocale,
-      name: input.name_en,
-      confirmUrl,
-    }),
+  const title = event.title_cn || event.title_en || event.slug;
+  const titleEn = event.title_en || event.title_cn || event.slug;
+  const sent = await sendParticipantAccountLink(input.email, input.name_cn || input.name_en, {
+    next,
+    intro: {
+      en: `Thanks for signing up for ${titleEn}. To finish registering, set a password for your GMC account — you'll then confirm your place.`,
+      zh: `感谢您报名「${title}」。请先设置 GMC 账户密码，然后确认报名。`,
+    },
   });
 
-  // Normalised, not raw. This call site was missed when the E.164 work landed
-  // in enrollment-notifications, so a number typed as '012-345 6789' went to
-  // Meta verbatim and the very first message a registrant should receive
-  // failed. Null (unnormalisable) skips the send rather than guessing.
-  const waPhone = normalizePhone(input.phone, resolvedRegion);
-  const waTo = waPhone.ok ? waPhone.e164 : null;
-  const waRes = waTo
-    ? await sendWhatsAppTemplate({
-        to: waTo,
-        template: "gmc_confirm_registration",
-        languageCode: await resolveMetaLanguage(
-          "gmc_confirm_registration",
-          emailLocale === "en" ? "en_US" : "zh_CN",
-        ),
-        components: [
-          {
-            type: "body",
-            parameters: [
-              { type: "text", text: input.name_en },
-              { type: "text", text: confirmUrl },
-            ],
-          },
-        ],
-      })
-    : null;
-
-  await supabase.from("notifications").insert([
-    {
-      participant_id: participantId,
-      enrollment_id: enrollment.id,
-      event_id: event.id,
-      channel: "email",
-      template: "confirm_registration",
-      to_address: input.email,
-      status: emailRes.mocked ? "pending" : emailRes.error ? "failed" : "sent",
-      provider_id: emailRes.id ?? null,
-      error_message: emailRes.error ?? null,
-      sent_at: emailRes.mocked || emailRes.error ? null : new Date().toISOString(),
-    },
-    {
-      participant_id: participantId,
-      enrollment_id: enrollment.id,
-      event_id: event.id,
-      channel: "whatsapp",
-      template: "gmc_confirm_registration",
-      // Raw typed number when we couldn't normalise it — that string is the
-      // evidence someone needs to fix the record.
-      to_address: waTo ?? input.phone,
-      // An unusable number is logged as a failure rather than silently
-      // skipped, so it shows up wherever failed sends are reviewed instead of
-      // leaving no row at all.
-      status: !waRes
-        ? "failed"
-        : waRes.mocked
-          ? "pending"
-          : waRes.error
-            ? "failed"
-            : "sent",
-      provider_id: waRes?.id ?? null,
-      error_message: waPhone.ok
-        ? waRes?.error ?? null
-        : `unusable phone number — ${waPhone.reason}: ${waPhone.detail}`,
-      sent_at: !waRes || waRes.mocked || waRes.error ? null : new Date().toISOString(),
-    },
-  ]);
+  await writeAuditLog({
+    actor_id: null,
+    action: "participant.account_invite_sent",
+    entity: "participants",
+    entity_id: participantId,
+    metadata: { via: "public_signup", event_id: event.id, link: sent.status },
+  });
 
   return NextResponse.json({
     success: true,
-    region_id: regionId,
-    delivery: {
-      email: emailRes.mocked ? "mocked" : emailRes.error ? "failed" : "sent",
-      whatsapp: !waRes
-        ? "failed"
-        : waRes.mocked
-          ? "mocked"
-          : waRes.error
-            ? "failed"
-            : "sent",
-    },
-    // Only exposed in development so developers can manually click-through during testing.
-    // In production the link only reaches the participant.
-    ...(process.env.NODE_ENV === "development"
-      ? { dev_confirm_url: confirmUrl }
-      : {}),
+    check_email: true,
+    // "cooldown" = a link went out in the last 5 minutes; "failed" = we
+    // couldn't email it (they can request one from the sign-in page).
+    link: sent.status,
+    // Development only, so the flow can be clicked through locally.
+    ...(process.env.NODE_ENV === "development" && sent.status === "sent" ? { dev_account_url: sent.url } : {}),
   });
-}
-
-function buildConfirmationEmail({
-  locale,
-  name,
-  confirmUrl,
-}: {
-  locale: "zh" | "en";
-  name: string;
-  confirmUrl: string;
-}): string {
-  const isZh = locale === "zh";
-  const greeting = isZh ? `${name}，你好：` : `Dear ${name},`;
-  const body = isZh
-    ? `感谢你报名参加 GMC 的课程。请点击以下链接核对你的个人信息：`
-    : `Thank you for registering for a GMC programme. Please confirm your details using the link below:`;
-  const footer = isZh
-    ? `如链接无法点击，请直接复制到浏览器打开。<br>如有任何问题，请联系 GMC 客服。`
-    : `If the link doesn't work, copy and paste it into your browser.<br>For any questions, please contact the GMC team.`;
-  return `<!doctype html>
-<html><head><meta charset="utf-8"></head>
-<body style="margin:0;padding:40px 16px;background:#F6F9FF;font-family:Georgia,serif;color:#0B2954;">
-  <div style="max-width:560px;margin:0 auto;background:#FBFCFF;padding:48px 40px;border-radius:16px;box-shadow:0 2px 10px rgba(37,99,235,0.08);">
-    <div style="display:inline-block;padding:10px 14px;border-radius:999px;background:#2563EB;color:#FBFCFF;font-weight:600;letter-spacing:0.04em;">GMC</div>
-    <h1 style="font-size:28px;line-height:1.2;margin:32px 0 16px;color:#0B2954;letter-spacing:-0.02em;">${greeting}</h1>
-    <p style="font-size:15px;line-height:1.75;margin:0 0 28px;color:#1E3A6B;">${body}</p>
-    <a href="${confirmUrl}" style="display:inline-block;padding:14px 26px;border-radius:999px;background:#2563EB;color:#FBFCFF;text-decoration:none;letter-spacing:0.02em;font-size:13px;font-weight:500;box-shadow:0 4px 14px rgba(37,99,235,0.28);">${isZh ? "核对信息" : "Confirm details"}</a>
-    <p style="margin:28px 0 0;font-size:12px;color:#5A6B8A;line-height:1.7;">${footer}</p>
-    <hr style="border:none;border-top:1px solid #CEDAF0;margin:32px 0;">
-    <p style="margin:0;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#5A6B8A;">Glorious Melodies Consultancy · Singapore</p>
-  </div>
-</body></html>`;
 }
