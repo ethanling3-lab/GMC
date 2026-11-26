@@ -21,6 +21,11 @@ export type EventFinanceRow = {
   paid_amount: number;           // sum(amount_paid) where status=paid
   outstanding_amount: number;    // approved × price
   refunded_amount: number;       // sum(refund_amount)
+
+  // Programmes sold at this event's payment counter (Phase 2, migration 087).
+  programmes_signed: number;     // purchases made here, not cancelled
+  programmes_value_sgd: number;  // their full price
+  programmes_taken_sgd: number;  // 定金 / 全款 actually collected here (not voided)
 };
 
 export type FinanceOverview = {
@@ -96,6 +101,23 @@ export async function loadFinanceOverview(
   };
   const enrolments = (enrRes.data ?? []) as EnrolSlice[];
 
+  // Programmes signed at each event's counter. Before migration 087 these
+  // tables don't exist; the error is ignored and the counts stay 0.
+  const [{ data: purRows }, { data: payRows }] = await Promise.all([
+    supabase.from("programme_purchases").select("event_id, total_sgd").in("event_id", eventIds).neq("status", "cancelled"),
+    supabase.from("payments").select("event_id, amount_sgd").in("event_id", eventIds).not("purchase_id", "is", null).is("voided_at", null),
+  ]);
+  const progByEvent = new Map<string, { n: number; value: number; taken: number }>();
+  const slot = (id: string) => progByEvent.get(id) ?? progByEvent.set(id, { n: 0, value: 0, taken: 0 }).get(id)!;
+  for (const r of (purRows ?? []) as Array<{ event_id: string; total_sgd: number | string }>) {
+    const s = slot(r.event_id);
+    s.n += 1;
+    s.value += Number(r.total_sgd ?? 0);
+  }
+  for (const r of (payRows ?? []) as Array<{ event_id: string; amount_sgd: number | string }>) {
+    slot(r.event_id).taken += Number(r.amount_sgd ?? 0);
+  }
+
   const byEvent: Record<string, EnrolSlice[]> = {};
   for (const e of enrolments) {
     if (!byEvent[e.event_id]) byEvent[e.event_id] = [];
@@ -134,6 +156,9 @@ export async function loadFinanceOverview(
       paid_amount: paidAmt,
       outstanding_amount: approved * price,
       refunded_amount: refundedAmt,
+      programmes_signed: progByEvent.get(ev.id as string)?.n ?? 0,
+      programmes_value_sgd: progByEvent.get(ev.id as string)?.value ?? 0,
+      programmes_taken_sgd: progByEvent.get(ev.id as string)?.taken ?? 0,
     };
   });
 

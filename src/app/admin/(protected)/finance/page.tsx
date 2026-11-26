@@ -46,6 +46,20 @@ export default async function FinanceDashboardPage() {
             Import bank statements, match inflows to approved enrolments, and
             watch outstanding balances settle per event.
           </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              href="/admin/finance/instalments"
+              className="inline-flex items-center h-9 px-4 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[12.5px] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)]"
+            >
+              Instalments · 分期
+            </Link>
+            <Link
+              href="/admin/finance/templates"
+              className="inline-flex items-center h-9 px-4 rounded-[var(--radius-pill)] border border-[var(--paper-shadow)] bg-[var(--paper)] text-[12.5px] text-[var(--ink)] hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] transition-[background-color,border-color,color,transform] duration-[var(--dur-fast)]"
+            >
+              Payment plans · 付款方案
+            </Link>
+          </div>
         </div>
         <div className="text-right">
           <div className="text-[9px] tracking-[0.28em] uppercase text-[var(--ink-faint)]">
@@ -198,6 +212,8 @@ export default async function FinanceDashboardPage() {
                   <th className="pb-3 font-normal text-right tabular-nums">Refunded</th>
                   <th className="pb-3 font-normal text-right tabular-nums">Paid (amt)</th>
                   <th className="pb-3 font-normal text-right tabular-nums">Outstanding</th>
+                  <th className="pb-3 pl-6 font-normal text-right tabular-nums">Programmes signed</th>
+                  <th className="pb-3 font-normal text-right tabular-nums">Programme money in</th>
                 </tr>
               </thead>
               <tbody>
@@ -359,6 +375,13 @@ function EventRow({ row }: { row: EventFinanceRow }) {
         </div>
         <div className="mt-0.5 text-[10.5px] tracking-[0.14em] uppercase text-[var(--ink-faint)]">
           {row.status} · {startStr}
+          {" · "}
+          <Link
+            href={`/admin/events/${row.id}/counter`}
+            className="normal-case tracking-normal text-[11.5px] text-[var(--cinnabar)] underline decoration-dotted underline-offset-2 hover:text-[var(--cinnabar-deep)]"
+          >
+            Payment counter · 收款台
+          </Link>
         </div>
       </td>
       <td className="py-3 text-right tabular-nums text-[var(--ink-soft)]">
@@ -377,6 +400,19 @@ function EventRow({ row }: { row: EventFinanceRow }) {
         {row.outstanding_amount > 0
           ? formatMoney(row.outstanding_amount, row.currency)
           : "—"}
+      </td>
+      <td className="py-3 pl-6 text-right tabular-nums">
+        {row.programmes_signed > 0 ? (
+          <>
+            <div className="text-[var(--ink)]">{row.programmes_signed.toLocaleString()}</div>
+            <div className="text-[11px] text-[var(--ink-mute)]">worth {formatMoney(row.programmes_value_sgd, "SGD")}</div>
+          </>
+        ) : (
+          <span className="text-[var(--ink-faint)]">—</span>
+        )}
+      </td>
+      <td className="py-3 text-right tabular-nums text-[var(--ink)]">
+        {row.programmes_taken_sgd > 0 ? formatMoney(row.programmes_taken_sgd, "SGD") : "—"}
       </td>
     </tr>
   );

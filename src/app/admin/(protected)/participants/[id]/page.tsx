@@ -22,6 +22,8 @@ import { listCourses } from "@/lib/programmes/courses";
 import { seatsForParticipant } from "@/lib/seats/seats";
 import { RewardSeatsCard } from "@/components/admin/participants/detail/RewardSeatsCard";
 import { ChildrenCard } from "@/components/admin/participants/detail/ChildrenCard";
+import { ProgrammePurchasesCard } from "@/components/admin/participants/detail/ProgrammePurchasesCard";
+import { loadPurchasesForParticipant } from "@/lib/payments/ledger";
 import { childrenOf, guardiansOf } from "@/lib/participants/children";
 import { ZuZhangProfileEditor } from "@/components/admin/participants/detail/ZuZhangProfileEditor";
 import type {
@@ -511,6 +513,12 @@ export default async function ParticipantDetailPage({ params }: Props) {
               attended_courses: p.attended_courses ?? [],
               cs_notes: p.cs_notes,
             }}
+          />
+
+          <ProgrammePurchasesCard
+            participantId={p.id}
+            purchases={await loadPurchasesForParticipant(createSupabaseServiceClient(), p.id)}
+            canManage={isSuper}
           />
 
           {isSuper ? (

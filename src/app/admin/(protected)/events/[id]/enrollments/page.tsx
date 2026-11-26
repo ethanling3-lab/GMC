@@ -359,6 +359,17 @@ export default async function EventEnrollmentsPage({
               <span className="tracking-[0.14em] uppercase">
                 Event: {EVENT_STATUS_LABEL[event.status as keyof typeof EVENT_STATUS_LABEL]?.en ?? event.status}
               </span>
+              {admin.role === "super_admin" || admin.role === "finance" ? (
+                <>
+                  <span className="text-[var(--ink-faint)]">·</span>
+                  <Link
+                    href={`/admin/events/${event.id}/counter`}
+                    className="text-[12px] text-[var(--cinnabar)] underline decoration-dotted underline-offset-2 hover:text-[var(--cinnabar-deep)]"
+                  >
+                    Payment counter · 收款台
+                  </Link>
+                </>
+              ) : null}
             </div>
           </div>
           <div className="flex items-stretch gap-3">

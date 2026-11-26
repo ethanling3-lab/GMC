@@ -457,6 +457,26 @@ export function EventEditor({
               </span>
             </Link>
 
+            {/* Payment counter — Phase 2 (2026-11-26) */}
+            <Link
+              href={`/admin/events/${event.id}/counter`}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-[var(--radius-pill)]
+                         border border-[var(--paper-shadow)] bg-[var(--paper)]
+                         text-[12.5px] tracking-[0.04em] text-[var(--ink)]
+                         hover:border-[var(--cinnabar)]/40 hover:bg-[var(--cinnabar-wash)] hover:text-[var(--cinnabar-deep)]
+                         focus-visible:shadow-[var(--shadow-focus)]
+                         transition-[background-color,border-color,color] duration-[var(--dur-fast)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+                <path d="M1.5 6.5h13M4 10h3" />
+              </svg>
+              Payment counter
+              <span className="tabular-nums text-[10px] tracking-[0.06em] px-1.5 py-0.5 rounded-full bg-[var(--paper-deep)] text-[var(--ink-mute)]">
+                收款台
+              </span>
+            </Link>
+
             {/* Assignments link — Phase 1 learner homework / reports */}
             <Link
               href={`/admin/events/${event.id}/assignments`}

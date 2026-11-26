@@ -188,3 +188,31 @@ export async function updateExistingParticipant(
   if (upd.error) throw new Error(upd.error.message);
   return { id: row.id, region_id: row.region_id, created: false };
 }
+
+/**
+ * Payment counter (Phase 2, 2026-11-26): create a person from the paper
+ * registration form. Email is optional here — many walk-ins only give a
+ * phone — so this never matches on (email, phone). The counter checks for a
+ * phone match first and asks staff before calling this.
+ */
+export async function insertCounterParticipant(
+  client: SupabaseClient,
+  input: Omit<ParticipantInsertInput, "email" | "name_en"> & {
+    email?: string | null;
+    name_en?: string | null;
+  },
+  extra: { referrer_id?: string | null; assigned_cs_id?: string | null } = {},
+): Promise<ParticipantUpsertResult> {
+  const payload: Record<string, unknown> = {
+    ...buildPayload({ ...input, email: input.email ?? "", name_en: input.name_en ?? "" }),
+    email: input.email?.trim() ? input.email.trim().toLowerCase() : null,
+    name_en: input.name_en?.trim() || null,
+  };
+  if (extra.referrer_id) payload.referrer_id = extra.referrer_id;
+  if (extra.assigned_cs_id) payload.assigned_cs_id = extra.assigned_cs_id;
+  const ins = await safeInsert(client, payload);
+  if (ins.error || !ins.data) {
+    throw new Error(ins.error?.message ?? "participant_insert_failed");
+  }
+  return { id: ins.data.id, region_id: ins.data.region_id, created: true };
+}
