@@ -57,6 +57,7 @@ export function QuickRegisterConfirm({
   );
   const chosen = attendees.filter((a) => picked.has(a.id) && !a.enrolled);
   const total = chosen.reduce((sum, a) => sum + (Number(a.amount_due) || 0), 0);
+  const allRegistered = attendees.length > 0 && attendees.every((a) => a.enrolled);
 
   function toggle(id: string) {
     setPicked((prev) => {
@@ -236,19 +237,31 @@ export function QuickRegisterConfirm({
         >
           ← Cancel
         </a>
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={submitting}
-          className="inline-flex items-center gap-2 px-5 h-11 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[13px] tracking-[0.04em] uppercase hover:bg-[var(--cinnabar-deep)] disabled:opacity-60 transition-colors"
-          style={{ color: "var(--paper-warm)" }}
-        >
-          {submitting
-            ? "Confirming…"
-            : chosen.length > 1
-              ? `Register ${chosen.length} · 报名 ${chosen.length} 位`
-              : "Confirm & pay · 确认并付款"}
-        </button>
+        {allRegistered ? (
+          <a
+            href="/me/enrollments"
+            className="inline-flex items-center gap-2 px-5 h-11 rounded-full border border-[var(--cinnabar)]/40 bg-[var(--cinnabar-wash)] text-[13px] tracking-[0.04em] text-[var(--cinnabar-deep)] hover:bg-[var(--paper)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] transition-[background-color,transform]"
+            style={{ color: "var(--cinnabar-deep)" }}
+          >
+            {hasFamily ? "Everyone is registered" : "You're registered"} · 已报名 — My enrollments
+          </a>
+        ) : (
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting || chosen.length === 0}
+            className="inline-flex items-center gap-2 px-5 h-11 rounded-full bg-[var(--cinnabar)] text-[var(--paper-warm)] text-[13px] tracking-[0.04em] uppercase hover:bg-[var(--cinnabar-deep)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            style={{ color: "var(--paper-warm)" }}
+          >
+            {submitting
+              ? "Confirming…"
+              : chosen.length === 0
+                ? "Tick who is attending · 请勾选"
+                : chosen.length > 1
+                  ? `Register ${chosen.length} · 报名 ${chosen.length} 位`
+                  : "Confirm & pay · 确认并付款"}
+          </button>
+        )}
       </div>
     </div>
   );
