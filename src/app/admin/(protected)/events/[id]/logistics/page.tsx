@@ -121,7 +121,6 @@ export default async function EventLogisticsPage({
   );
   const effectiveRules = { ...DEFAULT_RULES, ...eventRulesOverride };
 
-  const active = dir === "arrival" ? detail.arrival : detail.departure;
   const isReadOnly =
     admin.role !== "super_admin" && admin.role !== "regional_lead";
   const canFixFlights = !isReadOnly || isCustomerService;
@@ -150,6 +149,23 @@ export default async function EventLogisticsPage({
   if (isCustomerService) enrolQ = enrolQ.eq("participant.assigned_cs_id", admin.id);
   const { data: enrolRows } = await enrolQ.returns<EnrolRow[]>();
   const enrollmentIds = (enrolRows ?? []).map((e) => e.id);
+
+  // CS see only the vehicles carrying their own customers, and only their
+  // own customers inside each (Phase 3, Ethan 2026-11-26).
+  const ownEnrolments = new Set(enrollmentIds);
+  const scopeToOwn = (d: TransferDetailDirection): TransferDetailDirection => ({
+    ...d,
+    rows: d.rows.flatMap((r) => {
+      const mine = r.flights.filter((f) => ownEnrolments.has(f.enrollment_id));
+      return mine.length
+        ? [{ ...r, flights: mine, flight_info_ids: mine.map((f) => f.id), manual_passengers: [] }]
+        : [];
+    }),
+  });
+  const plan = isCustomerService
+    ? { arrival: scopeToOwn(detail.arrival), departure: scopeToOwn(detail.departure) }
+    : { arrival: detail.arrival, departure: detail.departure };
+  const active = dir === "arrival" ? plan.arrival : plan.departure;
   const savedFlights = new Map<
     string,
     { arrival: FlightDetails | null; departure: FlightDetails | null }
@@ -311,14 +327,14 @@ export default async function EventLogisticsPage({
           active={dir === "arrival"}
           label="Arrivals"
           labelZh="接机"
-          state={detail.arrival}
+          state={plan.arrival}
         />
         <TabLink
           href={`/admin/events/${ev.id}/logistics?dir=departure`}
           active={dir === "departure"}
           label="Departures"
           labelZh="送机"
-          state={detail.departure}
+          state={plan.departure}
         />
       </div>
 
@@ -593,6 +609,13 @@ function DirectionPanel({
           />
         ) : null}
       </div>
+
+      {isCustomerService && state.list ? (
+        <p className="mt-5 text-[12.5px] leading-[1.6] text-[var(--ink-soft)]">
+          Showing only the vehicles that carry your customers, and only your customers in each ·
+          仅显示您学员所在的车辆。
+        </p>
+      ) : null}
 
       {ruleChanges.length > 0 ? (
         <div
