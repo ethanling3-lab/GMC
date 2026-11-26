@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { safeMemberNext } from "@/lib/auth/safe-next";
 import { useRouter } from "next/navigation";
 
 type Props = { nextPath: string };
@@ -40,7 +41,7 @@ export function LoginForm({ nextPath }: Props) {
           setSubmitting(false);
           return;
         }
-        const safe = nextPath && (nextPath.startsWith("/me") || nextPath === "/me") ? nextPath : "/me";
+        const safe = safeMemberNext(nextPath);
         router.replace(safe);
         router.refresh();
       } else {

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase";
 import { LoginForm } from "./LoginForm";
+import { safeMemberNext } from "@/lib/auth/safe-next";
 
 export const metadata: Metadata = {
   title: "Sign in · 登录 — GMC",
@@ -32,7 +33,7 @@ export default async function LoginPage({ searchParams }: PageProps) {
       .eq("auth_user_id", user.id)
       .maybeSingle();
     if (participant) {
-      redirect(next ?? "/me");
+      redirect(safeMemberNext(next));
     }
   }
 
@@ -70,7 +71,7 @@ export default async function LoginPage({ searchParams }: PageProps) {
         ) : null}
 
         <div className="mt-10">
-          <LoginForm nextPath={next ?? "/me"} />
+          <LoginForm nextPath={safeMemberNext(next)} />
         </div>
 
         <div className="mt-10 pt-7 border-t border-[var(--paper-shadow)] flex items-center justify-between text-[11px] tracking-[0.22em] uppercase text-[var(--ink-faint)]">

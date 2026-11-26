@@ -269,6 +269,9 @@ export function RegistrationForm({
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-10" noValidate>
       {prefilledBanner}
       {!prefillToken ? (
+        <SignInPanel locale={locale} eventSlug={selectedSlug} />
+      ) : null}
+      {!prefillToken ? (
         <ReturningParticipantPanel
           locale={locale}
           eventSlug={selectedSlug}
@@ -635,6 +638,29 @@ export function RegistrationForm({
         </button>
       </div>
     </form>
+  );
+}
+
+// -------- Members: sign in and skip the form -------- //
+// After sign-in, /login?next= returns them to the event's one-click confirm
+// page (Who is attending?), so a member never re-types their details.
+function SignInPanel({ locale, eventSlug }: { locale: "zh" | "en"; eventSlug: string }) {
+  const next = eventSlug ? `/events/${encodeURIComponent(eventSlug)}/register` : "/me";
+  return (
+    <div className="flex items-center justify-between gap-4 flex-wrap rounded-[var(--radius-md)] border border-[var(--cinnabar)]/25 bg-[var(--cinnabar-wash)] px-5 py-4">
+      <div className="text-[13px] leading-[1.6] text-[var(--ink-soft)]">
+        {locale === "zh"
+          ? "已有账户？登录后一键报名，无需再次填写资料。"
+          : "Have an account? Sign in and register in one click, with no form to fill."}
+      </div>
+      <a
+        href={`/login?next=${encodeURIComponent(next)}`}
+        className="inline-flex items-center justify-center h-10 px-4 rounded-[var(--radius-pill)] bg-[var(--cinnabar)] text-[12.5px] font-medium tracking-[0.02em] hover:bg-[var(--cinnabar-deep)] focus-visible:shadow-[var(--shadow-focus)] active:scale-[0.98] shadow-[0_4px_14px_rgba(37,99,235,0.25)] transition-[background-color,transform] duration-[var(--dur-fast)]"
+        style={{ color: "var(--paper-warm)" }}
+      >
+        {locale === "zh" ? "登录快速报名" : "Sign in to register faster"}
+      </a>
+    </div>
   );
 }
 
